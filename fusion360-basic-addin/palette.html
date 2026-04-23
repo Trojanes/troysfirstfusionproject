@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Troy's Plugin</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 12px; }
+    .row { margin-bottom: 10px; }
+    button { padding: 6px 10px; }
+    #result {
+      white-space: pre-wrap;
+      border: 1px solid #ccc;
+      min-height: 280px;
+      padding: 8px;
+      background: #fafafa;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+  </style>
+</head>
+<body>
+  <div class="row">
+    <button id="scanBtn">Scan</button>
+    <button id="select15Btn">Select 15mm</button>
+    <button id="select18Btn">Select 18mm</button>
+    <button id="selectOtherBtn">Select Other</button>
+    <button id="detectContactsBtn">Detect Contacts</button>
+    <button id="drillHolesBtn">Drill Holes</button>
+    <button id="halfSlotBtn">Half Slot</button>
+    <button id="restoreBtn">Restore</button>
+  </div>
+  <div id="result">Click Scan to list bodies and apply thickness colors.</div>
+
+  <script>
+    const result = document.getElementById('result');
+    const scanBtn = document.getElementById('scanBtn');
+    const select15Btn = document.getElementById('select15Btn');
+    const select18Btn = document.getElementById('select18Btn');
+    const selectOtherBtn = document.getElementById('selectOtherBtn');
+    const detectContactsBtn = document.getElementById('detectContactsBtn');
+    const drillHolesBtn = document.getElementById('drillHolesBtn');
+    const halfSlotBtn = document.getElementById('halfSlotBtn');
+    const restoreBtn = document.getElementById('restoreBtn');
+
+    function send(action) {
+      if (window.adsk && window.adsk.fusionSendData) {
+        window.adsk.fusionSendData('response', JSON.stringify({ action }));
+      } else {
+        result.textContent = 'Fusion bridge not available.';
+      }
+    }
+
+    scanBtn.addEventListener('click', () => send('scan'));
+    select15Btn.addEventListener('click', () => send('select15'));
+    select18Btn.addEventListener('click', () => send('select18'));
+    selectOtherBtn.addEventListener('click', () => send('selectOther'));
+    detectContactsBtn.addEventListener('click', () => send('detectContacts'));
+    drillHolesBtn.addEventListener('click', () => send('drillScrewHoles'));
+    halfSlotBtn.addEventListener('click', () => send('halfSlot'));
+    restoreBtn.addEventListener('click', () => send('restoreGenerated'));
+
+    window.fusionJavaScriptHandler = {
+      handle: function(action, data) {
+        if (action !== 'scanResult') return;
+        try {
+          const parsed = JSON.parse(data);
+          result.textContent = parsed.text || '';
+        } catch (e) {
+          result.textContent = data || '';
+        }
+      }
+    };
+  </script>
+</body>
+</html>

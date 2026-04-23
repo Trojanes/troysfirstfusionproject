@@ -1,0 +1,12 @@
+{
+  "autodeskProduct": "Fusion360",
+  "type": "addin",
+  "id": "com.troy.plugin",
+  "author": "Troy",
+  "description": {
+    "": "Troy's Fusion 360 plugin"
+  },
+  "version": "0.0.1",
+  "runOnStartup": false,
+  "main": "TroysPlugin.py"
+}
