@@ -55,6 +55,10 @@ export interface WheelAvoidance {
 }
 
 export type VPanelMachiningMode =
+  | "left_half_right_none"
+  | "right_half_left_none"
+  | "right_half_left_through"
+  | "left_half_right_through"
   | "left_half"
   | "right_half"
   | "left_through"
@@ -233,7 +237,7 @@ export interface SlotRequest {
 }
 
 export interface ResolvedSlot extends SlotRequest {
-  resolvedSlotType: SlotType;
+  resolvedSlotType: SlotType | "none";
   machiningMode?: VPanelMachiningMode;
 }
 

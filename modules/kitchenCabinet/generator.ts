@@ -740,39 +740,19 @@ function generateSlotRequests(boards: BoardGeometry[], columns: ComputedKitchenC
 
 function resolveSlots(requests: SlotRequest[], preferences: KitchenLayoutState["vPanelMachiningPreferences"], warnings: string[], errors: string[]): ResolvedSlot[] {
   const resolved: ResolvedSlot[] = requests.map((request) => ({ ...request, resolvedSlotType: request.slotType }));
-  const shouldBecomeThrough = (mode: VPanelMachiningMode, side: SlotSide): boolean => {
-    if (mode === "through_only") return true;
-    if (mode === "left_half" || mode === "right_through" || mode === "left_face_half_allowed") return side === "right";
-    if (mode === "right_half" || mode === "left_through" || mode === "right_face_half_allowed") return side === "left";
-    return false;
+  const resolvedTypeForMode = (mode: VPanelMachiningMode, side: SlotSide): SlotType | "none" => {
+    if (mode === "left_half_right_none") return side === "left" ? "half" : "none";
+    if (mode === "right_half_left_none") return side === "right" ? "half" : "none";
+    if (mode === "right_half_left_through" || mode === "right_half" || mode === "left_through" || mode === "right_face_half_allowed") return side === "right" ? "half" : "through";
+    if (mode === "left_half_right_through" || mode === "left_half" || mode === "right_through" || mode === "left_face_half_allowed") return side === "left" ? "half" : "through";
+    if (mode === "through_only") return "through";
+    return "half";
   };
-  const mergedHalfRequestIds = new Set<string>();
-  const halfGroups = new Map<string, ResolvedSlot[]>();
-  for (const request of resolved.filter((item) => item.slotType === "half")) {
-    const key = [
-      request.vPanelIndex,
-      request.y0,
-      request.y1,
-      request.z0,
-      request.z1,
-    ].join(":");
-    halfGroups.set(key, [...(halfGroups.get(key) || []), request]);
-  }
-  for (const group of halfGroups.values()) {
-    const hasLeft = group.some((request) => request.side === "left");
-    const hasRight = group.some((request) => request.side === "right");
-    if (!hasLeft || !hasRight) continue;
-    for (const request of group) {
-      request.resolvedSlotType = "through";
-      mergedHalfRequestIds.add(request.id);
-    }
-  }
   const panelIndexes = [...new Set(requests.map((request) => request.vPanelIndex))];
   for (const panelIndex of panelIndexes) {
     const panelRequests = resolved.filter((request) =>
       request.vPanelIndex === panelIndex &&
-      request.slotType === "half" &&
-      !mergedHalfRequestIds.has(request.id)
+      request.slotType === "half"
     );
     const hasLeft = panelRequests.some((request) => request.side === "left");
     const hasRight = panelRequests.some((request) => request.side === "right");
@@ -785,9 +765,9 @@ function resolveSlots(requests: SlotRequest[], preferences: KitchenLayoutState["
     if (!mode) continue;
     for (const request of panelRequests) {
       request.machiningMode = mode;
-      if (shouldBecomeThrough(mode, request.side)) {
-        request.resolvedSlotType = "through";
-        if (request.visibleOppositeSide) warnings.push(`Through slot may appear on visible side: ${request.id}.`);
+      request.resolvedSlotType = resolvedTypeForMode(mode, request.side);
+      if (request.resolvedSlotType === "through" && request.visibleOppositeSide) {
+        warnings.push(`Through slot may appear on visible side: ${request.id}.`);
       }
     }
   }
@@ -797,6 +777,7 @@ function resolveSlots(requests: SlotRequest[], preferences: KitchenLayoutState["
 function updateFunctionalBoardProfilesFromSlots(boards: BoardGeometry[], resolvedSlots: ResolvedSlot[], cpt: number, cd: number, constants: KitchenGeometryConstants): void {
   const tongueForSlot = (slot: ResolvedSlot | undefined): number => {
     if (!slot) return 0;
+    if (slot.resolvedSlotType === "none") return 0;
     if (slot.resolvedSlotType === "through") return cpt;
     if (typeof slot.tongueLength === "number" && Number.isFinite(slot.tongueLength)) return Math.max(0, slot.tongueLength);
     return Math.max(0, cpt / 2 - 0.5);
@@ -894,6 +875,7 @@ function outerWithEdgeNotches(h0: number, h1: number, v0: number, v1: number, cu
 }
 
 function slotCutoutForBoard(boardItem: BoardGeometry, slot: ResolvedSlot): PanelBodyCutout | null {
+  if (slot.resolvedSlotType === "none") return null;
   if (boardItem.profilePlane !== "XY") return null;
   const isBoardLeftEnd = slot.side === "right";
   const x0 = isBoardLeftEnd ? boardItem.x0 : boardItem.x1 - boardItem.materialThickness;
@@ -937,7 +919,7 @@ function buildVPanelBodies(vPanels: VPanelGeometry[], resolvedSlots: ResolvedSlo
       plane: "YZ",
       outer: panel.yzProfile,
       cutouts: resolvedSlots
-        .filter((slot) => slot.vPanelIndex === panel.index)
+        .filter((slot) => slot.vPanelIndex === panel.index && slot.resolvedSlotType !== "none")
         .map((slot) => ({
           id: `${slot.id}-body-cutout`,
           kind: "slot" as const,
