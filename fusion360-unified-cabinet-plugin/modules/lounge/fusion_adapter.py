@@ -6,7 +6,7 @@ import adsk.fusion
 
 from geometry_ops import ATTRIBUTE_GROUP, MODEL_Z_OFFSET_MM, mm_to_cm, offset_matching_bodies_z_mm, sanitize_token
 
-ADAPTER_REVISION = "loungeCabinetHingeLockGroove_v14"
+ADAPTER_REVISION = "loungeStagedInModelZComponent_v15"
 
 
 def _num(value, fallback=0.0):
@@ -47,6 +47,29 @@ def _delete_previous_lounge_artifacts(root_comp):
         except Exception:
             deleted["failed"] += 1
     return deleted
+
+
+def _new_lounge_component(root_comp, run_label, mode):
+    name = "LOUNGE_{}_{}".format(
+        sanitize_token(mode or "run", fallback="run", limit=24),
+        sanitize_token(run_label or int(time.time() * 1000), fallback="run", limit=60),
+    )
+    try:
+        transform = adsk.core.Matrix3D.create()
+        transform.translation = adsk.core.Vector3D.create(0, 0, mm_to_cm(MODEL_Z_OFFSET_MM))
+        occurrence = root_comp.occurrences.addNewComponent(transform)
+        occurrence.name = name
+        component = occurrence.component
+        component.name = name
+        try:
+            component.attributes.add(ATTRIBUTE_GROUP, "module", "lounge")
+            component.attributes.add(ATTRIBUTE_GROUP, "previewMode", str(mode or "run"))
+            component.attributes.add(ATTRIBUTE_GROUP, "runLabel", str(run_label or ""))
+        except Exception:
+            pass
+        return component, name, None
+    except Exception as ex:
+        return root_comp, None, "Could not create Lounge Z-offset component; using root component: {}".format(ex)
 
 
 def _add_box_body(component, body_id, x0, x1, y0, y1, z0, z1):
@@ -523,6 +546,10 @@ def create_lounge_bodies(fusion_adapter, result, run_label=None):
         summary["errors"].append("No active Fusion root component.")
         return summary
     summary["deletedPrevious"] = _delete_previous_lounge_artifacts(root)
+    component, component_name, component_warning = _new_lounge_component(root, summary["runLabel"], "flat")
+    summary["assemblyComponentName"] = component_name
+    if component_warning:
+        summary["warnings"].append(component_warning)
     panels = result.get("panels") if isinstance(result.get("panels"), list) else []
     lids = result.get("lids") if isinstance(result.get("lids"), list) else []
     flat_items = [item for item in panels + lids if isinstance(item, dict)]
@@ -537,23 +564,16 @@ def create_lounge_bodies(fusion_adapter, result, run_label=None):
             cursor_x = 0.0
             row_y += row_h + gap
             row_h = 0.0
-        body, err = _add_flat_panel_body(root, item, cursor_x, row_y)
+        body, err = _add_flat_panel_body(component, item, cursor_x, row_y)
         if err:
             summary["skipped"].append({"id": item.get("id"), "reason": err})
             continue
-        summary["cutAudit"].extend(_apply_flat_panel_cuts(root, body, item, cursor_x, row_y))
+        summary["cutAudit"].extend(_apply_flat_panel_cuts(component, body, item, cursor_x, row_y))
         summary["createdBodies"] += 1
         summary["createdIds"].append(item.get("id"))
         cursor_x += width + gap
         row_h = max(row_h, depth)
-    summary["modelZOffset"] = offset_matching_bodies_z_mm(
-        root,
-        name_prefixes=["LOUNGE_FLAT_"],
-        module="lounge",
-        preview_mode="flat_svg",
-        dz_mm=MODEL_Z_OFFSET_MM,
-        feature_prefix="LOUNGE_FLAT_MODEL_Z_OFFSET_",
-    )
+    summary["modelZOffset"] = {"offsetMm": MODEL_Z_OFFSET_MM, "movedBodies": 0, "failedBodies": 0, "mode": "componentAtModelZ"}
     return summary
 
 
@@ -580,6 +600,10 @@ def create_lounge_assembly_bodies(fusion_adapter, result, run_label=None):
         summary["errors"].append("No active Fusion root component.")
         return summary
     summary["deletedPrevious"] = _delete_previous_lounge_artifacts(root)
+    component, component_name, component_warning = _new_lounge_component(root, summary["runLabel"], "assembly")
+    summary["assemblyComponentName"] = component_name
+    if component_warning:
+        summary["warnings"].append(component_warning)
     panels = result.get("panels") if isinstance(result.get("panels"), list) else []
     lids = result.get("lids") if isinstance(result.get("lids"), list) else []
     items = [item for item in panels + lids if isinstance(item, dict)]
@@ -598,13 +622,13 @@ def create_lounge_assembly_bodies(fusion_adapter, result, run_label=None):
             row_h = 0.0
         stage_x = cursor_x
         stage_y = row_y
-        body, err = _add_flat_panel_body(root, item, stage_x, stage_y, preview_mode="assembly")
+        body, err = _add_flat_panel_body(component, item, stage_x, stage_y, preview_mode="assembly")
         if err:
             summary["skipped"].append({"id": item_id, "reason": err})
             cursor_x += width + gap
             row_h = max(row_h, depth)
             continue
-        summary["cutAudit"].extend(_apply_flat_panel_cuts(root, body, item, stage_x, stage_y))
+        summary["cutAudit"].extend(_apply_flat_panel_cuts(component, body, item, stage_x, stage_y))
         staged.append({"item": item, "body": body, "offsetX": stage_x, "offsetY": stage_y})
         cursor_x += width + gap
         row_h = max(row_h, depth)
@@ -618,7 +642,7 @@ def create_lounge_assembly_bodies(fusion_adapter, result, run_label=None):
             summary["skipped"].append({"id": item_id, "reason": "unsupported profilePlane {}".format(item.get("profilePlane"))})
             continue
         try:
-            _move_body_rigid_transform(root, body, transform, feature_prefix="LOUNGE_ASM_MOVE_")
+            _move_body_rigid_transform(component, body, transform, feature_prefix="LOUNGE_ASM_MOVE_")
             summary["transformAudit"].append({
                 "id": item_id,
                 "profilePlane": item.get("profilePlane"),
@@ -631,12 +655,5 @@ def create_lounge_assembly_bodies(fusion_adapter, result, run_label=None):
             continue
         summary["createdBodies"] += 1
         summary["createdIds"].append(item_id)
-    summary["modelZOffset"] = offset_matching_bodies_z_mm(
-        root,
-        name_prefixes=["LOUNGE_ASM_"],
-        module="lounge",
-        preview_mode="assembly",
-        dz_mm=MODEL_Z_OFFSET_MM,
-        feature_prefix="LOUNGE_ASM_MODEL_Z_OFFSET_",
-    )
+    summary["modelZOffset"] = {"offsetMm": MODEL_Z_OFFSET_MM, "movedBodies": 0, "failedBodies": 0, "mode": "componentAtModelZ"}
     return summary

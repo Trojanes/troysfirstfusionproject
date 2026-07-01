@@ -21,6 +21,7 @@ import adsk.fusion
 ATTRIBUTE_GROUP = "FridgeCabinetGenerator"
 FEATURE_PREFIX = "FCG_V01_"
 GEOMETRY_BUILD = "flat-geometry-preview-017-front-panel-bodies"
+MODEL_Z_OFFSET_MM = 10000.0
 
 # Assembly 3D v0.3: T4/T5 + all HSet groups in board order; nothing skipped here (empty set).
 ASSEMBLY_3D_SKIPPED_IDS = frozenset()
@@ -31,6 +32,28 @@ ROW_GAP_MM = 300.0
 ROW_GAP_PAD_MM = 150.0
 COL_GAP_MM = 100.0
 PREVIEW_MODE = "flat_xy"
+
+
+def _new_model_z_component(root_comp: adsk.fusion.Component, preview_mode: str, run_suffix: int):
+    try:
+        transform = adsk.core.Matrix3D.create()
+        transform.translation = adsk.core.Vector3D.create(0, 0, _mm_to_cm(MODEL_Z_OFFSET_MM))
+        occurrence = root_comp.occurrences.addNewComponent(transform)
+        occurrence.name = "{}MODELZ_{}_{}".format(
+            FEATURE_PREFIX,
+            str(preview_mode or "preview"),
+            int(run_suffix),
+        )
+        component = occurrence.component
+        component.name = occurrence.name
+        try:
+            component.attributes.add(ATTRIBUTE_GROUP, "module", "fridge")
+            component.attributes.add(ATTRIBUTE_GROUP, "previewMode", str(preview_mode or "preview"))
+        except Exception:
+            pass
+        return component, occurrence.name, None
+    except Exception as ex:
+        return root_comp, None, "Could not create Fridge Z-offset component; using root component: {}".format(ex)
 
 # assembly_3d only: temporary manual rigid orientation for V stiles (pivot = board local origin at model (0,0,0)
 # after canonical flat_xy body). Order: rotate about local Y, then about local Z (world Z for 2nd move at origin).
@@ -1105,6 +1128,10 @@ def _generate_assembly_3d_preview_bodies(board_plan: dict):
                 )
 
         run_suffix = random.randint(100000, 9999999)
+        root_comp, component_name, component_warning = _new_model_z_component(root_comp, "assembly_3d", run_suffix)
+        report["modelZOffset"] = {"offsetMm": MODEL_Z_OFFSET_MM, "movedBodies": 0, "failedBodies": 0, "mode": "componentAtModelZ", "componentName": component_name}
+        if component_warning:
+            report["warnings"].append(component_warning)
 
         for bid in _assembly_3d_v03_board_order(board_plan):
             board = id_to_board.get(bid)
@@ -1375,6 +1402,10 @@ def generate_flat_board_bodies(board_plan: dict, spacing_mm: float = 100.0, prev
     report["frontPanelCount"] = len(board_plan.get("frontPanels") or [])
 
     run_suffix = random.randint(100000, 9999999)
+    root_comp, component_name, component_warning = _new_model_z_component(root_comp, "flat_xy", run_suffix)
+    report["modelZOffset"] = {"offsetMm": MODEL_Z_OFFSET_MM, "movedBodies": 0, "failedBodies": 0, "mode": "componentAtModelZ", "componentName": component_name}
+    if component_warning:
+        report["warnings"].append(component_warning)
 
     row_max_height = {name: 0.0 for name in FLAT_PREVIEW_ROW_ORDER}
     row_has_boards = {name: False for name in FLAT_PREVIEW_ROW_ORDER}

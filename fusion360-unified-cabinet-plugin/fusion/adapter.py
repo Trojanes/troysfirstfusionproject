@@ -39,3 +39,67 @@ class FusionAdapter:
                 log_fn(str(tag), str(message)[:3500])
         except Exception:
             pass
+
+    def select_bodies_and_fit(self, bodies):
+        app, ui = self.get_app_ui()
+        if not app:
+            return 0
+
+        valid_bodies = [body for body in (bodies or []) if body]
+        if not valid_bodies:
+            return 0
+
+        selection = self._active_selection_collection(app, ui)
+        if selection is not None:
+            try:
+                selection.clear()
+                for body in valid_bodies:
+                    selection.add(body)
+            except Exception:
+                selection = None
+
+        try:
+            viewport = app.activeViewport
+            if viewport:
+                viewport.fit()
+                viewport.refresh()
+        except Exception:
+            self.refresh_viewport()
+
+        return len(valid_bodies)
+
+    def get_selected_entities(self):
+        app, ui = self.get_app_ui()
+        if not app:
+            return []
+
+        selection = self._active_selection_collection(app, ui)
+        if selection is None:
+            return []
+
+        entities = []
+        try:
+            count = selection.count
+        except Exception:
+            count = 0
+        for index in range(count):
+            try:
+                item = selection.item(index)
+                entity = getattr(item, "entity", item)
+                if entity:
+                    entities.append(entity)
+            except Exception:
+                continue
+        return entities
+
+    def _active_selection_collection(self, app, ui):
+        for owner, attr_name in ((ui, "activeSelections"), (ui, "activeSelection"), (app, "activeSelections")):
+            if not owner:
+                continue
+            try:
+                selection = getattr(owner, attr_name)
+            except Exception:
+                selection = None
+            if selection is not None:
+                return selection
+        return None

@@ -26,6 +26,9 @@ def _ensure_paths(plugin_dir):
         os.path.join(plugin_dir, "modules", "kitchen"),
         os.path.join(plugin_dir, "modules", "lounge"),
         os.path.join(plugin_dir, "modules", "tools"),
+        os.path.join(plugin_dir, "modules", "hardware"),
+        os.path.join(plugin_dir, "panel_attributes"),
+        os.path.join(plugin_dir, "metadata"),
     ]
     for path in paths:
         if path not in sys.path:
@@ -62,6 +65,8 @@ class UnifiedCabinetPluginApp:
         kitchen_module = importlib.reload(importlib.import_module("modules.kitchen.controller"))
         lounge_module = importlib.reload(importlib.import_module("modules.lounge.controller"))
         tools_module = importlib.reload(importlib.import_module("modules.tools.controller"))
+        hardware_module = importlib.reload(importlib.import_module("modules.hardware.controller"))
+        panel_attributes_module = importlib.reload(importlib.import_module("panel_attributes.controller"))
 
         self.fusion = FusionAdapter()
         fridge = fridge_module.FridgeController(self.plugin_dir, self.fusion)
@@ -72,6 +77,8 @@ class UnifiedCabinetPluginApp:
         kitchen = kitchen_module.KitchenController(self.plugin_dir, self.fusion)
         lounge = lounge_module.LoungeController(self.plugin_dir, self.fusion)
         tools = tools_module.ToolsController()
+        hardware = hardware_module.HardwareController(self.plugin_dir, self.fusion)
+        panel_attributes = panel_attributes_module.PanelAttributesController(self.fusion)
         routes = {
             "fridge.calculate": fridge.calculate,
             "fridge.validate": fridge.validate,
@@ -89,6 +96,19 @@ class UnifiedCabinetPluginApp:
             "lounge.createFlatBodies": lounge.create_flat_bodies,
             "lounge.createAssemblyBodies": lounge.create_assembly_bodies,
             "tools.status": tools.status,
+            "hardware.createSideContactTestBoards": hardware.create_side_contact_test_boards,
+            "hardware.calculateSideContactPreview": hardware.calculate_side_contact_preview,
+            "hardware.createSideContactHoles": hardware.create_side_contact_holes,
+            "panelAttributes.searchPanels": panel_attributes.search_panels,
+            "panelAttributes.selectByTag": panel_attributes.select_by_tag,
+            "panelAttributes.selectPanel": panel_attributes.select_panel,
+            "panelAttributes.selectMetadataRecord": panel_attributes.select_metadata_record,
+            "panelAttributes.selectMetadataRecords": panel_attributes.select_metadata_records,
+            "panelAttributes.scanMetadata": panel_attributes.scan_metadata,
+            "panelAttributes.scanSelectedMetadata": panel_attributes.scan_selected_metadata,
+            "panelAttributes.tagScanSelected": panel_attributes.tag_scan_selected,
+            "panelAttributes.applyTagScanDrafts": panel_attributes.apply_tag_scan_drafts,
+            "panelAttributes.setAssemblyZone": panel_attributes.set_assembly_zone,
             "pingPython": self._ping,
         }
         self.palette_controller = PaletteController(

@@ -164,10 +164,12 @@ class KitchenController:
 
             adapter_module = importlib.reload(kitchen_fusion_adapter)
             run_label = payload.get("caseName") if isinstance(payload, dict) else None
+            add_as_new = payload.get("addAsNewCabinet") is not False if isinstance(payload, dict) else True
             created = adapter_module.create_flat_panel_bodies_from_kitchen_result(
                 self.fusion,
                 result,
                 run_label=run_label,
+                add_as_new=add_as_new,
             )
             ok = len(created.get("errors") or []) == 0
             if ok and self.fusion:
@@ -190,6 +192,7 @@ class KitchenController:
                     "adapterRevision": created.get("adapterRevision"),
                     "cutoutMode": created.get("cutoutMode", "all"),
                     "deletedPreviousKitchenArtifacts": created.get("deletedPreviousKitchenArtifacts", {}),
+                    "addAsNewCabinet": created.get("addAsNewCabinet"),
                     "modelZOffset": created.get("modelZOffset"),
                 },
             )
@@ -234,7 +237,8 @@ class KitchenController:
 
             adapter_module = importlib.reload(kitchen_fusion_adapter)
             run_label = payload.get("caseName") if isinstance(payload, dict) else None
-            created = adapter_module.create_flat_panel_bodies_from_kitchen_result(self.fusion, result, run_label=run_label)
+            add_as_new = payload.get("addAsNewCabinet") is not False if isinstance(payload, dict) else True
+            created = adapter_module.create_flat_panel_bodies_from_kitchen_result(self.fusion, result, run_label=run_label, add_as_new=add_as_new)
             ok = len(created.get("errors") or []) == 0
             if ok and self.fusion:
                 self.fusion.refresh_viewport()
@@ -257,6 +261,7 @@ class KitchenController:
                     "mode": created.get("mode"),
                     "cutoutMode": created.get("cutoutMode", "all"),
                     "deletedPreviousKitchenArtifacts": created.get("deletedPreviousKitchenArtifacts", {}),
+                    "addAsNewCabinet": created.get("addAsNewCabinet"),
                     "modelZOffset": created.get("modelZOffset"),
                 },
             )
@@ -301,7 +306,8 @@ class KitchenController:
 
             adapter_module = importlib.reload(kitchen_fusion_adapter)
             run_label = payload.get("caseName") if isinstance(payload, dict) else None
-            created = adapter_module.create_flat_transformed_panel_bodies_from_kitchen_result(self.fusion, result, run_label=run_label)
+            add_as_new = payload.get("addAsNewCabinet") is not False if isinstance(payload, dict) else True
+            created = adapter_module.create_flat_transformed_panel_bodies_from_kitchen_result(self.fusion, result, run_label=run_label, add_as_new=add_as_new)
             ok = len(created.get("errors") or []) == 0
             if ok and self.fusion:
                 self.fusion.refresh_viewport()
@@ -324,6 +330,7 @@ class KitchenController:
                     "mode": created.get("mode"),
                     "cutoutMode": created.get("cutoutMode", "all"),
                     "deletedPreviousKitchenArtifacts": created.get("deletedPreviousKitchenArtifacts", {}),
+                    "addAsNewCabinet": created.get("addAsNewCabinet"),
                     "modelZOffset": created.get("modelZOffset"),
                 },
             )
@@ -355,7 +362,8 @@ class KitchenController:
 
             adapter_module = importlib.reload(kitchen_fusion_adapter)
             run_label = payload.get("caseName") if isinstance(payload, dict) else None
-            created = adapter_module.create_flat_panel_bodies_from_kitchen_result(self.fusion, result, run_label=run_label)
+            add_as_new = payload.get("addAsNewCabinet") is not False if isinstance(payload, dict) else True
+            created = adapter_module.create_flat_panel_bodies_from_kitchen_result(self.fusion, result, run_label=run_label, add_as_new=add_as_new)
             ok = len(created.get("errors") or []) == 0
             if ok and self.fusion:
                 self.fusion.refresh_viewport()
@@ -378,6 +386,7 @@ class KitchenController:
                     "mode": created.get("mode"),
                     "cutoutMode": created.get("cutoutMode", "all"),
                     "deletedPreviousKitchenArtifacts": created.get("deletedPreviousKitchenArtifacts", {}),
+                    "addAsNewCabinet": created.get("addAsNewCabinet"),
                     "modelZOffset": created.get("modelZOffset"),
                 },
             )

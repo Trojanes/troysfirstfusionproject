@@ -1,3 +1,4 @@
+import json
 import math
 import time
 
@@ -5,6 +6,11 @@ import adsk.core
 import adsk.fusion
 
 from geometry_ops import ATTRIBUTE_GROUP, MODEL_Z_OFFSET_MM, mm_to_cm, move_body_by_mm, offset_matching_bodies_z_mm, sanitize_token
+
+
+PANEL_ATTRIBUTE_GROUP = "UnifiedCabinet.Panel"
+PANEL_METADATA_ATTR = "metadata"
+PANEL_ID_ATTR = "panelId"
 
 
 def _is_number(value):
@@ -86,6 +92,254 @@ def _new_child_component(parent_component, component_name, module_name="overhead
     except Exception:
         pass
     return component
+
+
+def _set_entity_attribute(entity, group, name, value):
+    try:
+        attrs = entity.attributes
+        existing = attrs.itemByName(group, name) if attrs else None
+        if existing:
+            existing.value = str(value)
+        else:
+            attrs.add(group, name, str(value))
+        return True
+    except Exception:
+        return False
+
+
+def _oh_divider_board_type(board_id, all_boards):
+    divider_ids = []
+    for board in all_boards or []:
+        candidate_id = str(board.get("id") or "")
+        if candidate_id.startswith("D") and candidate_id[1:].isdigit():
+            divider_ids.append((int(candidate_id[1:]), candidate_id))
+    if not divider_ids:
+        return "vertical_divider"
+    divider_ids.sort()
+    first_id = divider_ids[0][1]
+    last_id = divider_ids[-1][1]
+    if board_id == first_id:
+        return "left_side_panel"
+    if board_id == last_id:
+        return "right_side_panel"
+    return "internal_vertical_divider"
+
+
+def _oh_board_semantics(board, all_boards):
+    board_id = str(board.get("id") or "")
+    source_type = str(board.get("boardType") or "")
+    if board_id == "BP":
+        return {
+            "boardType": "bottom_panel",
+            "role": "carcass",
+            "category": "structural",
+            "materialClass": "carcass_board",
+            "tags": ["overhead", "bottom", "carcass"],
+        }
+    if board_id == "T1":
+        return {
+            "boardType": "top_front_door_fascia",
+            "role": "front_visible",
+            "category": "front",
+            "materialClass": "door_board",
+            "doorColorSlot": 1,
+            "tags": ["overhead", "front", "door-color", "top-fascia"],
+        }
+    if board_id == "T2":
+        return {
+            "boardType": "top_front_inner_rail",
+            "role": "carcass_rail",
+            "category": "structural",
+            "materialClass": "carcass_board",
+            "tags": ["overhead", "top", "rail", "carcass"],
+        }
+    if board_id == "T3":
+        return {
+            "boardType": "top_rear_panel",
+            "role": "carcass",
+            "category": "structural",
+            "materialClass": "carcass_board",
+            "tags": ["overhead", "top", "rear", "carcass"],
+        }
+    if board_id == "T4":
+        return {
+            "boardType": "top_front_panel",
+            "role": "carcass",
+            "category": "structural",
+            "materialClass": "carcass_board",
+            "tags": ["overhead", "top", "front", "carcass"],
+        }
+    if board_id.startswith("D"):
+        canonical = _oh_divider_board_type(board_id, all_boards)
+        role = "side_panel" if canonical in ("left_side_panel", "right_side_panel") else "divider"
+        return {
+            "boardType": canonical,
+            "role": role,
+            "category": "divider",
+            "materialClass": "carcass_board",
+            "tags": ["overhead", "divider", "carcass", canonical],
+        }
+    if board_id.startswith("FP"):
+        if source_type == "up_flap":
+            return {
+                "boardType": "up_flap_door_panel",
+                "role": "door",
+                "category": "front",
+                "materialClass": "door_board",
+                "doorColorSlot": 1,
+                "tags": ["overhead", "front", "door", "up-flap"],
+            }
+        if source_type == "fixed_panel":
+            return {
+                "boardType": "fixed_front_panel",
+                "role": "front_visible",
+                "category": "front",
+                "materialClass": "door_board",
+                "doorColorSlot": 1,
+                "tags": ["overhead", "front", "fixed-panel", "door-color"],
+            }
+        return {
+            "boardType": "front_panel",
+            "role": "front_visible",
+            "category": "front",
+            "materialClass": "door_board",
+            "doorColorSlot": 1,
+            "tags": ["overhead", "front", source_type or "front-panel"],
+        }
+    return {
+        "boardType": source_type or "unknown_board",
+        "role": "unknown",
+        "category": str(board.get("category") or "unknown"),
+        "materialClass": "unknown",
+        "tags": ["overhead", "unknown"],
+    }
+
+
+def _oh_design_geometry(board, bbox):
+    return {
+        "x0": bbox["x0"],
+        "x1": bbox["x1"],
+        "y0": bbox["y0"],
+        "y1": bbox["y1"],
+        "z0": bbox["z0"],
+        "z1": bbox["z1"],
+        "profilePlane": board.get("profilePlane"),
+        "thicknessAxis": board.get("thicknessAxis"),
+        "materialThickness": board.get("materialThickness"),
+    }
+
+
+def _oh_panel_metadata(board, bbox, all_boards, run_label):
+    board_id = str(board.get("id") or "")
+    semantics = _oh_board_semantics(board, all_boards)
+    panel_id = "ohc.{}.{}".format(sanitize_token(run_label, fallback="run", limit=60), sanitize_token(board_id, fallback="board", limit=40))
+    default_attributes = {
+        "role": semantics["role"],
+        "category": semantics["category"],
+        "materialClass": semantics["materialClass"],
+        "tags": semantics["tags"],
+    }
+    if semantics.get("doorColorSlot") is not None:
+        default_attributes["doorColorSlot"] = semantics.get("doorColorSlot")
+    return {
+        "schemaVersion": 1,
+        "identity": {
+            "panelId": panel_id,
+            "generator": "overhead",
+            "module": "overhead",
+            "cabinetType": "overhead",
+            "sourceBoardId": board_id,
+            "sourceBoardType": str(board.get("boardType") or ""),
+            "boardType": semantics["boardType"],
+            "runId": str(run_label or ""),
+        },
+        "defaultAttributes": default_attributes,
+        "designGeometry": _oh_design_geometry(board, bbox),
+        "lifecycle": {
+            "state": "generated",
+            "reviewRequired": False,
+        },
+    }
+
+
+def _write_oh_panel_metadata(body, board, bbox, all_boards, run_label):
+    metadata = _oh_panel_metadata(board, bbox, all_boards, run_label)
+    payload = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+    panel_id = metadata["identity"]["panelId"]
+    ok_id = _set_entity_attribute(body, PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR, panel_id)
+    ok_payload = _set_entity_attribute(body, PANEL_ATTRIBUTE_GROUP, PANEL_METADATA_ATTR, payload)
+    return metadata, ok_id and ok_payload
+
+
+def _update_oh_panel_metadata(body, panel_metadata):
+    payload = json.dumps(panel_metadata, ensure_ascii=False, separators=(",", ":"))
+    return _set_entity_attribute(body, PANEL_ATTRIBUTE_GROUP, PANEL_METADATA_ATTR, payload)
+
+
+def _run_oh_face_init(body, panel_metadata, board_id, summary):
+    """Initialize face metadata for one OHC board and fold results into summary."""
+    if not initialize_oh_panel_faces:
+        return
+    try:
+        panel_metadata, face_init_result = initialize_oh_panel_faces(body, panel_metadata, board_id)
+        if face_init_result.get("initialized"):
+            if not _update_oh_panel_metadata(body, panel_metadata):
+                summary["warnings"].append(
+                    "Face metadata was initialized for {} but faceRegistry write-back failed.".format(board_id)
+                )
+            else:
+                summary["faceInitSummary"]["initializedCount"] += 1
+                summary["faceInitSummary"]["totalEdgeCount"] += int(face_init_result.get("edgeCount") or 0)
+                summary["faceInitSummary"]["totalSurfaceCount"] += int(face_init_result.get("surfaceCount") or 0)
+                summary["faceInitSummary"]["boards"].append(
+                    {
+                        "boardId": board_id,
+                        "bodyName": getattr(body, "name", "") or "",
+                        "surfaceCount": face_init_result.get("surfaceCount"),
+                        "edgeCount": face_init_result.get("edgeCount"),
+                        "faceCount": face_init_result.get("faceCount"),
+                        "edgeGroupCount": face_init_result.get("edgeGroupCount"),
+                    }
+                )
+        elif face_init_result.get("skipped"):
+            summary["faceInitSummary"]["skippedCount"] += 1
+        else:
+            for warning in (face_init_result.get("warnings") or [])[:2]:
+                summary["warnings"].append("Face skeleton skipped for {}: {}".format(board_id, warning))
+    except Exception as ex:
+        summary["warnings"].append("Face metadata initialization failed for {}: {}".format(board_id, ex))
+
+
+try:
+    import importlib
+    import sys as _sys
+
+    # Reload the whole face-metadata dependency chain in dependency order so a
+    # stale cached module (for example face_models without newly added
+    # constants) cannot break the import of panel_face_initializer.
+    for _module_name in (
+        "face_models",
+        "face_geometry_signature",
+        "face_attribute_store",
+        "face_entity_resolver",
+        "face_validation",
+        "face_metadata_service",
+        "panel_geometry",
+        "panel_face_initializer",
+    ):
+        try:
+            if _module_name in _sys.modules:
+                importlib.reload(_sys.modules[_module_name])
+            else:
+                importlib.import_module(_module_name)
+        except Exception:
+            pass
+
+    import panel_face_initializer as _panel_face_initializer_module
+
+    initialize_oh_panel_faces = _panel_face_initializer_module.initialize_oh_panel_faces
+except Exception:
+    initialize_oh_panel_faces = None
 
 
 def _body_axis_min_mm(body, axis):
@@ -1020,6 +1274,13 @@ def create_rough_bodies_from_board_result(
         "avoidanceZShiftMm": float(max(0.0, avoidance_z_shift_mm)),
         "assemblyComponentName": None,
         "placementFormulas": _oh_placement_formula_summary(result) if enable_overhead_postprocess else {},
+        "faceInitSummary": {
+            "initializedCount": 0,
+            "skippedCount": 0,
+            "totalEdgeCount": 0,
+            "totalSurfaceCount": 0,
+            "boards": [],
+        },
     }
     root_comp = fusion_adapter.get_root_component()
     if not root_comp:
@@ -1033,6 +1294,7 @@ def create_rough_bodies_from_board_result(
     boards_by_id = {str(board.get("id")): board for board in boards if isinstance(board, dict) and board.get("id")}
     bodies_by_id = {}
     components_by_id = {}
+    panel_metadata_by_id = {}
     zi_grooves_by_target = _collect_zi_groove_features(result) if enable_zi_groove_cuts else {}
     result_debug = result.get("debug") if isinstance(result.get("debug"), dict) else {}
 
@@ -1045,6 +1307,7 @@ def create_rough_bodies_from_board_result(
         component_name=component_name,
     )
     summary["assemblyComponentName"] = assembly_component_name
+    summary["_containerComponent"] = container
     if container_warning:
         summary["warnings"].append(container_warning)
     for index, board in enumerate(boards):
@@ -1132,6 +1395,18 @@ def create_rough_bodies_from_board_result(
         if abs(dx_mm) > 1e-6 or abs(dy_mm) > 1e-6 or abs(dz_mm) > 1e-6:
             move_body_by_mm(target_component, body, dx_mm, dy_mm, dz_mm, feature_prefix=placement_feature_prefix)
 
+        panel_metadata = None
+        panel_metadata_written = None
+        if module_name == "overhead":
+            panel_metadata, panel_metadata_written = _write_oh_panel_metadata(body, board, bbox, boards, summary["runLabel"])
+            if not panel_metadata_written:
+                summary["warnings"].append("Could not write panel metadata for overhead board {}.".format(board_id))
+            # Face metadata is initialized after post-processing (groove/hinge
+            # cuts) so the surface/edge/milling classification sees the final
+            # machined geometry instead of the plain box.
+            if panel_metadata_written:
+                panel_metadata_by_id[board_id] = panel_metadata
+
         summary["createdBodies"] += 1
         summary["createdBoardIds"].append(board_id)
         bodies_by_id[board_id] = body
@@ -1163,6 +1438,8 @@ def create_rough_bodies_from_board_result(
             "componentName": board_component_name,
             "placementOffset": {"x": dx_mm, "y": dy_mm, "z": dz_mm},
             "grooveCuts": groove_cuts,
+            "panelMetadataWritten": panel_metadata_written,
+            "panelMetadata": panel_metadata,
         })
 
     if enable_overhead_postprocess:
@@ -1181,6 +1458,15 @@ def create_rough_bodies_from_board_result(
             for row in postprocess.get(group_name, []):
                 if row.get("status") == "failed":
                     summary["warnings"].append("Overhead {} failed for {}: {}".format(group_name, row.get("featureId") or row.get("boardId"), row.get("reason") or "unknown"))
+
+    # Initialize face metadata after post-processing so surface/edge/milling
+    # classification reflects the final machined geometry (grooves, holes).
+    if module_name == "overhead" and initialize_oh_panel_faces:
+        for board_id, body in bodies_by_id.items():
+            panel_metadata = panel_metadata_by_id.get(board_id)
+            if not panel_metadata or body is None:
+                continue
+            _run_oh_face_init(body, panel_metadata, board_id, summary)
 
     if summary["createdBodies"] == 0 and not summary["errors"]:
         summary["warnings"].append("No {} rough bodies were created.".format(module_name))
@@ -1406,19 +1692,22 @@ def create_rough_bodies_from_general_tall_result(fusion_adapter, result, run_lab
         align_feature_prefix="GT_ALIGN_",
         enable_zi_groove_cuts=True,
         avoidance_z_shift_mm=avoidance_z_shift_mm,
+        create_container_component=True,
+        component_prefix="GT",
     )
     summary.setdefault("frontPanelsCreated", 0)
     summary.setdefault("frontPanelCutAudit", [])
     root_comp = fusion_adapter.get_root_component()
     if root_comp:
-        _gt_create_front_panel_bodies(root_comp, result, summary)
-        summary["frontPanelModelZOffset"] = offset_matching_bodies_z_mm(
-            root_comp,
-            name_prefixes=["GT_FP_"],
-            module="generalTall",
-            dz_mm=MODEL_Z_OFFSET_MM,
-            feature_prefix="GT_FP_MODEL_Z_OFFSET_",
-        )
+        fp_component = summary.get("_containerComponent") or root_comp
+        _gt_create_front_panel_bodies(fp_component, result, summary)
+        summary["frontPanelComponentName"] = summary.get("assemblyComponentName")
+        summary["frontPanelModelZOffset"] = {
+            "offsetMm": MODEL_Z_OFFSET_MM,
+            "movedBodies": 0,
+            "failedBodies": 0,
+            "mode": "sameComponentAtModelZ" if summary.get("assemblyComponentName") else "rootFallback",
+        }
         for row in summary["frontPanelCutAudit"]:
             if row.get("status") == "failed":
                 summary["warnings"].append(

@@ -1,6 +1,7 @@
 export type KitchenFunctionType =
   | "left_door"
   | "right_door"
+  | "double_door"
   | "drawer"
   | "open"
   | "down_flap"
@@ -185,6 +186,8 @@ export interface BoardGeometry {
     | "drawer_divider"
     | "full_depth_shelf"
     | "door_shelf"
+    | "avoidance_top"
+    | "avoidance_front"
     | "side_strengthening_strip";
   category: string;
   materialThickness: number;

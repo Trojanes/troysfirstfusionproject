@@ -72,7 +72,7 @@ function resolveOuterSideOptions(state: KitchenLayoutState, side: "left" | "righ
   const column = side === "left" ? state.columns[0] : state.columns[state.columns.length - 1];
   const key = side === "left" ? "leftSidePanelOptions" : "rightSidePanelOptions";
   const zonesWithOptions = (column?.zones || []).filter((zone) => Boolean(zone[key]));
-  const preferredZone = zonesWithOptions.find((zone) => zone.zoneType === "left_door" || zone.zoneType === "right_door")
+  const preferredZone = zonesWithOptions.find((zone) => isDoorZone(zone.zoneType))
     || zonesWithOptions.find((zone) => zoneVisible(zone.zoneType))
     || zonesWithOptions[0];
   return normalizeSidePanelOptions(preferredZone?.[key]);
@@ -224,7 +224,11 @@ function auditClosedProfile(raw: Array<[number, number]>, cleaned: Array<[number
 }
 
 function zoneVisible(type: KitchenZoneType | undefined): boolean {
-  return type === "left_door" || type === "right_door" || type === "open" || type === "custom";
+  return isDoorZone(type) || type === "open" || type === "custom";
+}
+
+function isDoorZone(type: KitchenZoneType | undefined): boolean {
+  return type === "left_door" || type === "right_door" || type === "double_door";
 }
 
 function vProfileNoWheel(style: string, cd: number, ch: number, cpt: number, bch: number, c: KitchenGeometryConstants): Array<[number, number]> {
@@ -443,6 +447,37 @@ function splitStripForStove<T extends Pick<BoardGeometry, "x0" | "x1" | "y0" | "
   return segments;
 }
 
+function splitStripByXCuts<T extends Pick<BoardGeometry, "x0" | "x1">>(strip: T, xCuts: Array<{ x0: number; x1: number }>, constants: KitchenGeometryConstants): Array<T & { segmentIndex: number }> {
+  let segments: Array<T & { segmentIndex: number }> = [{ ...strip, segmentIndex: 0 }];
+  for (const cut of xCuts) {
+    const next: Array<T & { segmentIndex: number }> = [];
+    for (const segment of segments) {
+      if (!intersects(segment.x0, segment.x1, cut.x0, cut.x1)) {
+        next.push(segment);
+        continue;
+      }
+      const left = { ...segment, x1: Math.min(segment.x1, cut.x0) };
+      const right = { ...segment, x0: Math.max(segment.x0, cut.x1) };
+      if (left.x1 - left.x0 >= constants.minStripSegmentLength) next.push(left);
+      if (right.x1 - right.x0 >= constants.minStripSegmentLength) next.push(right);
+    }
+    segments = next.map((segment, index) => ({ ...segment, segmentIndex: index }));
+  }
+  return segments;
+}
+
+function validWheelAvoidances(state: KitchenLayoutState, cd: number, ch: number): Array<{ id: string; x0: number; x1: number; height: number; depth: number }> {
+  return (state.wheelAvoidances || [])
+    .map((avoidance, index) => {
+      const x0 = Math.max(0, n(avoidance.x0, 0));
+      const x1 = Math.min(n(state.globalSettings.length, 0), n(avoidance.x1, 0));
+      const height = Math.max(0, Math.min(ch, n(avoidance.height, 0)));
+      const depth = Math.max(0, Math.min(cd, n(avoidance.depth, 0)));
+      return { id: avoidance.id || `wheel-${index + 1}`, x0, x1, height, depth };
+    })
+    .filter((avoidance) => avoidance.x1 > avoidance.x0 && avoidance.height > 0 && avoidance.depth > 0);
+}
+
 function generateBaseBoards(state: KitchenLayoutState, vPanels: VPanelGeometry[], columns: ComputedKitchenColumn[], zones: ComputedKitchenZone[], constants: KitchenGeometryConstants, warnings: string[]): BoardGeometry[] {
   const g = state.globalSettings;
   const cw = n(g.length, 0);
@@ -457,6 +492,7 @@ function generateBaseBoards(state: KitchenLayoutState, vPanels: VPanelGeometry[]
   const frontStopX1 = refs.right.options.frontVisible ? refs.right.innerX : cw;
   const rearSupportX0 = refs.left.options.frontVisible && !refs.left.options.extendT2T3B4ToOuterFace ? refs.left.innerX : 0;
   const rearSupportX1 = refs.right.options.frontVisible && !refs.right.options.extendT2T3B4ToOuterFace ? refs.right.innerX : cw;
+  const wheelAvoidances = validWheelAvoidances(state, cd, ch);
 
   if (g.bottomClearanceStyle === "style_2") {
     boards.push(board("B1", "Bottom front panel", "B1", "bottom_system", fpt, "XZ", "Y", { x0: frontStopX0, x1: frontStopX1, y0: -fpt, y1: 0, z0: 0, z1: bch }));
@@ -515,7 +551,81 @@ function generateBaseBoards(state: KitchenLayoutState, vPanels: VPanelGeometry[]
   });
 
   const b4Base = { x0: rearSupportX0, x1: rearSupportX1, y0: cd - cpt, y1: cd, z0: 0, z1: constants.supportStripWidth };
-  boards.push(board("B4", "Rear bottom vertical strip", "B4", "support_strip", cpt, "XZ", "Y", b4Base, supportStripNotches("B4", b4Base, vPanels, cpt, constants, "B4"), ["B4 is not segmented by wheel avoidance in V0."]));
+  splitStripByXCuts(b4Base, wheelAvoidances, constants).forEach((segment) => {
+    boards.push(board(
+      `B4-${segment.segmentIndex + 1}`,
+      "Rear bottom vertical strip",
+      "B4",
+      "support_strip",
+      cpt,
+      "XZ",
+      "Y",
+      segment,
+      supportStripNotches(`B4-${segment.segmentIndex + 1}`, segment, vPanels, cpt, constants, "B4"),
+      wheelAvoidances.length ? ["Lower B4 kept outside wheel avoidance span."] : undefined,
+    ));
+  });
+
+  for (const avoidance of wheelAvoidances) {
+    const x0 = Math.max(rearSupportX0, avoidance.x0);
+    const x1 = Math.min(rearSupportX1, avoidance.x1);
+    const y0 = Math.max(0, cd - avoidance.depth);
+    const y1 = cd;
+    const topZ1 = avoidance.height;
+    const topZ0 = topZ1 - cpt;
+    if (x1 <= x0 || y1 <= y0 || topZ0 < 0) {
+      warnings.push(`Wheel avoidance ${avoidance.id} support boards skipped due to invalid bounds.`);
+      continue;
+    }
+    boards.push(board(
+      `${avoidance.id}-avoidance-top`,
+      "Wheel avoidance top",
+      "avoidance_top",
+      "avoidance_support",
+      cpt,
+      "XY",
+      "Z",
+      { x0, x1, y0, y1, z0: topZ0, z1: topZ1 },
+      undefined,
+      ["Avoidance top horizontal board generated from wheel arch settings."],
+    ));
+    const b4Z0 = topZ1;
+    const b4Z1 = topZ1 + constants.supportStripWidth;
+    if (b4Z1 <= ch) {
+      const avoidanceB4 = { x0, x1, y0: cd - cpt, y1: cd, z0: b4Z0, z1: b4Z1 };
+      boards.push(board(
+        `${avoidance.id}-B4`,
+        "Wheel avoidance raised B4",
+        "B4",
+        "support_strip",
+        cpt,
+        "XZ",
+        "Y",
+        avoidanceB4,
+        supportStripNotches(`${avoidance.id}-B4`, avoidanceB4, vPanels, cpt, constants, "B4"),
+        ["B4 segment placed directly above wheel avoidance."],
+      ));
+    } else {
+      warnings.push(`Wheel avoidance ${avoidance.id} raised B4 skipped because it exceeds cabinet height.`);
+    }
+    const frontZ1 = Math.max(0, avoidance.height - cpt);
+    if (frontZ1 > 0) {
+      boards.push(board(
+        `${avoidance.id}-avoidance-front`,
+        "Wheel avoidance front",
+        "avoidance_front",
+        "avoidance_support",
+        cpt,
+        "XZ",
+        "Y",
+        { x0, x1, y0, y1: y0 + cpt, z0: 0, z1: frontZ1 },
+        undefined,
+        ["Avoidance front vertical board generated from wheel arch settings."],
+      ));
+    } else {
+      warnings.push(`Wheel avoidance ${avoidance.id} front board skipped because height is not greater than CPT.`);
+    }
+  }
 
   if (stoveCuts.length > 0 && boards.filter((item) => item.type === "T1" || item.type === "T2" || item.type === "T3").length === 0) {
     warnings.push("Stove cuts removed all top support strip segments.");
@@ -527,7 +637,7 @@ function generateBaseBoards(state: KitchenLayoutState, vPanels: VPanelGeometry[]
 function boundaryBoardType(zoneType: KitchenZoneType, isBottomZone: boolean): "drawer_divider" | "full_depth_shelf" | null {
   if (isBottomZone) return null;
   if (zoneType === "drawer" || zoneType === "down_flap") return "drawer_divider";
-  if (zoneType === "left_door" || zoneType === "right_door" || zoneType === "open" || zoneType === "stove" || zoneType === "custom") {
+  if (isDoorZone(zoneType) || zoneType === "open" || zoneType === "stove" || zoneType === "custom") {
     return "full_depth_shelf";
   }
   return null;
@@ -582,7 +692,7 @@ function generateFunctionalBoards(columns: ComputedKitchenColumn[], zones: Compu
     columnZones.forEach((zone, index) => {
       const type = boundaryBoardType(zone.zoneType, index === columnZones.length - 1);
       if (type) addFunctionalBoard(boards, `${column.id}-${zone.id}-bottom`, type, column, zone.z0, cpt, cd, constants);
-      if ((zone.zoneType === "left_door" || zone.zoneType === "right_door") && zone.shelfEnabled !== false) {
+      if (isDoorZone(zone.zoneType) && zone.shelfEnabled !== false) {
         const shelfTopHeight = zone.shelfHeight == null ? Math.round(zone.height / 2) : n(zone.shelfHeight, 0);
         const shelfTopZ = zone.z0 + shelfTopHeight;
         if (zone.height < 350) {
@@ -599,6 +709,50 @@ function generateFunctionalBoards(columns: ComputedKitchenColumn[], zones: Compu
   return boards;
 }
 
+function shortenHorizontalBoardsForWheelAvoidance(boards: BoardGeometry[], state: KitchenLayoutState, warnings: string[]): void {
+  const g = state.globalSettings;
+  const cd = kitchenStructuralDepth(g);
+  const ch = n(g.height, 0);
+  const wheelAvoidances = validWheelAvoidances(state, cd, ch);
+  if (!wheelAvoidances.length) return;
+  const candidates = boards.filter((item) =>
+    (item.type === "drawer_divider" || item.type === "full_depth_shelf" || item.type === "door_shelf") &&
+    item.profilePlane === "XY"
+  );
+  for (const boardItem of candidates) {
+    let newY1 = boardItem.y1;
+    const applied: string[] = [];
+    for (const avoidance of wheelAvoidances) {
+      const frontY = cd - avoidance.depth;
+      const raisedB4Z0 = avoidance.height;
+      const raisedB4Z1 = avoidance.height + 100;
+      if (!intersects(boardItem.x0, boardItem.x1, avoidance.x0, avoidance.x1)) continue;
+      if (intersects(boardItem.z0, boardItem.z1, 0, avoidance.height)) {
+        const clearanceY = Math.max(boardItem.y0, frontY - n(g.materialThickness, 15));
+        if (boardItem.y1 > clearanceY + 0.001) {
+          newY1 = Math.min(newY1, clearanceY);
+          applied.push(`${avoidance.id}:front`);
+        }
+      }
+      if (intersects(boardItem.z0, boardItem.z1, raisedB4Z0, raisedB4Z1)) {
+        const clearanceY = Math.max(boardItem.y0, cd - n(g.materialThickness, 15));
+        if (boardItem.y1 > clearanceY + 0.001) {
+          newY1 = Math.min(newY1, clearanceY);
+          applied.push(`${avoidance.id}:raised-B4`);
+        }
+      }
+    }
+    if (newY1 < boardItem.y1 - 0.001) {
+      boardItem.y1 = Math.max(boardItem.y0, newY1);
+      boardItem.notes = [
+        ...(boardItem.notes || []),
+        `Rear shortened to avoid wheel arch front board (${applied.join(", ")}).`,
+      ];
+      warnings.push(`${boardItem.id} shortened at rear for wheel avoidance ${applied.join(", ")}.`);
+    }
+  }
+}
+
 function addSideStrengtheningStrips(boards: BoardGeometry[], columns: ComputedKitchenColumn[], zones: ComputedKitchenZone[], state: KitchenLayoutState, warnings: string[]): void {
   const g = state.globalSettings;
   const cpt = n(g.materialThickness, 15);
@@ -608,7 +762,7 @@ function addSideStrengtheningStrips(boards: BoardGeometry[], columns: ComputedKi
   const addStrip = (side: "left" | "right", columnIndex: number, zone: ComputedKitchenZone): void => {
     const options = side === "left" ? refs.left.options : refs.right.options;
     if (!options.frontVisible || !options.strengtheningStripEnabled) return;
-    if (zone.zoneType !== "left_door" && zone.zoneType !== "right_door") {
+    if (!isDoorZone(zone.zoneType)) {
       return;
     }
     const columnZones = zones.filter((item) => item.columnIndex === columnIndex);
@@ -875,6 +1029,9 @@ function outerWithEdgeNotches(h0: number, h1: number, v0: number, v1: number, cu
 }
 
 function slotCutoutForBoard(boardItem: BoardGeometry, slot: ResolvedSlot): PanelBodyCutout | null {
+  // Functional boards form tongues through their outer profile. The matching machining
+  // happens on V panels, so cutting the same slot on the board removes the tongue.
+  if (boardItem.type === "drawer_divider" || boardItem.type === "full_depth_shelf" || boardItem.type === "door_shelf") return null;
   if (slot.resolvedSlotType === "none") return null;
   if (boardItem.profilePlane !== "XY") return null;
   const isBoardLeftEnd = slot.side === "right";
@@ -1001,9 +1158,9 @@ function buildPanelDxf(boards: BoardGeometry[], vPanels: VPanelGeometry[], cpt: 
   ];
 }
 
-const FRONT_PANEL_ZONE_TYPES = new Set(["left_door", "right_door", "drawer", "down_flap"]);
+const FRONT_PANEL_ZONE_TYPES = new Set(["left_door", "right_door", "double_door", "drawer", "down_flap"]);
 
-function isFrontPanelZone(type: string | undefined): type is FrontPanelGeometry["type"] {
+function isFrontPanelZone(type: string | undefined): boolean {
   return FRONT_PANEL_ZONE_TYPES.has(String(type));
 }
 
@@ -1020,7 +1177,7 @@ function upperDividerCenterZ(zone: ComputedKitchenZone, state: KitchenLayoutStat
   return Math.abs(zone.z1 - ch) <= 0.001 ? ch - n(state.globalSettings.materialThickness, 15) / 2 : zone.z1;
 }
 
-function buildFrontPanels(columns: ComputedKitchenColumn[], zones: ComputedKitchenZone[], state: KitchenLayoutState): FrontPanelGeometry[] {
+function buildFrontPanels(columns: ComputedKitchenColumn[], zones: ComputedKitchenZone[], state: KitchenLayoutState, warnings: string[]): FrontPanelGeometry[] {
   const g = state.globalSettings;
   const cw = n(g.length, 0);
   const ch = n(g.height, 0);
@@ -1059,59 +1216,77 @@ function buildFrontPanels(columns: ComputedKitchenColumn[], zones: ComputedKitch
         : isFrontPanelZone(belowZone?.zoneType) ? zone.z0 + fc / 2 : zone.z0 - cpt / 2;
       const width = x1 - x0;
       const height = z1 - z0;
-      const panel: FrontPanelGeometry = {
-        id: `${zone.id}-front-panel`,
-        columnId: zone.columnId,
-        zoneId: zone.id,
-        type: zone.zoneType,
-        x0,
-        x1,
-        y0: -fpt,
-        y1: 0,
-        z0,
-        z1,
-        width,
-        height,
-        thickness: fpt,
-      };
+      const seamX = (x0 + x1) / 2;
+      const leaves: Array<{ idSuffix: string; type: FrontPanelGeometry["type"]; x0: number; x1: number }> = zone.zoneType === "double_door"
+        ? [
+            { idSuffix: "-left", type: "left_door", x0, x1: seamX - fc / 2 },
+            { idSuffix: "-right", type: "right_door", x0: seamX + fc / 2, x1 },
+          ]
+        : [{ idSuffix: "", type: zone.zoneType as FrontPanelGeometry["type"], x0, x1 }];
       const hingeSettings = (zone as unknown as { hingeSettings?: { sideDistance?: number; cupDiameter?: number; cupDepth?: number; cupCenterFromEdge?: number; useThreeHinges?: boolean } }).hingeSettings || {};
       const sideDistance = n(hingeSettings.sideDistance, getDefaultHingeSideDistance(zone.zoneType === "down_flap" ? width : height));
       const cupDiameter = n(hingeSettings.cupDiameter, 35);
       const cupDepth = n(hingeSettings.cupDepth, 12.5);
       const cupCenterFromEdge = n(hingeSettings.cupCenterFromEdge, 22.5);
       const useThreeHinges = Boolean(hingeSettings.useThreeHinges);
-      if (zone.zoneType === "left_door" || zone.zoneType === "right_door") {
-        const centerX = zone.zoneType === "left_door" ? x0 + cupCenterFromEdge : x1 - cupCenterFromEdge;
-        const centers = [z1 - sideDistance, z0 + sideDistance, ...(useThreeHinges ? [(z0 + z1) / 2] : [])];
-        panel.hingeHoles = centers.map((centerZ, index) => ({ id: `${panel.id}-hinge-${index + 1}`, centerX, centerZ, diameter: cupDiameter, depth: cupDepth }));
-      } else if (zone.zoneType === "down_flap") {
-        const centerZ = z0 + cupCenterFromEdge;
-        const centers = [x0 + sideDistance, x1 - sideDistance, ...(useThreeHinges ? [(x0 + x1) / 2] : [])];
-        panel.hingeHoles = centers.map((centerX, index) => ({ id: `${panel.id}-hinge-${index + 1}`, centerX, centerZ, diameter: cupDiameter, depth: cupDepth }));
-      }
-      const zoneLockEnabled = (zone as unknown as { lockEnabled?: boolean }).lockEnabled !== false;
-      if (lockGlobalEnabled && zoneLockEnabled) {
-        const lockSideCenterOffset = n((zone as unknown as { lockSideCenterOffset?: number }).lockSideCenterOffset, 80);
-        const lockCenterX = zone.zoneType === "left_door" ? x1 - lockSideCenterOffset : zone.zoneType === "right_door" ? x0 + lockSideCenterOffset : (x0 + x1) / 2;
-        const lockCenterZ = upperDividerCenterZ(zone, state) - cpt / 2 - 30.5;
-        const lockWidth = 55;
-        const lockHeight = 15.5;
-        panel.lockCutout = {
-          id: `${panel.id}-lock`,
-          presetId: "razor_long_rounded_1",
-          shape: "rounded_slot",
-          centerX: lockCenterX,
-          centerZ: lockCenterZ,
-          x0: lockCenterX - lockWidth / 2,
-          x1: lockCenterX + lockWidth / 2,
-          z0: lockCenterZ - lockHeight / 2,
-          z1: lockCenterZ + lockHeight / 2,
-          width: lockWidth,
-          height: lockHeight,
-          radius: lockHeight / 2,
+      for (const leaf of leaves) {
+        const leafWidth = leaf.x1 - leaf.x0;
+        if (leafWidth <= 0 || height <= 0) {
+          warnings.push(`Front panel skipped in ${zone.id}: invalid leaf ${leaf.x0}-${leaf.x1}.`);
+          continue;
+        }
+        const panel: FrontPanelGeometry = {
+          id: `${zone.id}-front-panel${leaf.idSuffix}`,
+          columnId: zone.columnId,
+          zoneId: zone.id,
+          type: leaf.type,
+          x0: leaf.x0,
+          x1: leaf.x1,
+          y0: -fpt,
+          y1: 0,
+          z0,
+          z1,
+          width: leafWidth,
+          height,
+          thickness: fpt,
         };
+        if (leaf.type === "left_door" || leaf.type === "right_door") {
+          const centerX = leaf.type === "left_door" ? leaf.x0 + cupCenterFromEdge : leaf.x1 - cupCenterFromEdge;
+          const centers = [z1 - sideDistance, z0 + sideDistance, ...(useThreeHinges ? [(z0 + z1) / 2] : [])];
+          panel.hingeHoles = centers.map((centerZ, index) => ({ id: `${panel.id}-hinge-${index + 1}`, centerX, centerZ, diameter: cupDiameter, depth: cupDepth }));
+        } else if (leaf.type === "down_flap") {
+          const centerZ = z0 + cupCenterFromEdge;
+          const centers = [leaf.x0 + sideDistance, leaf.x1 - sideDistance, ...(useThreeHinges ? [(leaf.x0 + leaf.x1) / 2] : [])];
+          panel.hingeHoles = centers.map((centerX, index) => ({ id: `${panel.id}-hinge-${index + 1}`, centerX, centerZ, diameter: cupDiameter, depth: cupDepth }));
+        }
+        const zoneLockEnabled = (zone as unknown as { lockEnabled?: boolean }).lockEnabled !== false;
+        if (lockGlobalEnabled && zoneLockEnabled) {
+          const lockSideCenterOffset = n((zone as unknown as { lockSideCenterOffset?: number }).lockSideCenterOffset, 80);
+          const lockCenterX = leaf.type === "left_door"
+            ? leaf.x1 - lockSideCenterOffset
+            : leaf.type === "right_door"
+              ? leaf.x0 + lockSideCenterOffset
+              : (leaf.x0 + leaf.x1) / 2;
+          const lockCenterZ = upperDividerCenterZ(zone, state) - cpt / 2 - 30.5;
+          const lockWidth = 55;
+          const lockHeight = 15.5;
+          panel.lockCutout = {
+            id: `${panel.id}-lock`,
+            presetId: "razor_long_rounded_1",
+            shape: "rounded_slot",
+            centerX: lockCenterX,
+            centerZ: lockCenterZ,
+            x0: lockCenterX - lockWidth / 2,
+            x1: lockCenterX + lockWidth / 2,
+            z0: lockCenterZ - lockHeight / 2,
+            z1: lockCenterZ + lockHeight / 2,
+            width: lockWidth,
+            height: lockHeight,
+            radius: lockHeight / 2,
+          };
+        }
+        panels.push(panel);
       }
-      panels.push(panel);
     }
   }
   return panels;
@@ -1187,13 +1362,14 @@ export function generateKitchenCabinetGeometry(rawState: KitchenLayoutState): Ki
     ...generateBaseBoards(state, vPanels, columns, zones, constants, warnings),
     ...generateFunctionalBoards(columns, zones, state, constants, warnings),
   ];
+  shortenHorizontalBoardsForWheelAvoidance(boards, state, warnings);
   addSideStrengtheningStrips(boards, columns, zones, state, warnings);
   const slotRequests = generateSlotRequests(boards, columns, zones, vPanels, state, constants);
   const resolvedSlots = resolveSlots(slotRequests, state.vPanelMachiningPreferences, warnings, errors);
   updateFunctionalBoardProfilesFromSlots(boards, resolvedSlots, cpt, cd, constants);
   applySideStrengtheningStripShelfJoinery(boards, cpt);
   buildPanelBodies(boards, vPanels, resolvedSlots);
-  const frontPanels = buildFrontPanels(columns, zones, state);
+  const frontPanels = buildFrontPanels(columns, zones, state, warnings);
   const panelDxf = buildPanelDxf(boards, vPanels, cpt);
 
   return {

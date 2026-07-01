@@ -100,6 +100,19 @@ class OverheadController:
             return None, ["Overhead bridge returned no result."], node_debug
         return result, [], node_debug
 
+    def _bench_meta(self, payload):
+        if not isinstance(payload, dict):
+            return {}
+        client_bench_id = payload.get("clientBenchId")
+        if client_bench_id:
+            return {"clientBenchId": client_bench_id}
+        return {}
+
+    def _with_bench(self, payload, body):
+        merged = dict(body)
+        merged.update(self._bench_meta(payload))
+        return merged
+
     def create_fusion_rough_bodies(self, payload, _palette):
         result = payload.get("result") if isinstance(payload, dict) else None
         if not isinstance(result, dict):
@@ -108,13 +121,16 @@ class OverheadController:
             if errors or not isinstance(result, dict):
                 return (
                     "overheadFusionResult",
-                    {
-                        "ok": False,
-                        "module": "overhead",
-                        "action": "overhead.createFusionRoughBodies",
-                        "errors": errors or ["Missing Overhead result payload."],
-                        "debug": node_debug,
-                    },
+                    self._with_bench(
+                        payload,
+                        {
+                            "ok": False,
+                            "module": "overhead",
+                            "action": "overhead.createFusionRoughBodies",
+                            "errors": errors or ["Missing Overhead result payload."],
+                            "debug": node_debug,
+                        },
+                    ),
                 )
 
         validation = result.get("validation") if isinstance(result.get("validation"), dict) else {}
@@ -140,28 +156,34 @@ class OverheadController:
         if validation_errors or invalid_boards > 0:
             return (
                 "overheadFusionResult",
-                {
-                    "ok": False,
-                    "module": "overhead",
-                    "action": "overhead.createFusionRoughBodies",
-                    "errors": ["Overhead cannot create Fusion bodies because validation failed."],
-                    "status": "FAIL",
-                    "invalidBoards": invalid_boards,
-                    "validationErrors": validation_errors[:20],
-                },
+                self._with_bench(
+                    payload,
+                    {
+                        "ok": False,
+                        "module": "overhead",
+                        "action": "overhead.createFusionRoughBodies",
+                        "errors": ["Overhead cannot create Fusion bodies because validation failed."],
+                        "status": "FAIL",
+                        "invalidBoards": invalid_boards,
+                        "validationErrors": validation_errors[:20],
+                    },
+                ),
             )
 
         if self.fusion is None:
             return (
                 "overheadFusionResult",
-                {
-                    "ok": False,
-                    "module": "overhead",
-                    "action": "overhead.createFusionRoughBodies",
-                    "errors": ["Fusion adapter is unavailable; reload the plugin and try again in an active Fusion design."],
-                    "status": "FAIL",
-                    "invalidBoards": invalid_boards,
-                },
+                self._with_bench(
+                    payload,
+                    {
+                        "ok": False,
+                        "module": "overhead",
+                        "action": "overhead.createFusionRoughBodies",
+                        "errors": ["Fusion adapter is unavailable; reload the plugin and try again in an active Fusion design."],
+                        "status": "FAIL",
+                        "invalidBoards": invalid_boards,
+                    },
+                ),
             )
 
         run_label = payload.get("caseName") if isinstance(payload, dict) else None
@@ -185,34 +207,38 @@ class OverheadController:
             self.fusion.refresh_viewport()
         return (
             "overheadFusionResult",
-            {
-                "ok": ok,
-                "module": "overhead",
-                "action": "overhead.createFusionRoughBodies",
-                "status": "READY" if ok else "FAIL",
-                "invalidBoards": invalid_boards,
-                "canGenerate": ok,
-                "createdBodies": rough.get("createdBodies", 0),
-                "assemblyComponentName": rough.get("assemblyComponentName"),
-                "placementFormulas": rough.get("placementFormulas", {}),
-                "boardCount": len(boards),
-                "createdBoardIds": rough.get("createdBoardIds", []),
-                "skippedBoards": rough.get("skippedBoards", []),
-                "bodyAudit": rough.get("bodyAudit", []),
-                "overheadPostprocess": rough.get("overheadPostprocess", {}),
-                "bpGrooveCutsCreated": rough.get("bpGrooveCutsCreated", 0),
-                "hingeCutsCreated": rough.get("hingeCutsCreated", 0),
-                "rotationOpsCreated": rough.get("rotationOpsCreated", 0),
-                "topPanelTranslationsCreated": rough.get("topPanelTranslationsCreated", 0),
-                "frontPanelZShiftsCreated": rough.get("frontPanelZShiftsCreated", 0),
-                "dividerZShiftsCreated": rough.get("dividerZShiftsCreated", 0),
-                "supportZShiftsCreated": rough.get("supportZShiftsCreated", 0),
-                "bodyComponentsCreated": rough.get("bodyComponentsCreated", 0),
-                "bodyComponentNames": rough.get("bodyComponentNames", []),
-                "warnings": rough.get("warnings", []),
-                "errors": rough.get("errors", []),
-                "runLabel": rough.get("runLabel"),
-            },
+            self._with_bench(
+                payload,
+                {
+                    "ok": ok,
+                    "module": "overhead",
+                    "action": "overhead.createFusionRoughBodies",
+                    "status": "READY" if ok else "FAIL",
+                    "invalidBoards": invalid_boards,
+                    "canGenerate": ok,
+                    "createdBodies": rough.get("createdBodies", 0),
+                    "assemblyComponentName": rough.get("assemblyComponentName"),
+                    "placementFormulas": rough.get("placementFormulas", {}),
+                    "boardCount": len(boards),
+                    "createdBoardIds": rough.get("createdBoardIds", []),
+                    "skippedBoards": rough.get("skippedBoards", []),
+                    "bodyAudit": rough.get("bodyAudit", []),
+                    "overheadPostprocess": rough.get("overheadPostprocess", {}),
+                    "bpGrooveCutsCreated": rough.get("bpGrooveCutsCreated", 0),
+                    "hingeCutsCreated": rough.get("hingeCutsCreated", 0),
+                    "rotationOpsCreated": rough.get("rotationOpsCreated", 0),
+                    "topPanelTranslationsCreated": rough.get("topPanelTranslationsCreated", 0),
+                    "frontPanelZShiftsCreated": rough.get("frontPanelZShiftsCreated", 0),
+                    "dividerZShiftsCreated": rough.get("dividerZShiftsCreated", 0),
+                    "supportZShiftsCreated": rough.get("supportZShiftsCreated", 0),
+                    "bodyComponentsCreated": rough.get("bodyComponentsCreated", 0),
+                    "bodyComponentNames": rough.get("bodyComponentNames", []),
+                    "warnings": rough.get("warnings", []),
+                    "errors": rough.get("errors", []),
+                    "runLabel": rough.get("runLabel"),
+                    "faceInitSummary": rough.get("faceInitSummary", {}),
+                },
+            ),
         )
 
     def generate(self, payload, _palette):
@@ -221,22 +247,28 @@ class OverheadController:
         if errors:
             return (
                 "overheadResult",
-                {
-                    "ok": False,
-                    "module": "overhead",
-                    "action": "overhead.generate",
-                    "errors": errors,
-                    "debug": node_debug,
-                },
+                self._with_bench(
+                    payload,
+                    {
+                        "ok": False,
+                        "module": "overhead",
+                        "action": "overhead.generate",
+                        "errors": errors,
+                        "debug": node_debug,
+                    },
+                ),
             )
 
         return (
             "overheadResult",
-            {
-                "ok": True,
-                "module": "overhead",
-                "action": "overhead.generate",
-                "result": result,
-                "debug": node_debug,
-            },
+            self._with_bench(
+                payload,
+                {
+                    "ok": True,
+                    "module": "overhead",
+                    "action": "overhead.generate",
+                    "result": result,
+                    "debug": node_debug,
+                },
+            ),
         )
