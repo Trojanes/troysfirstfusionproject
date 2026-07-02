@@ -342,6 +342,20 @@ def _body_of(face, panel_context):
         return None
 
 
+def resolve_body_frame(body):
+    """Public: build the body-attached frame for a body (None if unavailable).
+
+    Other modules (e.g. panel_geometry) use this so ALL 2D data written to panel
+    metadata (outline, features, edge directionHint) shares one coordinate frame.
+    """
+    if body is None:
+        return None
+    try:
+        return build_body_frame_from_faces(_collect_face_infos(body))
+    except Exception:
+        return None
+
+
 def _resolve_body_frame(face, panel_context):
     body = _body_of(face, panel_context)
     if body is None:

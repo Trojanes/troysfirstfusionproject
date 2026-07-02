@@ -20,6 +20,20 @@ try:
 except ImportError:  # pragma: no cover - only present inside Fusion
     adsk = None
 
+try:
+    # Body-attached frame: the SAME frame used by face geometry signatures, so
+    # outline points, feature coordinates and edge directionHints all live in
+    # one canonical 2D space (rigid-move invariant).
+    from face_geometry_signature import (
+        express_point_in_frame,
+        express_vector_in_frame,
+        resolve_body_frame,
+    )
+except ImportError:  # pragma: no cover - standalone usage
+    express_point_in_frame = None
+    express_vector_in_frame = None
+    resolve_body_frame = None
+
 CUT_TYPE_HALF = "HALF"
 CUT_TYPE_FULL = "FULL"
 
@@ -159,6 +173,13 @@ def build_svg_document(outer_segments, inner_features, bounds, options=None):
                 "segIndex": index,
                 "edgeToken": token,
                 "signature": segment.get("signature"),
+                # Canonical face-local mm coordinates (body-attached frame,
+                # pre-flip). Use THIS for nesting / downstream geometry.
+                "pointsLocal": [
+                    [round(x, 3), round(y, 3)] for (x, y) in (segment.get("points") or [])
+                ],
+                # Display-space coordinates (shifted to origin, Y flipped for
+                # SVG rendering). Do NOT use for geometry work.
                 "points2d": flipped,
             }
         )
@@ -267,9 +288,37 @@ def _faces_share_edge(face_a, face_b):
     return False
 
 
+_BODY_FRAME_CACHE = {"key": None, "frame": None}
+
+
+def _body_frame(body):
+    """Cached body-attached frame (same frame as face geometry signatures)."""
+    if body is None or resolve_body_frame is None:
+        return None
+    try:
+        key = getattr(body, "entityToken", None) or id(body)
+    except Exception:
+        key = id(body)
+    if _BODY_FRAME_CACHE["key"] == key:
+        return _BODY_FRAME_CACHE["frame"]
+    frame = resolve_body_frame(body)
+    _BODY_FRAME_CACHE["key"] = key
+    _BODY_FRAME_CACHE["frame"] = frame
+    return frame
+
+
 def _to_local_point_mm(point, body):
     if point is None:
         return [0.0, 0.0, 0.0]
+    frame = _body_frame(body)
+    if frame is not None and express_point_in_frame is not None:
+        try:
+            return express_point_in_frame(
+                [point.x * 10.0, point.y * 10.0, point.z * 10.0], frame
+            )
+        except Exception:
+            pass
+    # Fallback: occurrence-transform local coordinates (pre-frame behaviour).
     try:
         assembly_context = getattr(body, "assemblyContext", None)
         transform = assembly_context.transform if assembly_context else None
@@ -296,6 +345,14 @@ def _face_normal_local(face, body):
             normal = result
         if normal is None:
             return [0.0, 0.0, 1.0]
+        frame = _body_frame(body)
+        if frame is not None and express_vector_in_frame is not None:
+            try:
+                return normalize_vector(
+                    express_vector_in_frame([normal.x, normal.y, normal.z], frame)
+                )
+            except Exception:
+                pass
         try:
             assembly_context = getattr(body, "assemblyContext", None)
             transform = assembly_context.transform if assembly_context else None
@@ -662,6 +719,11 @@ def _public_feature(feature):
         "radiusMm": feature.get("radiusMm"),
         "openSurfaceToken": feature.get("openSurfaceToken"),
         "center2d": list(feature.get("center")) if feature.get("center") else None,
+        # Face-local mm polygon of the feature opening (same frame as the
+        # outline pointsLocal). Required by CAM/nesting feature transforms.
+        "pointsLocal": [
+            [round(x, 3), round(y, 3)] for (x, y) in (feature.get("points") or [])
+        ],
     }
 
 

@@ -2138,6 +2138,7 @@
       <button type="button" class="attr-page-tab active" data-attr-view="overview">Overview</button>
       <button type="button" class="attr-page-tab" data-attr-view="panel-manager">Panel Manager</button>
       <button type="button" class="attr-page-tab" data-attr-view="tag-edit">Tag Edit</button>
+      <button type="button" class="attr-page-tab" data-attr-view="nesting">Nesting</button>
       <button type="button" class="attr-page-tab" data-attr-view="overhead-test">Overhead Test Bench</button>
     </div>
 
@@ -2560,6 +2561,70 @@
       </div>
     </div>
 
+    <div class="attr-view" id="attr-view-nesting" hidden>
+      <div class="attributes-shell">
+        <div class="attributes-main">
+          <div class="card">
+            <h3>Nesting Input <span class="pill">Milestone 1</span></h3>
+            <div class="card-body">
+              <div class="attr-section-note">Builds NestPart groups from the latest full metadata scan (Overview → Scan All Metadata). Undefined color / board type tags are rejected — fix them in Tag Edit first.</div>
+              <div class="actions" style="margin-top:10px;">
+                <button type="button" class="primary" id="attrNestBuildJobBtn">Build Nesting Job</button>
+                <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;">
+                  <input type="checkbox" id="attrNestConservative"> Conservative grouping (split by face-up)
+                </label>
+              </div>
+              <div id="attrNestJobSummary" class="message" style="margin-top:8px;">No nesting job built yet.</div>
+              <div id="attrNestJobDetail"></div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h3>Sheet &amp; Simple Nesting <span class="pill">Milestone 2 preview</span></h3>
+            <div class="card-body">
+              <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:10px;">
+                <label style="font-size:12px;">Sheet W (mm)
+                  <input type="number" id="attrNestSheetW" value="2400" min="100" step="10" style="width:100%;">
+                </label>
+                <label style="font-size:12px;">Sheet H (mm)
+                  <input type="number" id="attrNestSheetH" value="1200" min="100" step="10" style="width:100%;">
+                </label>
+                <label style="font-size:12px;">Margin (mm)
+                  <input type="number" id="attrNestMargin" value="10" min="0" step="1" style="width:100%;">
+                </label>
+                <label style="font-size:12px;">Clearance (mm)
+                  <input type="number" id="attrNestClearance" value="5" min="0" step="1" style="width:100%;">
+                </label>
+              </div>
+              <div class="actions" style="margin-top:10px;">
+                <button type="button" class="primary" id="attrNestRunBtn" disabled>Run Simple Nesting</button>
+              </div>
+              <div id="attrNestRunSummary" class="message" style="margin-top:8px;">Build a nesting job first.</div>
+              <div id="attrNestRunResult"></div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="card" style="margin-bottom:0;">
+          <h3>Nesting Notes</h3>
+          <div class="card-body">
+            <div class="search-result-item">
+              <h4>Data source</h4>
+              <div class="meta">UnifiedCabinet.Panel metadata: outline pointsLocal, features, edge groups.</div>
+            </div>
+            <div class="search-result-item">
+              <h4>Grouping</h4>
+              <div class="meta">materialClass + colorTag + thickness = one sheet pool.</div>
+            </div>
+            <div class="search-result-item">
+              <h4>Solver</h4>
+              <div class="meta">simpleBottomLeft (deterministic). NFP / GA come later and reuse the same job format.</div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </div>
+
     <div class="attr-view" id="attr-view-overhead-test" hidden>
       <div class="attr-overhead-test" id="attrOverheadTestPanel">
         <div class="attr-overhead-status" id="attrOhStatusText">Overhead test bench — isolated copy for Attributes workflow testing.</div>
@@ -2705,6 +2770,18 @@
   </div>
 
   <script src="../Fridge%20Cabinet%20Generator/fridge_logic.js"></script>
+  <!-- CabinetNC nesting modules (load order = dependency order) -->
+  <script src="nesting/nesting_types.js"></script>
+  <script src="nesting/geometry/polygon_basic.js"></script>
+  <script src="nesting/geometry/polygon_transform.js"></script>
+  <script src="nesting/geometry/intersections.js"></script>
+  <script src="nesting/input/outline_records_to_polygon.js"></script>
+  <script src="nesting/input/derive_allowed_rotations.js"></script>
+  <script src="nesting/input/validate_nesting_inputs.js"></script>
+  <script src="nesting/input/panel_to_nest_part.js"></script>
+  <script src="nesting/input/group_nest_parts.js"></script>
+  <script src="nesting/input/build_nesting_input_job.js"></script>
+  <script src="nesting/solver/simple_bottom_left.js"></script>
   <script>
     let stack = [
       { id: "flap", type: "flap", height: 195 },
@@ -9014,6 +9091,134 @@
       fusionSend("panelAttributes.setAssemblyZone", { widthMm, depthMm });
     }
 
+    function attrNestingNs() {
+      return globalThis.CabinetNesting || {};
+    }
+
+    function attrNestingBuildJob() {
+      const summary = document.getElementById("attrNestJobSummary");
+      const detail = document.getElementById("attrNestJobDetail");
+      const runBtn = document.getElementById("attrNestRunBtn");
+      const ns = attrNestingNs();
+      if (!ns.buildNestingInputJob) {
+        if (summary) { summary.textContent = "Nesting modules failed to load."; summary.className = "message error"; }
+        return;
+      }
+      const records = panelAttrMock.metadataScanRecords || [];
+      if (!records.length) {
+        if (summary) {
+          summary.textContent = "No metadata scan loaded. Use Overview → Scan All Metadata first.";
+          summary.className = "message warn";
+        }
+        return;
+      }
+      const conservative = Boolean(document.getElementById("attrNestConservative")?.checked);
+      const job = ns.buildNestingInputJob.buildNestingInputJob(records, { conservative });
+      panelAttrMock.nestingJob = job;
+      panelAttrMock.nestingResult = null;
+
+      if (summary) {
+        summary.textContent = `${job.summary.validParts} part(s) in ${job.summary.groupCount} group(s) · ${job.summary.invalidParts} invalid · ${job.summary.warnings} warning(s), ${job.summary.errors} error(s).`;
+        summary.className = `message ${job.summary.validParts ? "ok" : "warn"}`;
+      }
+      if (detail) {
+        const groupsHtml = job.groups.map((group) => (
+          `<div class="attr-tag-pending-item" style="margin-top:6px;">
+            <strong>${escapeHtml(group.groupKey)}</strong>
+            <div class="muted">${escapeHtml(String(group.parts.length))} part(s) · ${escapeHtml(String(group.thicknessMm))} mm</div>
+          </div>`
+        )).join("");
+        const invalidHtml = job.invalidPanels.length
+          ? `<details style="margin-top:8px;">
+              <summary class="muted" style="cursor:pointer;">Invalid panels (${escapeHtml(String(job.invalidPanels.length))})</summary>
+              ${job.invalidPanels.map((item) => (
+                `<div class="attr-tag-pending-item" style="margin-top:6px;">
+                  <strong>${escapeHtml(item.panelId || item.sourceBoardId || "unknown panel")}</strong>
+                  <div class="muted">${escapeHtml(item.issues.filter((i) => i.severity === "error").map((i) => i.code).join(", "))}</div>
+                </div>`
+              )).join("")}
+            </details>`
+          : "";
+        detail.innerHTML = `${groupsHtml}${invalidHtml}`;
+      }
+      if (runBtn) runBtn.disabled = job.summary.validParts === 0;
+      const runSummary = document.getElementById("attrNestRunSummary");
+      if (runSummary) {
+        runSummary.textContent = job.summary.validParts ? "Ready to nest." : "No valid parts to nest.";
+        runSummary.className = `message ${job.summary.validParts ? "ok" : "warn"}`;
+      }
+    }
+
+    function attrNestingSheetSvg(sheetState, sheetSpec) {
+      const w = sheetSpec.widthMm;
+      const h = sheetSpec.heightMm;
+      const fontSize = Math.max(Math.min(w, h) * 0.04, 8);
+      const shapes = sheetState.placements.map((placement) => {
+        const path = placement.transformedOutline
+          .map((p, index) => `${index === 0 ? "M" : "L"} ${p.x.toFixed(2)} ${(h - p.y).toFixed(2)}`)
+          .join(" ") + " Z";
+        const cx = (placement.bounds.minX + placement.bounds.maxX) / 2;
+        const cy = h - (placement.bounds.minY + placement.bounds.maxY) / 2;
+        const label = String(placement.panelId || "").split(".").pop() || placement.panelId;
+        const rotated = placement.rotation ? ` (${placement.rotation}°)` : "";
+        return `<path d="${path}" fill="#8ecae6" fill-opacity="0.65" stroke="#1d3557" stroke-width="1" vector-effect="non-scaling-stroke"/>
+          <text x="${cx.toFixed(1)}" y="${cy.toFixed(1)}" font-size="${fontSize}" text-anchor="middle" dominant-baseline="middle" fill="#1d3557">${escapeHtml(label + rotated)}</text>`;
+      }).join("");
+      const ratioPct = Math.max(4, Math.min(140, (h / w) * 100));
+      return `<div style="position:relative;width:100%;max-width:560px;border:1px solid #ccc;background:#fff;box-sizing:border-box;margin-top:6px;">
+          <div style="width:100%;padding-bottom:${ratioPct}%;"></div>
+          <div style="position:absolute;inset:4px;">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet">
+              <rect x="0" y="0" width="${w}" height="${h}" fill="none" stroke="#999" stroke-width="1" vector-effect="non-scaling-stroke"/>
+              ${shapes}
+            </svg>
+          </div>
+        </div>`;
+    }
+
+    function attrNestingRun() {
+      const summary = document.getElementById("attrNestRunSummary");
+      const host = document.getElementById("attrNestRunResult");
+      const ns = attrNestingNs();
+      const job = panelAttrMock.nestingJob;
+      if (!job || !ns.simpleBottomLeft) {
+        if (summary) { summary.textContent = "Build a nesting job first."; summary.className = "message warn"; }
+        return;
+      }
+      const sheetSpec = {
+        sheetTypeId: "default",
+        widthMm: Math.max(100, Number(document.getElementById("attrNestSheetW")?.value || 2400)),
+        heightMm: Math.max(100, Number(document.getElementById("attrNestSheetH")?.value || 1200)),
+        marginMm: Math.max(0, Number(document.getElementById("attrNestMargin")?.value || 10)),
+      };
+      const clearanceMm = Math.max(0, Number(document.getElementById("attrNestClearance")?.value || 5));
+
+      const result = ns.simpleBottomLeft.solveNestingJob(job, sheetSpec, { clearanceMm });
+      panelAttrMock.nestingResult = result;
+
+      if (summary) {
+        const pct = (result.stats.utilization * 100).toFixed(1);
+        summary.textContent = `${result.stats.sheetCount} sheet(s) · utilization ${pct}% · ${result.stats.unplacedCount} unplaced.`;
+        summary.className = `message ${result.stats.unplacedCount ? "warn" : "ok"}`;
+      }
+      if (host) {
+        host.innerHTML = result.groups.map((group) => {
+          const sheetsHtml = group.sheets.map((sheetState) => (
+            `<div class="muted" style="margin-top:8px;">${escapeHtml(sheetState.sheetId)} · ${escapeHtml(String(sheetState.placements.length))} part(s)</div>
+             ${attrNestingSheetSvg(sheetState, sheetSpec)}`
+          )).join("");
+          const unplacedHtml = group.unplaced.length
+            ? `<div class="message warn" style="margin-top:6px;">Unplaced: ${escapeHtml(group.unplaced.map((p) => p.panelId).join(", "))}</div>`
+            : "";
+          return `<div style="margin-top:12px;">
+              <strong>${escapeHtml(group.groupKey)}</strong>
+              <span class="muted"> · ${escapeHtml(String(group.stats.sheetCount))} sheet(s) · ${(group.stats.utilization * 100).toFixed(1)}%</span>
+              ${sheetsHtml}${unplacedHtml}
+            </div>`;
+        }).join("");
+      }
+    }
+
     function attrStatusClass(status) {
       const normalized = String(status || "").toLowerCase();
       if (normalized === "valid" || normalized === "defined") return "defined";
@@ -10227,6 +10432,8 @@
       document.getElementById("attrTagGlobalApplyBtn").addEventListener("click", attrApplyTagGlobalEdit);
       document.getElementById("attrTagMissingColorBtn").addEventListener("click", () => attrTagSelectMissing("color"));
       document.getElementById("attrTagMissingBoardBtn").addEventListener("click", () => attrTagSelectMissing("boardType"));
+      document.getElementById("attrNestBuildJobBtn").addEventListener("click", attrNestingBuildJob);
+      document.getElementById("attrNestRunBtn").addEventListener("click", attrNestingRun);
       attrTagPopulateMissingFilters();
       document.getElementById("attrTagScanResult").addEventListener("click", attrTagScanHandleEditEvent);
       document.getElementById("attrTagScanResult").addEventListener("change", attrTagScanHandleEditEvent);

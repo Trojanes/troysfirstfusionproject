@@ -86,7 +86,31 @@ class PanelGeometryPureTests(unittest.TestCase):
         self.assertEqual(doc["viewBox"], "0 0 100 50")
         self.assertEqual(len(doc["outline"]), 2)
         self.assertEqual(doc["outline"][0]["edgeToken"], "E1")
+        # Canonical face-local coordinates are preserved un-flipped.
+        self.assertEqual(doc["outline"][0]["pointsLocal"], [[0.0, 0.0], [100.0, 0.0]])
+        self.assertEqual(doc["outline"][1]["pointsLocal"], [[100.0, 0.0], [100.0, 50.0]])
         self.assertEqual(doc["features"][0]["cutType"], CUT_TYPE_HALF)
+
+    def test_public_feature_exports_local_polygon(self):
+        from panel_geometry import _public_feature
+
+        feature = {
+            "featureId": "FEAT-01",
+            "cutType": CUT_TYPE_HALF,
+            "kind": FEATURE_KIND_GROOVE,
+            "depthMm": 7.5,
+            "isCircle": False,
+            "radiusMm": None,
+            "openSurfaceToken": "tok",
+            "center": None,
+            "points": [(2, 2), (8, 2), (8, 4), (2, 4)],
+        }
+        public = _public_feature(feature)
+        self.assertEqual(
+            public["pointsLocal"],
+            [[2.0, 2.0], [8.0, 2.0], [8.0, 4.0], [2.0, 4.0]],
+        )
+        self.assertIsNone(public["center2d"])
 
     def test_build_svg_full_cut_marked(self):
         outer = [{"points": [(0, 0), (10, 0)], "edgeToken": "E", "signature": None}]
