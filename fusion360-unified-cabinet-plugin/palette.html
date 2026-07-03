@@ -182,6 +182,29 @@
       background: #ffe9ea;
       color: var(--bad);
     }
+    .hardware-debug-card {
+      margin-top: 10px;
+    }
+    .hardware-debug-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .hardware-debug-result {
+      white-space: pre-wrap;
+      margin: 0;
+      max-height: 420px;
+      overflow: auto;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 11px;
+      line-height: 1.45;
+      background: #0f1720;
+      color: #d7e0ea;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #243041;
+    }
     .module-nav, .params, .workspace, .validation {
       border-right: 1px solid var(--line);
       overflow: auto;
@@ -2150,6 +2173,22 @@
               <div class="hardware-summary-item">Hole Count<strong id="hwSummaryHoleCount">-</strong></div>
             </div>
             <div class="hardware-message warn" id="hwWarningMessage">Real Fusion body picking, metadata validation, geometry projection, and host-only cut are not wired in this UI pass.</div>
+          </div>
+        </div>
+
+        <div class="card hardware-debug-card">
+          <h3>Relationship / Hardware Debug <span class="pill">Developer</span></h3>
+          <div class="card-body">
+            <div class="hardware-section-note">Minimal smoke-test UI for relationship scan and screw-hole preview routes. Does not execute Fusion cuts. Part designs create fixture bodies in the root component; assembly designs use sub-components.</div>
+            <div class="hardware-debug-actions">
+              <button type="button" class="ghost" id="hwRelCreateFixtureBtn">Create Relationship Fixture</button>
+              <button type="button" class="ghost" id="hwRelScanBtn">Scan Relationships</button>
+              <button type="button" class="ghost" id="hwRelInspectSelectedBtn">Inspect Selected Pair</button>
+              <button type="button" class="primary" id="hwRelPreviewScrewHolesBtn">Preview Screw Holes From First Valid Relationship</button>
+              <button type="button" class="ghost" id="hwRelClearResultBtn">Clear Result</button>
+            </div>
+            <div class="hardware-message" id="hwRelDebugMessage">Run scan or create fixture to populate relationship state.</div>
+            <pre class="hardware-debug-result" id="hwRelDebugResult">{}</pre>
           </div>
         </div>
       </main>
@@ -8471,6 +8510,14 @@
             hardwareHandlePreviewResult(parsed);
           } else if (action === "hardwareCreateHolesResult") {
             hardwareHandleCreateHolesResult(parsed);
+          } else if (action === "relationshipFixtureResult") {
+            hwRelDebugHandleFixtureResult(parsed);
+          } else if (action === "relationshipScanResult") {
+            hwRelDebugHandleScanResult(parsed);
+          } else if (action === "relationshipInspectResult") {
+            hwRelDebugHandleInspectResult(parsed);
+          } else if (action === "hardwareRelationshipPreviewResult") {
+            hwRelDebugHandlePreviewResult(parsed);
           } else if (action === "panelAttributesResult") {
             attrHandleFusionResult(parsed);
           } else if (action === "fridgeCabinetResult") {
@@ -8503,6 +8550,9 @@
             hardwareSetMessage("hwActionMessage", String(data || ""), "error");
           } else if (action === "hardwareCreateHolesResult") {
             hardwareSetMessage("hwActionMessage", String(data || ""), "error");
+          } else if (action === "relationshipFixtureResult" || action === "relationshipScanResult" || action === "relationshipInspectResult" || action === "hardwareRelationshipPreviewResult") {
+            hwRelDebugSetMessage(String(data || ""), "error");
+            hwRelDebugShowResult({ ok: false, action, error: String(data || "") });
           } else if (action === "fridgeCabinetResult") {
             document.getElementById("resultBox").textContent = String(data || "");
             document.getElementById("statusText").textContent = "Fridge generate response parse failed";
@@ -10696,6 +10746,193 @@
       previewValid: false,
     };
 
+    const hwRelDebugState = {
+      lastScanResult: null,
+    };
+
+    const HW_REL_DEBUG_RULE = {
+      type: "screw_hole",
+      diameterMm: 4,
+      edgeOffsetMm: 30,
+      minSpacingMm: 80,
+      depthMode: "host_thickness",
+    };
+
+    function hwRelDebugEl(id) {
+      return document.getElementById(id);
+    }
+
+    function hwRelDebugShowResult(value) {
+      const el = hwRelDebugEl("hwRelDebugResult");
+      if (!el) return;
+      if (typeof value === "string") {
+        el.textContent = value;
+        return;
+      }
+      el.textContent = JSON.stringify(value, null, 2);
+    }
+
+    function hwRelDebugSetMessage(message, tone = "") {
+      const el = hwRelDebugEl("hwRelDebugMessage");
+      if (!el) return;
+      el.textContent = message;
+      el.className = `hardware-message ${tone}`.trim();
+    }
+
+    function hwRelDebugStoreScanResult(parsed) {
+      if (!parsed || typeof parsed !== "object") return;
+      if (Array.isArray(parsed.relationships) || Array.isArray(parsed.panels)) {
+        hwRelDebugState.lastScanResult = parsed;
+        return;
+      }
+      if (parsed.scan && typeof parsed.scan === "object") {
+        hwRelDebugState.lastScanResult = parsed.scan;
+      }
+    }
+
+    function hwRelDebugPanelsMap(scanResult) {
+      const map = {};
+      (scanResult?.panels || []).forEach((panel) => {
+        if (panel?.panelId) map[panel.panelId] = panel;
+      });
+      return map;
+    }
+
+    function hwRelDebugFindPreviewRelationship(scanResult) {
+      return (scanResult?.relationships || []).find((relationship) => {
+        if (relationship?.geometryType !== "edge_to_surface") return false;
+        if (relationship?.relationshipType !== "structural_butt_joint") return false;
+        const roles = relationship.roles || {};
+        return Boolean(roles.hostPanelId) && Boolean(roles.targetPanelId);
+      }) || null;
+    }
+
+    function hwRelDebugHandleFixtureResult(parsed) {
+      hwRelDebugStoreScanResult(parsed);
+      hwRelDebugShowResult(parsed);
+      if (parsed?.ok) {
+        const count = Number(parsed.createdBodies || 0);
+        const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
+        const suffix = parsed.flatMode ? " (part design flat mode)" : "";
+        hwRelDebugSetMessage(
+          warnings.length
+            ? `${warnings.join(" ")} Created ${count} bodies${suffix}.`
+            : `Relationship fixture created (${count} bodies${suffix}). Scan data stored.`,
+          warnings.length ? "warn" : "ok",
+        );
+      } else {
+        hwRelDebugSetMessage((parsed?.errors || ["Fixture creation failed."]).join(" "), "error");
+      }
+    }
+
+    function hwRelDebugHandleScanResult(parsed) {
+      hwRelDebugStoreScanResult(parsed);
+      hwRelDebugShowResult(parsed);
+      if (parsed?.ok) {
+        hwRelDebugSetMessage(`Scan complete: ${parsed.relationshipCount || 0} relationship(s) found.`, "ok");
+      } else {
+        hwRelDebugSetMessage((parsed?.errors || ["Relationship scan failed."]).join(" "), "error");
+      }
+    }
+
+    function hwRelDebugHandleInspectResult(parsed) {
+      hwRelDebugShowResult(parsed);
+      if (parsed?.ok) {
+        const rel = parsed.relationship || {};
+        if (rel.relationshipId) {
+          hwRelDebugState.lastScanResult = {
+            ok: true,
+            action: parsed.action || "relationships.inspectSelected",
+            relationships: [rel],
+            panels: [],
+            relationshipCount: 1,
+          };
+        }
+        hwRelDebugSetMessage(`Inspect pair: ${rel.geometryType || "unknown"} / ${rel.relationshipType || "unknown"}.`, "ok");
+      } else {
+        hwRelDebugSetMessage((parsed?.errors || ["Inspect selected pair failed."]).join(" "), "error");
+      }
+    }
+
+    function hwRelDebugHandlePreviewResult(parsed) {
+      hwRelDebugShowResult(parsed);
+      if (parsed?.ok) {
+        hwRelDebugSetMessage(`Preview generated ${parsed.holeCount || 0} screw hole(s) for ${parsed.relationshipId || "relationship"}.`, "ok");
+      } else {
+        hwRelDebugSetMessage((parsed?.errors || ["Screw-hole preview failed."]).join(" "), "error");
+      }
+    }
+
+    function hwRelDebugCreateFixture() {
+      hwRelDebugSetMessage("Creating relationship test fixture...");
+      fusionSend("relationships.createTestFixture", { toleranceMm: 0.5 });
+    }
+
+    function hwRelDebugScan() {
+      hwRelDebugSetMessage("Scanning all panel relationships...");
+      fusionSend("relationships.scan", { scope: "all", toleranceMm: 0.5 });
+    }
+
+    function hwRelDebugInspectSelected() {
+      hwRelDebugSetMessage("Inspecting selected panel bodies...");
+      fusionSend("relationships.inspectSelected", { toleranceMm: 0.5 });
+    }
+
+    function hwRelDebugPreviewScrewHoles() {
+      const scanResult = hwRelDebugState.lastScanResult;
+      if (!scanResult) {
+        hwRelDebugSetMessage("No scan result yet. Run Scan Relationships or Create Relationship Fixture first.", "error");
+        hwRelDebugShowResult({
+          ok: false,
+          action: "hardware.previewScrewHolesFromRelationship",
+          errors: ["Missing latest relationship scan result."],
+        });
+        return;
+      }
+
+      const relationship = hwRelDebugFindPreviewRelationship(scanResult);
+      if (!relationship) {
+        hwRelDebugSetMessage("No edge_to_surface + structural_butt_joint relationship with host/target roles in latest scan.", "error");
+        hwRelDebugShowResult({
+          ok: false,
+          action: "hardware.previewScrewHolesFromRelationship",
+          errors: ["No valid relationship found in latest scan result."],
+          relationshipCount: scanResult.relationshipCount || 0,
+        });
+        return;
+      }
+
+      const panels = hwRelDebugPanelsMap(scanResult);
+      const hostId = relationship.roles?.hostPanelId;
+      const targetId = relationship.roles?.targetPanelId;
+      const payload = {
+        relationship,
+        rule: HW_REL_DEBUG_RULE,
+      };
+      if (hostId && targetId && panels[hostId] && panels[targetId]) {
+        payload.panels = {
+          [hostId]: panels[hostId],
+          [targetId]: panels[targetId],
+        };
+      }
+
+      hwRelDebugSetMessage(`Previewing screw holes for ${relationship.relationshipId || "relationship"}...`);
+      fusionSend("hardware.previewScrewHolesFromRelationship", payload);
+    }
+
+    function hwRelDebugClearResult() {
+      hwRelDebugShowResult({});
+      hwRelDebugSetMessage("Result cleared. Latest scan state retained for preview.");
+    }
+
+    function hwRelDebugInitUi() {
+      hwRelDebugEl("hwRelCreateFixtureBtn")?.addEventListener("click", hwRelDebugCreateFixture);
+      hwRelDebugEl("hwRelScanBtn")?.addEventListener("click", hwRelDebugScan);
+      hwRelDebugEl("hwRelInspectSelectedBtn")?.addEventListener("click", hwRelDebugInspectSelected);
+      hwRelDebugEl("hwRelPreviewScrewHolesBtn")?.addEventListener("click", hwRelDebugPreviewScrewHoles);
+      hwRelDebugEl("hwRelClearResultBtn")?.addEventListener("click", hwRelDebugClearResult);
+    }
+
     function hwEl(id) {
       return document.getElementById(id);
     }
@@ -10909,6 +11146,7 @@
     }
 
     hardwareInitUi();
+    hwRelDebugInitUi();
     attrInitPanelAttributesUi();
     // On palette startup, sync zone sizes + generator origins from any work
     // zones already saved in the open design (delayed for bridge readiness).

@@ -27,6 +27,8 @@ def _ensure_paths(plugin_dir):
         os.path.join(plugin_dir, "modules", "lounge"),
         os.path.join(plugin_dir, "modules", "tools"),
         os.path.join(plugin_dir, "modules", "hardware"),
+        os.path.join(plugin_dir, "modules", "hardware"),
+        os.path.join(plugin_dir, "modules", "relationships"),
         os.path.join(plugin_dir, "panel_attributes"),
         os.path.join(plugin_dir, "metadata"),
     ]
@@ -66,6 +68,7 @@ class UnifiedCabinetPluginApp:
         lounge_module = importlib.reload(importlib.import_module("modules.lounge.controller"))
         tools_module = importlib.reload(importlib.import_module("modules.tools.controller"))
         hardware_module = importlib.reload(importlib.import_module("modules.hardware.controller"))
+        relationships_module = importlib.reload(importlib.import_module("modules.relationships.controller"))
         panel_attributes_module = importlib.reload(importlib.import_module("panel_attributes.controller"))
 
         self.fusion = FusionAdapter()
@@ -78,6 +81,7 @@ class UnifiedCabinetPluginApp:
         lounge = lounge_module.LoungeController(self.plugin_dir, self.fusion)
         tools = tools_module.ToolsController()
         hardware = hardware_module.HardwareController(self.plugin_dir, self.fusion)
+        relationships = relationships_module.RelationshipsController(self.fusion)
         panel_attributes = panel_attributes_module.PanelAttributesController(self.fusion)
         routes = {
             "fridge.calculate": fridge.calculate,
@@ -99,6 +103,13 @@ class UnifiedCabinetPluginApp:
             "hardware.createSideContactTestBoards": hardware.create_side_contact_test_boards,
             "hardware.calculateSideContactPreview": hardware.calculate_side_contact_preview,
             "hardware.createSideContactHoles": hardware.create_side_contact_holes,
+            "hardware.previewScrewHolesFromRelationship": hardware.preview_screw_holes_from_relationship,
+            "hardware.createScrewHolesFromRelationship": hardware.create_screw_holes_from_relationship,
+            "relationships.scan": relationships.scan,
+            "relationships.scanSelected": relationships.scan_selected,
+            "relationships.inspectSelected": relationships.inspect_selected,
+            "relationships.inspectPair": relationships.inspect_pair,
+            "relationships.createTestFixture": relationships.create_test_fixture,
             "panelAttributes.searchPanels": panel_attributes.search_panels,
             "panelAttributes.selectByTag": panel_attributes.select_by_tag,
             "panelAttributes.selectPanel": panel_attributes.select_panel,

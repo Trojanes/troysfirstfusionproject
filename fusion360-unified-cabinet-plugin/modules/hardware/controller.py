@@ -13,6 +13,13 @@ from geometry_ops import ATTRIBUTE_GROUP, mm_to_cm, sanitize_token
 from modules.general_tall.fusion_adapter import _add_box_body
 from panel_metadata_types import PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR, PANEL_METADATA_ATTR
 
+from screw_hole_from_relationship import (
+    build_cut_success_report,
+    plan_screw_hole_cut_from_relationship,
+    preview_screw_holes_from_relationship,
+)
+from relationship_screw_hole_fusion import create_host_screw_hole_cut
+
 
 class HardwareController:
     def __init__(self, plugin_dir, fusion):
@@ -119,6 +126,171 @@ class HardwareController:
                 "errors": [str(ex)],
                 "trace": traceback.format_exc(),
             }
+
+    def preview_screw_holes_from_relationship(self, payload, _palette):
+        try:
+            if not isinstance(payload, dict):
+                return "hardwareRelationshipPreviewResult", {
+                    "ok": False,
+                    "action": "hardware.previewScrewHolesFromRelationship",
+                    "errors": ["Missing preview payload."],
+                    "features": [],
+                }
+
+            relationship = payload.get("relationship")
+            if not isinstance(relationship, dict):
+                return "hardwareRelationshipPreviewResult", {
+                    "ok": False,
+                    "action": "hardware.previewScrewHolesFromRelationship",
+                    "errors": ["Missing relationship object."],
+                    "features": [],
+                }
+
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            panel_snapshots = payload.get("panels") if isinstance(payload.get("panels"), dict) else None
+
+            if panel_snapshots is None:
+                panel_snapshots = self._panel_snapshots_from_design(payload, relationship)
+
+            report = preview_screw_holes_from_relationship(
+                relationship,
+                rule=rule,
+                panel_snapshots=panel_snapshots,
+            )
+            return "hardwareRelationshipPreviewResult", report
+        except Exception as ex:
+            return "hardwareRelationshipPreviewResult", {
+                "ok": False,
+                "action": "hardware.previewScrewHolesFromRelationship",
+                "errors": [str(ex)],
+                "features": [],
+                "trace": traceback.format_exc(),
+            }
+
+    def create_screw_holes_from_relationship(self, payload, _palette):
+        try:
+            root = self.fusion.get_root_component() if self.fusion else None
+            if not root:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createScrewHolesFromRelationship",
+                    "errors": ["No active Fusion design."],
+                    "features": [],
+                }
+
+            if not isinstance(payload, dict):
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createScrewHolesFromRelationship",
+                    "errors": ["Missing create payload."],
+                }
+
+            relationship = payload.get("relationship")
+            if not isinstance(relationship, dict):
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createScrewHolesFromRelationship",
+                    "errors": ["Missing relationship object."],
+                }
+
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            panel_snapshots = payload.get("panels") if isinstance(payload.get("panels"), dict) else None
+            if panel_snapshots is None:
+                panel_snapshots = self._panel_snapshots_from_design(payload, relationship)
+
+            plan = plan_screw_hole_cut_from_relationship(
+                relationship,
+                rule=rule,
+                panel_snapshots=panel_snapshots,
+            )
+            if not plan.get("ok"):
+                return "hardwareRelationshipCutResult", plan
+
+            host_panel_id = plan["hostPanelId"]
+            target_panel_id = plan["targetPanelId"]
+            host_body = self._find_body_by_panel_id(root, host_panel_id)
+            target_body = self._find_body_by_panel_id(root, target_panel_id)
+            if host_body is None:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createScrewHolesFromRelationship",
+                    "errors": ["Host body not found for panelId: {}.".format(host_panel_id)],
+                }
+            if target_body is None:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createScrewHolesFromRelationship",
+                    "errors": ["Target body not found for panelId: {}.".format(target_panel_id)],
+                }
+
+            target_volume_before = self._safe_body_volume(target_body)
+            host_component = self._body_component(host_body) or root
+            cut, metadata_written = create_host_screw_hole_cut(
+                host_component,
+                host_body,
+                plan["feature"],
+                plan["metadata"],
+            )
+            target_volume_after = self._safe_body_volume(target_body)
+            target_modified = abs(target_volume_after - target_volume_before) > 0.01
+
+            warnings = []
+            if target_modified:
+                warnings.append("Target body volume changed unexpectedly after host-only cut.")
+
+            try:
+                self.fusion.refresh_viewport()
+            except Exception:
+                pass
+
+            report = build_cut_success_report(
+                relationship_id=plan["relationshipId"],
+                host_panel_id=host_panel_id,
+                target_panel_id=target_panel_id,
+                host_body_name=str(getattr(host_body, "name", "") or ""),
+                target_body_name=str(getattr(target_body, "name", "") or ""),
+                cut_feature_name=str(getattr(cut, "name", "") or "HW_REL_SCREW_HOLE"),
+                metadata=plan["metadata"],
+                metadata_written=metadata_written,
+                warnings=warnings,
+            )
+            if target_modified:
+                report["ok"] = False
+                report["errors"] = ["Target body was modified during host-only screw-hole cut."]
+                report["audit"]["errors"] = report["errors"]
+            report["targetBodyModified"] = target_modified
+            report["audit"]["targetBodyModified"] = target_modified
+            return "hardwareRelationshipCutResult", report
+        except Exception as ex:
+            return "hardwareRelationshipCutResult", {
+                "ok": False,
+                "action": "hardware.createScrewHolesFromRelationship",
+                "errors": [str(ex)],
+                "trace": traceback.format_exc(),
+            }
+
+    def _panel_snapshots_from_design(self, payload, relationship):
+        if not self.fusion:
+            return None
+        roles = relationship.get("roles") or {}
+        host_id = str(roles.get("hostPanelId") or "").strip()
+        target_id = str(roles.get("targetPanelId") or "").strip()
+        if not host_id or not target_id:
+            return None
+
+        try:
+            import importlib
+            from modules.relationships import relationship_service as rel_service_module
+
+            rel_service_module = importlib.reload(rel_service_module)
+            service = rel_service_module.RelationshipService(self.fusion)
+            snapshots = service.collect_panels_from_design()
+            panel_map = {item.panelId: item.to_dict() for item in snapshots}
+            if host_id in panel_map and target_id in panel_map:
+                return {host_id: panel_map[host_id], target_id: panel_map[target_id]}
+        except Exception:
+            return None
+        return None
 
     def create_side_contact_test_boards(self, _payload, _palette):
         try:
@@ -565,5 +737,65 @@ class HardwareController:
     def _face_area(self, face):
         try:
             return float(face.area)
+        except Exception:
+            return 0.0
+
+    def _find_body_by_panel_id(self, root, panel_id):
+        panel_id = str(panel_id or "").strip()
+        if not panel_id or not root:
+            return None
+
+        try:
+            from panel_body_resolver import list_solid_bodies
+        except Exception:
+            return None
+
+        def walk(component):
+            for body in list_solid_bodies(component):
+                if self._body_panel_id(body) == panel_id:
+                    return body
+            try:
+                occurrences = component.occurrences
+                count = occurrences.count if occurrences else 0
+            except Exception:
+                return None
+            for index in range(count):
+                found = walk(occurrences.item(index).component)
+                if found:
+                    return found
+            return None
+
+        return walk(root)
+
+    def _body_panel_id(self, body):
+        try:
+            from modules.relationships.relationship_service import read_panel_metadata
+
+            return str(read_panel_metadata(body).get("panelId") or "").strip()
+        except Exception:
+            return ""
+
+    def _body_component(self, body):
+        for attr_name in ("parentComponent", "component"):
+            try:
+                component = getattr(body, attr_name)
+            except Exception:
+                component = None
+            if component:
+                return component
+        return None
+
+    def _safe_body_volume(self, body):
+        try:
+            volume = getattr(body, "volume", None)
+            if volume is not None:
+                return float(volume)
+        except Exception:
+            pass
+        try:
+            bbox = body.boundingBox
+            min_pt = bbox.minPoint
+            max_pt = bbox.maxPoint
+            return abs((max_pt.x - min_pt.x) * (max_pt.y - min_pt.y) * (max_pt.z - min_pt.z))
         except Exception:
             return 0.0
