@@ -1,0 +1,77 @@
+---
+description: Connect / Relationship / Hardware pipeline — milestones, verification gates, Cursor execution protocol
+globs: fusion360-unified-cabinet-plugin/modules/relationships/**,fusion360-unified-cabinet-plugin/modules/hardware/**,fusion360-unified-cabinet-plugin/palette.html,fusion360-unified-cabinet-plugin/tests/**/test_*relationship*,fusion360-unified-cabinet-plugin/tests/**/test_hardware*,fusion360-unified-cabinet-plugin/tests/run_*relationship*,CabinetNC_Connect_Relationship_Hardware_Roadmap.md,docs/connect-m3-fusion-smoke-checklist.md
+alwaysApply: false
+---
+
+# Connect → Relationship → Hardware Pipeline
+
+**Governing docs (read before Connect tasks):**
+- `CabinetNC_Connect_Relationship_Hardware_Roadmap.md` — milestone roadmap + Cursor execution protocol
+- `Master Framework- Connect - Relationship - Hardware Pipeline.pdf` — architecture PDF
+- `docs/connect-m3-fusion-smoke-checklist.md` — M3 Fusion smoke (sealed)
+- `docs/connect-m4-real-cabinet-smoke-checklist.md` — M4 real cabinet smoke (sealed)
+
+## Current milestone status
+
+| M | Status |
+|---|--------|
+| M1 Candidate | ✅ |
+| M2 Verification gate | ✅ |
+| M3 Cut execution | ✅ sealed (Fusion smoke 2026-07-03) |
+| M4 Real cabinet | ✅ sealed (Overhead Fusion 2026-07-03) |
+| M5 Face verify | ❌ next per roadmap |
+| M6–M9 | ❌ |
+
+## Pipeline (do not skip layers)
+
+```text
+Panel Metadata → PanelSnapshot[] → RelationshipService → BoardRelationship[]
+  → Verification → HardwareRuleEngine → HardwareFeatureIntent[]
+  → FusionExecution → cut feature metadata → (M8) panel metadata writeback
+```
+
+## Verification levels
+
+| level | preview | cut |
+|-------|---------|-----|
+| `bbox_candidate` | yes | **no** |
+| `manual_confirmed` | yes | yes (debug session only) |
+| `face_verified` | yes | yes (M5+) |
+| `generator_declared` | yes | yes (M6+) |
+| `cut_approved` | yes | yes |
+
+Cut routes **must reject** when `verification.safeForCut !== true`.
+
+## Cursor execution protocol (every Connect task)
+
+State before coding:
+1. Which milestone (M1–M9)
+2. Modifies generators? (must be **no** for M1–M5 unless explicit)
+3. Allows bbox_candidate cut? (must be **no**)
+4. Modifies side-contact hardware? (must be **no** unless explicit)
+5. Tests added/updated
+6. Acceptance criteria
+
+If any answer violates global rules, stop and ask.
+
+## Hardware rules
+
+- Consume `BoardRelationship` — **do not** re-detect contact in hardware.
+- Preview: `hardware.previewScrewHolesFromRelationship`
+- Cut: `hardware.createScrewHolesFromRelationship` — host only, `hostPanelId`
+- Rule: `screw_hole_from_edge_to_surface_v1` only until M9
+
+## Developer Debug UI (M7之前)
+
+Allowed: fixture, scan, inspect, preview, confirm, **create cut from confirmed**, JSON, clear.
+
+## Do not implement yet
+
+hinge/lock/runner/tongue-groove; full BRep; auto-cut bbox_candidate; generator one-click connect; formal product UI; nesting/CAM; generator changes (M6+ only).
+
+## Code conventions
+
+- `detectionMethod: bbox_aabb` until face layer (M5)
+- Offline regression must pass after changes
+- `confirm_relationship_for_cut()` for manual_confirmed; session state only — no production persistence

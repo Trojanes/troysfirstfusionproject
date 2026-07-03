@@ -2179,12 +2179,14 @@
         <div class="card hardware-debug-card">
           <h3>Relationship / Hardware Debug <span class="pill">Developer</span></h3>
           <div class="card-body">
-            <div class="hardware-section-note">Minimal smoke-test UI for relationship scan and screw-hole preview routes. Does not execute Fusion cuts. Part designs create fixture bodies in the root component; assembly designs use sub-components.</div>
+            <div class="hardware-section-note">Smoke-test UI for relationship scan, preview, session-only manual cut confirmation, and host-only screw-hole cut from confirmed relationships. Confirmed state is browser memory only (not persisted).</div>
             <div class="hardware-debug-actions">
               <button type="button" class="ghost" id="hwRelCreateFixtureBtn">Create Relationship Fixture</button>
               <button type="button" class="ghost" id="hwRelScanBtn">Scan Relationships</button>
               <button type="button" class="ghost" id="hwRelInspectSelectedBtn">Inspect Selected Pair</button>
               <button type="button" class="primary" id="hwRelPreviewScrewHolesBtn">Preview Screw Holes From First Valid Relationship</button>
+              <button type="button" class="ghost" id="hwRelConfirmForCutBtn">Confirm First Valid Relationship For Cut</button>
+              <button type="button" class="primary" id="hwRelCreateCutFromConfirmedBtn">Create Screw Holes From Confirmed Relationship</button>
               <button type="button" class="ghost" id="hwRelClearResultBtn">Clear Result</button>
             </div>
             <div class="hardware-message" id="hwRelDebugMessage">Run scan or create fixture to populate relationship state.</div>
@@ -8518,6 +8520,8 @@
             hwRelDebugHandleInspectResult(parsed);
           } else if (action === "hardwareRelationshipPreviewResult") {
             hwRelDebugHandlePreviewResult(parsed);
+          } else if (action === "hardwareRelationshipCutResult") {
+            hwRelDebugHandleCutResult(parsed);
           } else if (action === "panelAttributesResult") {
             attrHandleFusionResult(parsed);
           } else if (action === "fridgeCabinetResult") {
@@ -10748,7 +10752,19 @@
 
     const hwRelDebugState = {
       lastScanResult: null,
+      selectedRelationship: null,
+      confirmedRelationship: null,
     };
+
+    const HW_REL_MANUAL_CONFIRMED_VERIFICATION = {
+      level: "manual_confirmed",
+      safeForPreview: true,
+      safeForCut: true,
+      requiresManualConfirmation: false,
+    };
+
+    const HW_REL_NO_MANUAL_CONFIRMED_MSG =
+      "No manual_confirmed relationship available. Scan, preview, and confirm a relationship before creating cut.";
 
     const HW_REL_DEBUG_RULE = {
       type: "screw_hole",
@@ -10807,6 +10823,54 @@
       }) || null;
     }
 
+    function hwRelDebugConfirmRelationshipForCut(relationship) {
+      const notes = Array.isArray(relationship?.auditNotes) ? relationship.auditNotes.slice() : [];
+      notes.push("Manual cut confirmation applied (debug session only).");
+      return {
+        ...relationship,
+        verification: { ...HW_REL_MANUAL_CONFIRMED_VERIFICATION },
+        auditNotes: notes,
+      };
+    }
+
+    function hwRelDebugResolveRelationshipForConfirm(scanResult) {
+      if (hwRelDebugState.selectedRelationship) {
+        return hwRelDebugState.selectedRelationship;
+      }
+      return hwRelDebugFindPreviewRelationship(scanResult);
+    }
+
+    function hwRelDebugIsManualConfirmedForCut(relationship) {
+      const verification = relationship?.verification || {};
+      return verification.level === "manual_confirmed" && verification.safeForCut === true;
+    }
+
+    function hwRelDebugBuildCutPayload(confirmedRelationship) {
+      const scanResult = hwRelDebugState.lastScanResult;
+      const panels = scanResult ? hwRelDebugPanelsMap(scanResult) : {};
+      const hostId = confirmedRelationship?.roles?.hostPanelId;
+      const targetId = confirmedRelationship?.roles?.targetPanelId;
+      const payload = {
+        relationship: confirmedRelationship,
+        rule: HW_REL_DEBUG_RULE,
+      };
+      if (hostId && targetId && panels[hostId] && panels[targetId]) {
+        payload.panels = {
+          [hostId]: panels[hostId],
+          [targetId]: panels[targetId],
+        };
+      }
+      return payload;
+    }
+
+    function hwRelDebugUpdateConfirmButtonLabel() {
+      const btn = hwRelDebugEl("hwRelConfirmForCutBtn");
+      if (!btn) return;
+      btn.textContent = hwRelDebugState.selectedRelationship
+        ? "Confirm Selected Relationship For Cut"
+        : "Confirm First Valid Relationship For Cut";
+    }
+
     function hwRelDebugHandleFixtureResult(parsed) {
       hwRelDebugStoreScanResult(parsed);
       hwRelDebugShowResult(parsed);
@@ -10827,6 +10891,8 @@
 
     function hwRelDebugHandleScanResult(parsed) {
       hwRelDebugStoreScanResult(parsed);
+      hwRelDebugState.selectedRelationship = null;
+      hwRelDebugUpdateConfirmButtonLabel();
       hwRelDebugShowResult(parsed);
       if (parsed?.ok) {
         hwRelDebugSetMessage(`Scan complete: ${parsed.relationshipCount || 0} relationship(s) found.`, "ok");
@@ -10840,14 +10906,16 @@
       if (parsed?.ok) {
         const rel = parsed.relationship || {};
         if (rel.relationshipId) {
+          hwRelDebugState.selectedRelationship = rel;
           hwRelDebugState.lastScanResult = {
             ok: true,
             action: parsed.action || "relationships.inspectSelected",
             relationships: [rel],
-            panels: [],
+            panels: parsed.panels || [],
             relationshipCount: 1,
           };
         }
+        hwRelDebugUpdateConfirmButtonLabel();
         hwRelDebugSetMessage(`Inspect pair: ${rel.geometryType || "unknown"} / ${rel.relationshipType || "unknown"}.`, "ok");
       } else {
         hwRelDebugSetMessage((parsed?.errors || ["Inspect selected pair failed."]).join(" "), "error");
@@ -10861,6 +10929,35 @@
       } else {
         hwRelDebugSetMessage((parsed?.errors || ["Screw-hole preview failed."]).join(" "), "error");
       }
+    }
+
+    function hwRelDebugHandleCutResult(parsed) {
+      const audit = parsed?.audit && typeof parsed.audit === "object" ? parsed.audit : parsed;
+      hwRelDebugShowResult(audit || parsed);
+      if (parsed?.ok) {
+        hwRelDebugSetMessage(
+          `Cut created: ${parsed.holeCount || 0} hole(s), feature ${parsed.cutFeatureName || "unknown"}, metadataWritten=${parsed.metadataWritten === true}.`,
+          "ok",
+        );
+      } else {
+        hwRelDebugSetMessage((parsed?.errors || ["Relationship cut failed."]).join(" "), "error");
+      }
+    }
+
+    function hwRelDebugCreateCutFromConfirmed() {
+      const confirmed = hwRelDebugState.confirmedRelationship;
+      if (!confirmed || !hwRelDebugIsManualConfirmedForCut(confirmed)) {
+        hwRelDebugSetMessage(HW_REL_NO_MANUAL_CONFIRMED_MSG, "error");
+        hwRelDebugShowResult({
+          ok: false,
+          action: "hardware.createScrewHolesFromRelationship",
+          errors: [HW_REL_NO_MANUAL_CONFIRMED_MSG],
+        });
+        return;
+      }
+
+      hwRelDebugSetMessage(`Creating screw holes from confirmed relationship ${confirmed.relationshipId || ""}...`);
+      fusionSend("hardware.createScrewHolesFromRelationship", hwRelDebugBuildCutPayload(confirmed));
     }
 
     function hwRelDebugCreateFixture() {
@@ -10920,9 +11017,48 @@
       fusionSend("hardware.previewScrewHolesFromRelationship", payload);
     }
 
+    function hwRelDebugConfirmForCut() {
+      const scanResult = hwRelDebugState.lastScanResult;
+      if (!scanResult) {
+        hwRelDebugSetMessage("No scan result yet. Run Scan Relationships or Create Relationship Fixture first.", "error");
+        hwRelDebugShowResult({
+          ok: false,
+          action: "manualConfirmForCut",
+          errors: ["Missing latest relationship scan result."],
+        });
+        return;
+      }
+
+      const relationship = hwRelDebugResolveRelationshipForConfirm(scanResult);
+      if (!relationship) {
+        hwRelDebugSetMessage("No edge_to_surface + structural_butt_joint relationship with host/target roles available to confirm.", "error");
+        hwRelDebugShowResult({
+          ok: false,
+          action: "manualConfirmForCut",
+          errors: ["No valid relationship found for manual cut confirmation."],
+          relationshipCount: scanResult.relationshipCount || 0,
+        });
+        return;
+      }
+
+      const confirmed = hwRelDebugConfirmRelationshipForCut(relationship);
+      hwRelDebugState.confirmedRelationship = confirmed;
+      const sourceLabel = hwRelDebugState.selectedRelationship ? "selected relationship" : "first valid relationship";
+      hwRelDebugSetMessage(`Confirmed ${sourceLabel} ${confirmed.relationshipId || ""} for cut testing (session only).`, "ok");
+      hwRelDebugShowResult({
+        ok: true,
+        action: "manualConfirmForCut",
+        source: hwRelDebugState.selectedRelationship ? "selected" : "first_valid",
+        relationship: confirmed,
+        verification: confirmed.verification,
+        safeForCut: confirmed.verification?.safeForCut === true,
+        persisted: false,
+      });
+    }
+
     function hwRelDebugClearResult() {
       hwRelDebugShowResult({});
-      hwRelDebugSetMessage("Result cleared. Latest scan state retained for preview.");
+      hwRelDebugSetMessage("Result cleared. Latest scan and confirmed relationship state retained for this session.");
     }
 
     function hwRelDebugInitUi() {
@@ -10930,7 +11066,10 @@
       hwRelDebugEl("hwRelScanBtn")?.addEventListener("click", hwRelDebugScan);
       hwRelDebugEl("hwRelInspectSelectedBtn")?.addEventListener("click", hwRelDebugInspectSelected);
       hwRelDebugEl("hwRelPreviewScrewHolesBtn")?.addEventListener("click", hwRelDebugPreviewScrewHoles);
+      hwRelDebugEl("hwRelConfirmForCutBtn")?.addEventListener("click", hwRelDebugConfirmForCut);
+      hwRelDebugEl("hwRelCreateCutFromConfirmedBtn")?.addEventListener("click", hwRelDebugCreateCutFromConfirmed);
       hwRelDebugEl("hwRelClearResultBtn")?.addEventListener("click", hwRelDebugClearResult);
+      hwRelDebugUpdateConfirmButtonLabel();
     }
 
     function hwEl(id) {

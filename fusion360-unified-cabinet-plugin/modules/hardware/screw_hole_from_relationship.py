@@ -19,7 +19,10 @@ PREVIEW_ACTION = "hardware.previewScrewHolesFromRelationship"
 ACCEPTED_GEOMETRY_TYPE = "edge_to_surface"
 ACCEPTED_RELATIONSHIP_TYPE = "structural_butt_joint"
 CUT_BLOCKED_MESSAGE = (
-    "Relationship is bbox_candidate only. Face verification or manual confirmation is required before cut."
+    "Relationship is not cut-safe. Apply manual confirmation or face verification before cut."
+)
+NO_MANUAL_CONFIRMED_FOR_CUT_MESSAGE = (
+    "No manual_confirmed relationship available. Scan, preview, and confirm a relationship before creating cut."
 )
 
 
@@ -53,6 +56,18 @@ def assert_safe_for_cut(relationship: Dict[str, Any]) -> Optional[str]:
     verification = resolve_relationship_verification(relationship)
     if not verification.get("safeForCut"):
         return CUT_BLOCKED_MESSAGE
+    return None
+
+
+def validate_manual_confirmed_relationship_for_cut(relationship: Dict[str, Any]) -> Optional[str]:
+    """Return an error message when relationship is not manual_confirmed with safeForCut=true."""
+    if not isinstance(relationship, dict):
+        return NO_MANUAL_CONFIRMED_FOR_CUT_MESSAGE
+    verification = resolve_relationship_verification(relationship)
+    if verification.get("level") != "manual_confirmed" or not verification.get("safeForCut"):
+        if verification.get("level") == "manual_confirmed" and not verification.get("safeForCut"):
+            return CUT_BLOCKED_MESSAGE
+        return NO_MANUAL_CONFIRMED_FOR_CUT_MESSAGE
     return None
 
 

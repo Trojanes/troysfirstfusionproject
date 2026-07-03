@@ -35,6 +35,7 @@ SOURCE_METHODS = (
 
 VERIFICATION_LEVELS = (
     "bbox_candidate",
+    "manual_confirmed",
     "face_verified",
     "generator_declared",
     "cut_approved",
@@ -212,10 +213,26 @@ def bbox_candidate_verification() -> RelationshipVerification:
     )
 
 
+def manual_confirmed_verification() -> RelationshipVerification:
+    return RelationshipVerification(
+        level="manual_confirmed",
+        safeForPreview=True,
+        safeForCut=True,
+        requiresManualConfirmation=False,
+    )
+
+
 def verification_from_dict(data: Optional[Dict[str, Any]]) -> RelationshipVerification:
     if not isinstance(data, dict):
         return bbox_candidate_verification()
     level = str(data.get("level") or "bbox_candidate")
+    if level == "manual_confirmed":
+        return RelationshipVerification(
+            level=level,
+            safeForPreview=bool(data.get("safeForPreview", True)),
+            safeForCut=bool(data.get("safeForCut", True)),
+            requiresManualConfirmation=bool(data.get("requiresManualConfirmation", False)),
+        )
     return RelationshipVerification(
         level=level,
         safeForPreview=bool(data.get("safeForPreview", level == "bbox_candidate")),
@@ -224,6 +241,18 @@ def verification_from_dict(data: Optional[Dict[str, Any]]) -> RelationshipVerifi
             data.get("requiresManualConfirmation", level == "bbox_candidate")
         ),
     )
+
+
+def confirm_relationship_for_cut(relationship: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a copy of a relationship dict approved for debug-session cut testing."""
+    if not isinstance(relationship, dict):
+        raise TypeError("relationship must be a dict")
+    confirmed = dict(relationship)
+    confirmed["verification"] = manual_confirmed_verification().to_dict()
+    notes = list(confirmed.get("auditNotes") or [])
+    notes.append("Manual cut confirmation applied (debug session only).")
+    confirmed["auditNotes"] = notes
+    return confirmed
 
 
 @dataclass

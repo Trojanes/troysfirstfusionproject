@@ -15,13 +15,16 @@ from relationship_geometry import classify_pair  # noqa: E402
 from screw_hole_from_relationship import (  # noqa: E402
     CREATE_ACTION,
     CUT_BLOCKED_MESSAGE,
+    NO_MANUAL_CONFIRMED_FOR_CUT_MESSAGE,
     PREVIEW_ACTION,
     build_cut_feature_metadata,
     build_cut_success_report,
     hole_count_from_contact_length,
     plan_screw_hole_cut_from_relationship,
     preview_screw_holes_from_relationship,
+    validate_manual_confirmed_relationship_for_cut,
 )
+from relationship_models import confirm_relationship_for_cut  # noqa: E402
 
 
 def _fixture_edge_to_surface():
@@ -150,6 +153,69 @@ class HardwareFromRelationshipTests(unittest.TestCase):
         self.assertIn("feature", plan)
         self.assertIn("metadata", plan)
 
+    def test_manual_confirmed_helper_is_cut_safe(self):
+        rel, snapshots = _fixture_edge_to_surface()
+        self.assertFalse(rel["verification"]["safeForCut"])
+        confirmed = confirm_relationship_for_cut(rel)
+        self.assertEqual(confirmed["verification"]["level"], "manual_confirmed")
+        self.assertTrue(confirmed["verification"]["safeForPreview"])
+        self.assertTrue(confirmed["verification"]["safeForCut"])
+        self.assertFalse(confirmed["verification"]["requiresManualConfirmation"])
+        plan = plan_screw_hole_cut_from_relationship(confirmed, panel_snapshots=snapshots)
+        self.assertTrue(plan["ok"], plan)
+
+    def test_preview_accepts_bbox_candidate(self):
+        rel, snapshots = _fixture_edge_to_surface()
+        self.assertEqual(rel["verification"]["level"], "bbox_candidate")
+        preview = preview_screw_holes_from_relationship(rel, panel_snapshots=snapshots)
+        self.assertTrue(preview["ok"], preview)
+
+    def test_cut_validation_accepts_manual_confirmed(self):
+        rel, snapshots = _fixture_edge_to_surface()
+        confirmed = confirm_relationship_for_cut(rel)
+        plan = plan_screw_hole_cut_from_relationship(confirmed, panel_snapshots=snapshots)
+        self.assertTrue(plan["ok"], plan)
+        self.assertEqual(plan["action"], CREATE_ACTION)
+
+    def test_validate_manual_confirmed_refuses_missing_relationship(self):
+        self.assertEqual(
+            validate_manual_confirmed_relationship_for_cut(None),
+            NO_MANUAL_CONFIRMED_FOR_CUT_MESSAGE,
+        )
+        self.assertEqual(
+            validate_manual_confirmed_relationship_for_cut({}),
+            NO_MANUAL_CONFIRMED_FOR_CUT_MESSAGE,
+        )
+
+    def test_validate_manual_confirmed_refuses_bbox_candidate(self):
+        rel, _ = _fixture_edge_to_surface()
+        self.assertEqual(rel["verification"]["level"], "bbox_candidate")
+        self.assertEqual(
+            validate_manual_confirmed_relationship_for_cut(rel),
+            NO_MANUAL_CONFIRMED_FOR_CUT_MESSAGE,
+        )
+
+    def test_validate_manual_confirmed_accepts_confirmed_relationship(self):
+        rel, _ = _fixture_edge_to_surface()
+        confirmed = confirm_relationship_for_cut(rel)
+        self.assertIsNone(validate_manual_confirmed_relationship_for_cut(confirmed))
+
+    def test_validate_manual_confirmed_rejects_safe_for_cut_false(self):
+        rel, snapshots = _fixture_edge_to_surface()
+        rel["verification"] = {
+            "level": "manual_confirmed",
+            "safeForPreview": True,
+            "safeForCut": False,
+            "requiresManualConfirmation": False,
+        }
+        self.assertEqual(
+            validate_manual_confirmed_relationship_for_cut(rel),
+            CUT_BLOCKED_MESSAGE,
+        )
+        plan = plan_screw_hole_cut_from_relationship(rel, panel_snapshots=snapshots)
+        self.assertFalse(plan["ok"])
+        self.assertTrue(any(CUT_BLOCKED_MESSAGE in err for err in plan["errors"]))
+
     def test_cut_plan_unsupported_relationship_returns_error(self):
         rel, snapshots = _fixture_edge_to_surface()
         rel["geometryType"] = "surface_to_surface"
@@ -242,6 +308,21 @@ class HardwareFromRelationshipTests(unittest.TestCase):
             metadata_written=True,
         )
         self.assertTrue(report["ok"])
+        self.assertEqual(report["operationType"], "SCREW_HOLE_FROM_RELATIONSHIP")
+        self.assertEqual(set(report["audit"].keys()), {
+            "operationType",
+            "relationshipId",
+            "hostPanelId",
+            "targetPanelId",
+            "holeCount",
+            "cutFeatureName",
+            "metadataWritten",
+            "targetBodyModified",
+            "metadata",
+            "warnings",
+            "errors",
+        })
+        self.assertTrue(report["metadataWritten"])
         self.assertEqual(report["operationType"], "SCREW_HOLE_FROM_RELATIONSHIP")
         self.assertEqual(report["cutFeatureName"], "HW_REL_SCREW_HOLE_TEST")
         self.assertTrue(report["metadataWritten"])

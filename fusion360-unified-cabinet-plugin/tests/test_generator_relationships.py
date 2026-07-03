@@ -15,6 +15,11 @@ from generator_panel_adapter import (  # noqa: E402
     snapshot_dict_from_fridge_board,
     snapshot_dict_from_lounge_panel,
 )
+from generator_relationship_cases import list_generator_relationship_scenarios  # noqa: E402
+from generator_relationship_service import (  # noqa: E402
+    evaluate_all_generator_relationship_scenarios,
+    evaluate_generator_relationship_scenario,
+)
 
 
 class GeneratorRelationshipTests(unittest.TestCase):

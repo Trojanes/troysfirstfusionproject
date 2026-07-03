@@ -56,6 +56,38 @@ def _plane_and_point(
     raise ValueError("Unsupported contact axis: {}".format(contact_axis))
 
 
+def _resolve_body_in_component(component, host_body):
+    if not component or not host_body:
+        return host_body
+    try:
+        for index in range(component.bRepBodies.count):
+            body = component.bRepBodies.item(index)
+            if body == host_body:
+                return body
+            if getattr(body, "name", None) and body.name == getattr(host_body, "name", None):
+                return body
+    except Exception:
+        pass
+    return host_body
+
+
+def _set_host_participant_bodies(ext_input, host_body) -> None:
+    """Match side-contact cut pattern: Fusion expects a list of BRepBody, not ObjectCollection."""
+    try:
+        ext_input.participantBodies = [host_body]
+        return
+    except Exception as first_error:
+        last_error = first_error
+    try:
+        participants = adsk.core.ObjectCollection.create()
+        participants.add(host_body)
+        ext_input.participantBodies = participants
+        return
+    except Exception as second_error:
+        last_error = second_error
+    raise ValueError("HOST_ONLY_CUT_NOT_AVAILABLE: {}".format(last_error))
+
+
 def create_host_screw_hole_cut(
     component,
     host_body,
@@ -69,6 +101,8 @@ def create_host_screw_hole_cut(
     positions = geometry.get("positions") or []
     if not positions or depth_mm <= 0:
         raise ValueError("Feature geometry must include positions and positive depthMm.")
+
+    host_body = _resolve_body_in_component(component, host_body)
 
     host_bbox = _bbox_mm(host_body)
     host_face_mm = float(positions[0][contact_axis.lower()])
@@ -97,18 +131,10 @@ def create_host_screw_hole_cut(
 
     extrudes = component.features.extrudeFeatures
     ext_input = extrudes.createInput(profiles, adsk.fusion.FeatureOperations.CutFeatureOperation)
-    extent = adsk.core.ValueInput.createByReal(mm_to_cm(depth_mm))
-    if drill_negative:
-        ext_input.setOneSideToExtent(adsk.fusion.ExtentDirections.NegativeExtentDirection, extent, True)
-    else:
-        ext_input.setDistanceExtent(False, extent)
+    signed_depth_cm = mm_to_cm(depth_mm) * (-1.0 if drill_negative else 1.0)
+    ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(signed_depth_cm))
 
-    try:
-        participants = adsk.core.ObjectCollection.create()
-        participants.add(host_body)
-        ext_input.participantBodies = participants
-    except Exception as ex:
-        raise ValueError("HOST_ONLY_CUT_NOT_AVAILABLE: {}".format(ex))
+    _set_host_participant_bodies(ext_input, host_body)
 
     cut = extrudes.add(ext_input)
     cut.name = "HW_REL_SCREW_HOLE_{}".format(sanitize_token(str(int(time.time())), limit=40))
