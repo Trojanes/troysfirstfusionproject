@@ -950,7 +950,7 @@ Completed:
   ✅ generator_declared_relationships.py + generator_declared_service.py
   ✅ relationships.reconcileGeneratorDeclarations + Debug UI button
   ✅ cut gate accepts generator_declared when geometryValidation.ok
-  ✅ offline + Fusion via connect_pipeline_smoke (M6–M9 unified)
+  ✅ offline regression + historical Fusion smoke (M6–M9 sealed 2026-07-05)
   ✅ relationshipDeclarations embedded in Overhead generator JSON output
   ✅ assembly component attribute + reconcile loads embedded declarations
 
@@ -1234,17 +1234,20 @@ If any answer violates the global rules, stop and ask for clarification.
 
 The Connect M6–M9 pipeline is sealed. Next work is post-M9 implementation of additional hardware types and generator extensions.
 
-Unified verification:
+Unified verification (2026-07-05 — one-click Fusion smoke scripts removed):
 
 ```powershell
-# Terminal (offline M6–M9)
+# Terminal — full offline regression (relationship, generator, demo pack, unit tests)
 cd fusion360-unified-cabinet-plugin
-python tests/run_connect_pipeline_smoke_offline.py
+python tests/run_plugin_offline_regression.py
 
-# Fusion — install once, then Run in Scripts and Add-Ins
-powershell -ExecutionPolicy Bypass -File scripts/install_connect_pipeline_smoke.ps1
-# → connect_pipeline_smoke
+# Optional focused runners
+python tests/run_connect_demo_pack_offline.py
+python tests/run_relationship_overlay_selfcheck.py
+python -m unittest tests.test_contact_patch -v
 ```
+
+Fusion manual acceptance: load **UnifiedCabinetPlugin** add-in → **板件连接 Connect** card (and Debug tools as needed). No Scripts-folder smoke runner.
 
 M7 reference (sealed):
 - Checklist: docs/connect-m7-formal-ui-checklist.md
@@ -1272,5 +1275,5 @@ M4.6A reference (sealed):
 M5 scope (active):
 - Upgrade selected pair verification from bbox/AABB to face-level contact
 - New verification level: `face_verified`
-- Runners: `tests/run_connect_pipeline_smoke_offline.py`, `connect_pipeline_smoke.py` (Fusion)
+- Runners: `tests/run_plugin_offline_regression.py` (offline); Fusion via Connect palette + Debug UI
 - See Milestone 5 section below

@@ -11,8 +11,10 @@ from relationship_service import build_panel_snapshot_from_dict, scan_relationsh
 
 try:
     import adsk.core as adsk_core
+    import adsk.fusion as adsk_fusion
 except Exception:
     adsk_core = None
+    adsk_fusion = None
 
 try:
     from geometry_ops import ATTRIBUTE_GROUP, mm_to_cm, sanitize_token
@@ -234,6 +236,19 @@ def evaluate_fixture_expectations(
     )
 
 
+def _is_part_design(root_component) -> bool:
+    """Fusion Part designs allow only one component — fixtures must use flat multi-body mode."""
+    if not root_component:
+        return True
+    try:
+        design = root_component.parentDesign
+        if design is not None and adsk_fusion is not None:
+            return design.designType == adsk_fusion.DesignTypes.PartDesignType
+    except Exception:
+        pass
+    return False
+
+
 def _new_component(parent_component, name):
     transform = adsk_core.Matrix3D.create()
     occurrence = parent_component.occurrences.addNewComponent(transform)
@@ -248,6 +263,8 @@ def _resolve_fixture_container(root_component, assembly_name):
     Assembly designs get a dedicated child component. Part designs cannot add
     sub-components, so bodies are created directly on the root component.
     """
+    if _is_part_design(root_component):
+        return root_component, True
     try:
         return _new_component(root_component, assembly_name), False
     except Exception:
@@ -323,7 +340,12 @@ def create_relationship_test_fixture(root_component) -> Tuple[List[Dict[str, Any
             try:
                 component = _new_component(assembly, panel_id)
             except Exception as ex:
-                return created, "Failed to create fixture component {}: {}".format(panel_id, ex), mode_note
+                hint = (
+                    " Fusion 零件文档只能有一个零部件；请改用「部件 Assembly」文档，"
+                    "或更新插件后在当前零件文档使用 flat 模式（测试板落在根零部件上）。"
+                )
+                message = "Failed to create fixture component {}: {}{}".format(panel_id, ex, hint)
+                return created, message, mode_note
         body, error = _add_box_body(
             component,
             panel_id,

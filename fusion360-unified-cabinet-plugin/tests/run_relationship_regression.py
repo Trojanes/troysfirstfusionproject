@@ -368,6 +368,8 @@ def validate_routes_registered() -> bool:
         "relationships.verifySelectedPairFaces",
         "relationships.runOverlaySelfCheck",
         "relationships.clearRelationshipOverlays",
+        "relationships.showContactPatchOverlayForSelected",
+        "relationships.clearContactPatchOverlays",
         "modules.relationships.controller",
     ]
     missing = [route for route in required if route not in text]

@@ -10,18 +10,18 @@
 - [x] Offline regression passes locally (automated):
   ```bash
   python fusion360-unified-cabinet-plugin/tests/run_plugin_offline_regression.py
-  python fusion360-unified-cabinet-plugin/tests/run_connect_pipeline_smoke_offline.py
   ```
 - [ ] Fusion 360 with CabinetNC add-in loaded from this repo (`fusion360-unified-cabinet-plugin/`)
 - [ ] Active **Design** document (Part or Assembly — fixture supports both)
 - [x] Latest plugin code includes M3 UI button **Create Screw Holes From Confirmed Relationship**
 
-### Automated runners (historical)
+### Automated runners
 
-M3/M4/M5 per-milestone smoke scripts removed. Use:
-- Connect pipeline offline: `tests/run_connect_pipeline_smoke_offline.py`
-- Connect pipeline Fusion: `connect_pipeline_smoke.py` (`scripts/install_connect_pipeline_smoke.ps1`)
-- Full regression: `tests/run_plugin_offline_regression.py`
+> **Note (2026-07-05):** One-click Fusion smoke scripts (`connect_pipeline_smoke`, `contact_patch_smoke`, per-milestone `m*_connect_smoke.py`) were removed after seal. Use offline regression + this manual Fusion checklist.
+
+- Full offline regression: `tests/run_plugin_offline_regression.py`
+- Connect demo pack: `tests/run_connect_demo_pack_offline.py`
+- Fusion: **CabinetNC palette → Relationship / Hardware Debug** (steps below)
 
 Smoke JSON is written to `tests/output/` (gitignored; regenerated on each run).
 

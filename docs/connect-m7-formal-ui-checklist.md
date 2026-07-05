@@ -18,15 +18,21 @@
 
 ## Runners
 
-| Script | Environment |
-|--------|-------------|
-| `tests/test_connect_formal_ui.py` | Terminal — unit tests |
-| `tests/run_connect_pipeline_smoke_offline.py` | Terminal — **M6–M9 unified offline** (includes M7 step) |
-| **`connect_pipeline_smoke.py`** | Fusion — **M6–M9 unified smoke** |
+> **Note (2026-07-05):** One-click smoke scripts removed. Use unit tests + full offline regression; Fusion acceptance is manual via Connect card.
 
-Install: `powershell -ExecutionPolicy Bypass -File scripts/install_connect_pipeline_smoke.ps1`
+| Script / surface | Environment |
+|------------------|-------------|
+| `tests/test_connect_formal_ui.py` | Terminal — M7 unit tests |
+| `tests/run_plugin_offline_regression.py` | Terminal — full offline regression |
+| **CabinetNC palette → 板件连接 Connect** | Fusion — list / filter / preview / confirm / cut |
 
-Per-milestone `m7_connect_smoke.py` removed — use `connect_pipeline_smoke`.
+```powershell
+cd fusion360-unified-cabinet-plugin
+python -m unittest tests.test_connect_formal_ui -v
+python tests/run_plugin_offline_regression.py
+```
+
+Per-milestone `m7_connect_smoke.py` and unified `connect_pipeline_smoke.py` removed — use Connect card + regression.
 
 ---
 

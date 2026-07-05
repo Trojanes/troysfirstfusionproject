@@ -208,6 +208,38 @@
     .connect-card {
       margin-bottom: 12px;
     }
+    .connect-section {
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+    }
+    .connect-section:last-of-type {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+    .connect-section-title {
+      margin: 0 0 8px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+    }
+    .connect-dev-tools {
+      margin-top: 12px;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: #fafbfc;
+    }
+    .connect-dev-tools summary {
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      color: #475569;
+      user-select: none;
+    }
+    .connect-dev-tools[open] summary {
+      margin-bottom: 10px;
+    }
     .connect-toolbar {
       display: flex;
       flex-wrap: wrap;
@@ -2265,81 +2297,79 @@
         </div>
 
         <div class="card connect-card">
-          <h3>连接 Connect <span class="pill">M7</span></h3>
+          <h3>板件连接 Connect</h3>
           <div class="card-body">
-            <div class="hardware-section-note">查看关系、按类型/验证级别过滤；仅 cut-safe 关系可切割。技术字段保留英文。</div>
-            <div class="connect-toolbar">
-              <button type="button" class="primary" id="connectScanBtn">扫描关系 / Scan Relationships</button>
-              <label>几何 Geometry
-                <select id="connectFilterGeometry">
-                  <option value="">全部 All</option>
-                </select>
-              </label>
-              <label>验证 Verification
-                <select id="connectFilterVerification">
-                  <option value="">全部 All</option>
-                </select>
-              </label>
-              <label><span><input id="connectFilterCutSafe" type="checkbox" style="width:auto"> 仅可切割 Cut-safe only</span></label>
-            </div>
-            <div class="connect-table-wrap">
-              <table class="connect-table">
-                <thead>
-                  <tr>
-                    <th>板对 Pair</th>
-                    <th>Geometry</th>
-                    <th>Verification</th>
-                    <th>Preview</th>
-                    <th>Cut</th>
-                    <th>置信度 Conf.</th>
-                  </tr>
-                </thead>
-                <tbody id="connectRelationshipRows">
-                  <tr><td colspan="6" class="muted">请先扫描以列出关系。/ Scan to list relationships.</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="connect-detail-grid" id="connectDetailGrid">
-              <div class="connect-detail-item"><strong>已选 Selected</strong><span id="connectDetailSelected">-</span></div>
-              <div class="connect-detail-item"><strong>Host → Target</strong><span id="connectDetailRoles">-</span></div>
-              <div class="connect-detail-item"><strong>验证 Verification</strong><span id="connectDetailVerification">-</span></div>
-              <div class="connect-detail-item"><strong>置信度 Confidence</strong><span id="connectDetailConfidence">-</span></div>
-            </div>
-            <div class="connect-actions">
-              <button type="button" class="ghost" id="connectPreviewBtn" disabled>预览螺丝孔 / Preview Screw Holes</button>
-              <button type="button" class="ghost" id="connectConfirmBtn" disabled>确认可切割 / Confirm For Cut</button>
-              <button type="button" class="primary" id="connectCutBtn" disabled>创建螺丝孔 / Create Screw Holes</button>
-            </div>
-            <div class="hardware-message" id="connectMessage">点击扫描加载 Connect 视图。/ Run scan to populate Connect view.</div>
-            <div class="connect-op-result" id="connectOperationResult">尚无操作 / No operation yet.</div>
-          </div>
-        </div>
+            <div class="hardware-section-note">关系表示两块板之间可能存在连接；接触面是系统检测到的实际接触区域。后续 hardware 与加工判断应基于接触面，而不是只基于关系线。</div>
 
-        <div class="card hardware-debug-card">
-          <h3>关系调试 / Relationship Debug <span class="pill">Developer</span></h3>
-          <div class="card-body">
-            <div class="hardware-section-note">开发调试：scan、preview、会话内 manual confirm、host-only 螺丝孔切割。确认状态仅存于浏览器内存。</div>
-            <div class="hardware-debug-actions">
-              <button type="button" class="ghost" id="hwRelCreateFixtureBtn">创建夹具 / Create Fixture</button>
-              <button type="button" class="ghost" id="hwRelScanBtn">扫描关系 / Scan</button>
-              <button type="button" class="ghost" id="hwRelInspectSelectedBtn">检查选中对 / Inspect Pair</button>
-              <button type="button" class="primary" id="hwRelVerifySelectedFacesBtn">面验证 / Verify Faces</button>
-              <button type="button" class="primary" id="hwRelReconcileOverheadDeclarationsBtn">Reconcile Overhead 声明</button>
-              <button type="button" class="primary" id="hwRelPreviewScrewHolesBtn">预览螺丝孔 / Preview Holes</button>
-              <button type="button" class="ghost" id="hwRelConfirmForCutBtn">确认可切割 / Confirm For Cut</button>
-              <button type="button" class="primary" id="hwRelCreateCutFromConfirmedBtn">从已确认关系切割 / Cut Confirmed</button>
-              <button type="button" class="primary" id="hwRelRunDemoFixtureFlowBtn">Demo 夹具流程 / Demo Fixture</button>
-              <button type="button" class="ghost" id="hwRelRunDemoPackOfflineBtn">Demo Pack 离线</button>
-              <button type="button" class="ghost" id="hwRelRunDemoNegativeBtn">负例报告 / Negative Report</button>
-              <button type="button" class="ghost" id="hwRelCopyLastJsonBtn">复制 JSON / Copy JSON</button>
-              <button type="button" class="ghost" id="hwRelShowDemoSummaryBtn">Demo 摘要 / Summary</button>
-              <button type="button" class="primary" id="hwRelShowOverlayForSelectedBtn">显示叠加 / Show Overlay</button>
-              <button type="button" class="ghost" id="hwRelRunOverlaySelfCheckBtn">Overlay 自检</button>
-              <button type="button" class="ghost" id="hwRelClearRelationshipOverlaysBtn">清除叠加 / Clear Overlay</button>
-              <button type="button" class="ghost" id="hwRelClearResultBtn">清空结果 / Clear</button>
+            <div class="connect-section">
+              <h4 class="connect-section-title">选中板件</h4>
+              <div class="connect-detail-grid">
+                <div class="connect-detail-item"><strong>板件 A</strong><span id="connectPanelA">-</span></div>
+                <div class="connect-detail-item"><strong>板件 B</strong><span id="connectPanelB">-</span></div>
+              </div>
+              <div class="connect-toolbar">
+                <button type="button" class="ghost" id="connectScanBtn">扫描关系</button>
+                <button type="button" class="primary" id="connectInspectBtn">检查选中板件对</button>
+              </div>
             </div>
-            <div class="hardware-message" id="hwRelDebugMessage">请扫描或创建夹具以加载关系状态。/ Run scan or create fixture.</div>
-            <pre class="hardware-debug-result" id="hwRelDebugResult">{}</pre>
+
+            <div class="connect-section">
+              <h4 class="connect-section-title">关系信息</h4>
+              <div class="connect-detail-grid">
+                <div class="connect-detail-item"><strong>关系类型</strong><span id="connectRelType">-</span></div>
+                <div class="connect-detail-item"><strong>几何类型</strong><span id="connectGeometryType">-</span></div>
+                <div class="connect-detail-item"><strong>验证状态</strong><span id="connectVerification">-</span></div>
+                <div class="connect-detail-item"><strong>可预览</strong><span id="connectSafePreview">-</span></div>
+                <div class="connect-detail-item"><strong>可加工</strong><span id="connectSafeCut">-</span></div>
+              </div>
+            </div>
+
+            <div class="connect-section">
+              <h4 class="connect-section-title">接触面</h4>
+              <div class="connect-detail-grid">
+                <div class="connect-detail-item"><strong>接触轴</strong><span id="connectContactAxis">-</span></div>
+                <div class="connect-detail-item"><strong>接触面积</strong><span id="connectContactArea">-</span></div>
+                <div class="connect-detail-item"><strong>Host 板件</strong><span id="connectHostPanel">-</span></div>
+                <div class="connect-detail-item"><strong>Target 板件</strong><span id="connectTargetPanel">-</span></div>
+                <div class="connect-detail-item"><strong>警告</strong><span id="connectWarnings">-</span></div>
+                <div class="connect-detail-item"><strong>错误</strong><span id="connectErrors">-</span></div>
+              </div>
+              <div class="connect-actions">
+                <button type="button" class="primary" id="connectShowContactPatchBtn" disabled>显示接触面</button>
+                <button type="button" class="ghost" id="connectClearContactPatchBtn">清除接触面</button>
+              </div>
+            </div>
+
+            <div class="connect-section">
+              <h4 class="connect-section-title">操作</h4>
+              <div class="connect-actions">
+                <button type="button" class="ghost" id="connectConfirmBtn" disabled>确认关系</button>
+                <button type="button" class="primary" id="connectCutBtn" disabled>创建螺丝孔</button>
+              </div>
+            </div>
+
+            <div class="hardware-message" id="connectMessage">在 Fusion 中选中两块板件，然后点击「检查选中板件对」。</div>
+            <div class="connect-op-result" id="connectOperationResult">尚无操作。</div>
+
+            <details class="connect-dev-tools" id="connectDevTools">
+              <summary>开发工具</summary>
+              <div class="hardware-section-note">测试、Demo、回归与关系线 overlay。默认折叠，不影响主流程。</div>
+              <div class="hardware-debug-actions">
+                <button type="button" class="ghost" id="hwRelCreateFixtureBtn">创建关系测试板</button>
+                <button type="button" class="ghost" id="hwRelReconcileOverheadDeclarationsBtn">Reconcile Overhead 声明</button>
+                <button type="button" class="ghost" id="hwRelVerifySelectedFacesBtn">面验证</button>
+                <button type="button" class="primary" id="hwRelRunDemoFixtureFlowBtn">运行演示流程</button>
+                <button type="button" class="ghost" id="hwRelRunDemoNegativeBtn">运行负面案例检查</button>
+                <button type="button" class="ghost" id="hwRelRunDemoPackOfflineBtn">运行离线 Demo Pack</button>
+                <button type="button" class="ghost" id="hwRelRunOverlaySelfCheckBtn">运行 Overlay 自检</button>
+                <button type="button" class="ghost" id="hwRelShowOverlayForSelectedBtn">显示关系线</button>
+                <button type="button" class="ghost" id="hwRelClearRelationshipOverlaysBtn">清除关系线</button>
+                <button type="button" class="ghost" id="hwRelCopyLastJsonBtn">复制 JSON</button>
+                <button type="button" class="ghost" id="hwRelClearResultBtn">清空结果</button>
+              </div>
+              <div class="hardware-message" id="hwRelDebugMessage">开发工具就绪。</div>
+              <pre class="hardware-debug-result" id="hwRelDebugResult">{}</pre>
+            </details>
           </div>
         </div>
       </main>
@@ -8665,24 +8695,25 @@
             hwRelDebugHandleFixtureResult(parsed);
           } else if (action === "relationshipScanResult") {
             hwRelDebugHandleScanResult(parsed);
+            connectUiHandleScanResult(parsed);
           } else if (action === "relationshipInspectResult") {
             hwRelDebugHandleInspectResult(parsed);
+            connectUiHandleInspectResult(parsed);
           } else if (action === "hardwareRelationshipPreviewResult") {
             hwRelDebugHandlePreviewResult(parsed);
-            connectUiHandlePreviewResult(parsed);
           } else if (action === "hardwareRelationshipCutResult") {
             hwRelDebugHandleCutResult(parsed);
             connectUiHandleCutResult(parsed);
           } else if (action === "connectDemoResult") {
             hwRelDebugHandleDemoResult(parsed);
+          } else if (action === "contactPatchOverlayResult") {
+            connectUiHandleContactPatchOverlayResult(parsed);
           } else if (action === "relationshipOverlayResult") {
             hwRelDebugHandleOverlayResult(parsed);
           } else if (action === "relationshipFaceVerifyResult") {
             hwRelDebugHandleFaceVerifyResult(parsed);
           } else if (action === "relationshipDeclaredResult") {
             hwRelDebugHandleDeclaredResult(parsed);
-          } else if (action === "connectListResult") {
-            connectUiHandleListResult(parsed);
           } else if (action === "connectExecuteResult") {
             connectUiHandleExecuteResult(parsed);
           } else if (action === "panelAttributesResult") {
@@ -10913,15 +10944,13 @@
       previewValid: false,
     };
 
-    const connectUiState = {
-      lastView: null,
-      lastScan: null,
+    const connectContactState = {
+      lastInspect: null,
+      lastRelationship: null,
+      lastContactPatch: null,
+      lastPanels: [],
       confirmedRelationship: null,
-      filters: {
-        geometryType: "",
-        verificationLevel: "",
-        cutSafeOnly: false,
-      },
+      lastScanCount: null,
     };
 
     const CONNECT_HW_RULE = {
@@ -10952,23 +10981,20 @@
       return `<span class="connect-badge ${tone || "warn"}">${escapeHtml(text || "-")}</span>`;
     }
 
-    function connectUiPanelsMap(scanResult) {
+    function connectUiPanelsMapFromList(panels) {
       const map = {};
-      (scanResult?.panels || []).forEach((panel) => {
+      (panels || []).forEach((panel) => {
         if (panel?.panelId) map[panel.panelId] = panel;
       });
       return map;
     }
 
     function connectUiActiveRelationship() {
-      return connectUiState.confirmedRelationship
-        || connectUiState.lastView?.selectedRelationship
-        || null;
+      return connectContactState.confirmedRelationship || connectContactState.lastRelationship || null;
     }
 
     function connectUiBuildCutPayload(relationship) {
-      const scanResult = connectUiState.lastScan;
-      const panels = scanResult ? connectUiPanelsMap(scanResult) : {};
+      const panels = connectUiPanelsMapFromList(connectContactState.lastPanels);
       const hostId = relationship?.roles?.hostPanelId;
       const targetId = relationship?.roles?.targetPanelId;
       const payload = { relationship, rule: CONNECT_HW_RULE };
@@ -10978,126 +11004,97 @@
       return payload;
     }
 
-    function connectUiUpdateFilterOptions(view) {
-      const geometrySelect = connectUiEl("connectFilterGeometry");
-      const verificationSelect = connectUiEl("connectFilterVerification");
-      const options = view?.filterOptions || {};
-      if (geometrySelect) {
-        const current = connectUiState.filters.geometryType;
-        geometrySelect.innerHTML = `<option value="">全部 All</option>${(options.geometryTypes || [])
-          .map((item) => `<option value="${escapeHtml(item)}"${item === current ? " selected" : ""}>${escapeHtml(item)}</option>`)
-          .join("")}`;
-      }
-      if (verificationSelect) {
-        const current = connectUiState.filters.verificationLevel;
-        verificationSelect.innerHTML = `<option value="">全部 All</option>${(options.verificationLevels || [])
-          .map((item) => `<option value="${escapeHtml(item)}"${item === current ? " selected" : ""}>${escapeHtml(item)}</option>`)
-          .join("")}`;
-      }
-      const cutSafe = connectUiEl("connectFilterCutSafe");
-      if (cutSafe) cutSafe.checked = Boolean(connectUiState.filters.cutSafeOnly);
+    function connectUiYesNo(value) {
+      return value ? "是" : "否";
     }
 
-    function connectUiRenderTable(view) {
-      const tbody = connectUiEl("connectRelationshipRows");
-      if (!tbody) return;
-      const rows = view?.rows || [];
-      if (!rows.length) {
-        tbody.innerHTML = `<tr><td colspan="6" class="muted">无匹配关系 / No relationships match current filters.</td></tr>`;
+    function connectUiRenderInspect(parsed) {
+      connectContactState.lastInspect = parsed;
+      const rel = parsed?.relationship || null;
+      connectContactState.lastRelationship = rel;
+      connectContactState.lastPanels = Array.isArray(parsed?.panels) ? parsed.panels : [];
+      connectContactState.lastContactPatch = parsed?.contactPatch || null;
+
+      const panelIds = parsed?.selectedPanelIds || [];
+      connectUiEl("connectPanelA") && (connectUiEl("connectPanelA").textContent = panelIds[0] || "-");
+      connectUiEl("connectPanelB") && (connectUiEl("connectPanelB").textContent = panelIds[1] || "-");
+
+      if (!parsed?.ok || !rel) {
+        connectUiEl("connectRelType") && (connectUiEl("connectRelType").textContent = "-");
+        connectUiEl("connectGeometryType") && (connectUiEl("connectGeometryType").textContent = "-");
+        connectUiEl("connectVerification") && (connectUiEl("connectVerification").textContent = "-");
+        connectUiEl("connectSafePreview") && (connectUiEl("connectSafePreview").textContent = "-");
+        connectUiEl("connectSafeCut") && (connectUiEl("connectSafeCut").textContent = "-");
+        connectUiEl("connectContactAxis") && (connectUiEl("connectContactAxis").textContent = "-");
+        connectUiEl("connectContactArea") && (connectUiEl("connectContactArea").textContent = "-");
+        connectUiEl("connectHostPanel") && (connectUiEl("connectHostPanel").textContent = "-");
+        connectUiEl("connectTargetPanel") && (connectUiEl("connectTargetPanel").textContent = "-");
+        connectUiEl("connectWarnings") && (connectUiEl("connectWarnings").textContent = "-");
+        connectUiEl("connectErrors") && (connectUiEl("connectErrors").textContent = (parsed?.errors || parsed?.contactPatchErrors || ["检查失败"]).join(" "));
+        connectUiEl("connectShowContactPatchBtn") && (connectUiEl("connectShowContactPatchBtn").disabled = true);
+        connectUiEl("connectConfirmBtn") && (connectUiEl("connectConfirmBtn").disabled = true);
+        connectUiEl("connectCutBtn") && (connectUiEl("connectCutBtn").disabled = true);
         return;
       }
-      const selectedId = view?.selectedRelationshipId;
-      tbody.innerHTML = rows
-        .map((row) => {
-          const pair = `${row.panelAId || "?"} ↔ ${row.panelBId || "?"}`;
-          const selected = row.relationshipId === selectedId ? "selected" : "";
-          return `<tr class="${selected}" data-relationship-id="${escapeHtml(row.relationshipId || "")}">
-            <td>${escapeHtml(pair)}</td>
-            <td>${escapeHtml(row.geometryType || "-")}</td>
-            <td>${connectUiBadge(row.verificationTone, row.verificationLabel)}</td>
-            <td>${row.safeForPreview ? "是 Yes" : "否 No"}</td>
-            <td>${row.safeForCut ? "是 Yes" : "否 No"}</td>
-            <td>${row.confidence ?? "-"}</td>
-          </tr>`;
-        })
-        .join("");
-      tbody.querySelectorAll("tr[data-relationship-id]").forEach((rowEl) => {
-        rowEl.addEventListener("click", () => {
-          const relationshipId = rowEl.getAttribute("data-relationship-id");
-          if (relationshipId) connectUiSelectRelationship(relationshipId);
-        });
-      });
-    }
 
-    function connectUiRenderDetail(view) {
-      const selected = view?.selected || {};
-      connectUiEl("connectDetailSelected") && (connectUiEl("connectDetailSelected").textContent = selected.relationshipId || "-");
-      connectUiEl("connectDetailRoles") && (connectUiEl("connectDetailRoles").textContent = `${selected.hostPanelId || "-"} → ${selected.targetPanelId || "-"}`);
-      connectUiEl("connectDetailVerification") && (connectUiEl("connectDetailVerification").innerHTML = selected.verificationLabel
-        ? connectUiBadge(selected.verificationTone, selected.verificationLabel)
-        : "-");
-      connectUiEl("connectDetailConfidence") && (connectUiEl("connectDetailConfidence").textContent = selected.confidence ?? "-");
-      const actions = view?.actions || {};
-      connectUiEl("connectPreviewBtn") && (connectUiEl("connectPreviewBtn").disabled = !actions.preview?.ok);
-      connectUiEl("connectConfirmBtn") && (connectUiEl("connectConfirmBtn").disabled = !actions.confirm?.ok);
-      const cutAllowed = Boolean(actions.cut?.ok) || Boolean(connectUiState.confirmedRelationship?.verification?.safeForCut);
+      const verification = rel.verification || {};
+      const patch = connectContactState.lastContactPatch || {};
+      const patchVerification = patch.verification || {};
+      connectUiEl("connectRelType") && (connectUiEl("connectRelType").textContent = rel.relationshipType || "-");
+      connectUiEl("connectGeometryType") && (connectUiEl("connectGeometryType").textContent = rel.geometryType || "-");
+      connectUiEl("connectVerification") && (connectUiEl("connectVerification").innerHTML = connectUiBadge(
+        patchVerification.level === "bbox_contact_patch" ? "warn" : "ok",
+        patchVerification.level || verification.level || "-",
+      ));
+      connectUiEl("connectSafePreview") && (connectUiEl("connectSafePreview").textContent = connectUiYesNo(Boolean(verification.safeForPreview)));
+      connectUiEl("connectSafeCut") && (connectUiEl("connectSafeCut").textContent = connectUiYesNo(Boolean(verification.safeForCut)));
+      connectUiEl("connectContactAxis") && (connectUiEl("connectContactAxis").textContent = patch.contactAxis || rel.contact?.axis || "-");
+      connectUiEl("connectContactArea") && (connectUiEl("connectContactArea").textContent = patch.contactAreaMm2 != null ? `${patch.contactAreaMm2} mm²` : "-");
+      connectUiEl("connectHostPanel") && (connectUiEl("connectHostPanel").textContent = patch.hostPanelId || rel.roles?.hostPanelId || "-");
+      connectUiEl("connectTargetPanel") && (connectUiEl("connectTargetPanel").textContent = patch.targetPanelId || rel.roles?.targetPanelId || "-");
+      connectUiEl("connectWarnings") && (connectUiEl("connectWarnings").textContent = [...(patch.warnings || []), ...(parsed.warnings || [])].join(" ") || "-");
+      connectUiEl("connectErrors") && (connectUiEl("connectErrors").textContent = (parsed.contactPatchErrors || []).join(" ") || "-");
+
+      const canShowPatch = Boolean(patch.contactPatchId);
+      connectUiEl("connectShowContactPatchBtn") && (connectUiEl("connectShowContactPatchBtn").disabled = !canShowPatch);
+
+      const confirmAllowed = rel.geometryType === "edge_to_surface"
+        && rel.relationshipType === "structural_butt_joint"
+        && rel.roles?.hostPanelId
+        && rel.roles?.targetPanelId;
+      connectUiEl("connectConfirmBtn") && (connectUiEl("connectConfirmBtn").disabled = !confirmAllowed);
+
+      const cutAllowed = Boolean(connectContactState.confirmedRelationship?.verification?.safeForCut)
+        || (Boolean(verification.safeForCut) && verification.level !== "bbox_candidate" && verification.level !== "bbox_contact_patch");
       connectUiEl("connectCutBtn") && (connectUiEl("connectCutBtn").disabled = !cutAllowed);
     }
 
-    function connectUiRender(view) {
-      connectUiState.lastView = view;
-      if (view?.scan) connectUiState.lastScan = view.scan;
-      connectUiUpdateFilterOptions(view);
-      connectUiRenderTable(view);
-      connectUiRenderDetail(view);
-      if (view?.ok) {
-        connectUiSetMessage(`Connect 列表：${view.filteredCount || 0}/${view.relationshipCount || 0} 条关系 / relationship(s).`, "ok");
-      } else {
-        connectUiSetMessage((view?.errors || ["Connect 列表失败 / Connect list failed."]).join(" "), "error");
-      }
-    }
-
-    function connectUiRequestList(extra = {}) {
-      const payload = {
-        toleranceMm: 0.5,
-        filters: { ...connectUiState.filters },
-        ...extra,
-      };
-      if (connectUiState.lastScan) payload.scanResult = connectUiState.lastScan;
-      fusionSend("relationships.connectList", payload);
-    }
-
     function connectUiScan() {
-      connectUiState.confirmedRelationship = null;
-      connectUiSetMessage("正在扫描关系… / Scanning relationships for Connect view...");
-      connectUiRequestList({ scanResult: null });
+      connectContactState.confirmedRelationship = null;
+      connectUiSetMessage("正在扫描全部板件关系…");
+      fusionSend("relationships.scan", { scope: "all", toleranceMm: 0.5 });
     }
 
-    function connectUiApplyFilters() {
-      connectUiState.filters.geometryType = connectUiEl("connectFilterGeometry")?.value || "";
-      connectUiState.filters.verificationLevel = connectUiEl("connectFilterVerification")?.value || "";
-      connectUiState.filters.cutSafeOnly = Boolean(connectUiEl("connectFilterCutSafe")?.checked);
-      connectUiRequestList();
+    function connectUiInspectSelected() {
+      connectContactState.confirmedRelationship = null;
+      connectUiSetMessage("正在检查 Fusion 中选中的板件对…");
+      fusionSend("relationships.inspectSelected", { toleranceMm: 0.5 });
     }
 
-    function connectUiSelectRelationship(relationshipId) {
-      connectUiState.confirmedRelationship = null;
-      connectUiRequestList({ selectedRelationshipId: relationshipId });
+    function connectUiShowContactPatch() {
+      connectUiSetMessage("正在 Fusion 中显示接触面 overlay…");
+      fusionSend("relationships.showContactPatchOverlayForSelected", { toleranceMm: 0.5 });
     }
 
-    function connectUiPreview() {
-      const relationship = connectUiActiveRelationship();
-      if (!relationship) {
-        connectUiSetMessage("请先选择一条关系。/ Select a relationship first.", "error");
-        return;
-      }
-      fusionSend("relationships.connectExecute", { action: "preview", relationship });
+    function connectUiClearContactPatch() {
+      connectUiSetMessage("正在清除接触面 overlay…");
+      fusionSend("relationships.clearContactPatchOverlays", {});
     }
 
     function connectUiConfirm() {
-      const relationship = connectUiState.lastView?.selectedRelationship;
+      const relationship = connectContactState.lastRelationship;
       if (!relationship) {
-        connectUiSetMessage("请先选择一条关系。/ Select a relationship first.", "error");
+        connectUiSetMessage("请先检查选中板件对。", "error");
         return;
       }
       fusionSend("relationships.connectExecute", { action: "confirm", relationship });
@@ -11106,50 +11103,68 @@
     function connectUiCut() {
       const relationship = connectUiActiveRelationship();
       if (!relationship) {
-        connectUiSetMessage("请先选择并确认关系。/ Select and confirm a relationship first.", "error");
+        connectUiSetMessage("请先检查并确认关系。", "error");
         return;
       }
       fusionSend("relationships.connectExecute", { action: "cut", relationship });
     }
 
-    function connectUiHandleListResult(parsed) {
-      connectUiRender(parsed);
+    function connectUiHandleInspectResult(parsed) {
+      connectUiRenderInspect(parsed);
+      if (parsed?.ok) {
+        const patch = parsed.contactPatch;
+        connectUiSetMessage(
+          patch
+            ? `已识别关系；接触面积 ${patch.contactAreaMm2} mm²（${patch.verification?.level || "bbox_contact_patch"}）。`
+            : "已识别关系，但未能生成 ContactPatch。",
+          patch ? "ok" : "warn",
+        );
+      } else {
+        connectUiSetMessage((parsed?.errors || ["检查选中板件对失败"]).join(" "), "error");
+      }
+    }
+
+    function connectUiHandleScanResult(parsed) {
+      if (parsed?.ok) {
+        connectContactState.lastScanCount = parsed.relationshipCount || 0;
+        connectUiSetMessage(`扫描完成：发现 ${parsed.relationshipCount || 0} 条关系。`, "ok");
+      } else {
+        connectUiSetMessage((parsed?.errors || ["关系扫描失败"]).join(" "), "error");
+      }
+    }
+
+    function connectUiHandleContactPatchOverlayResult(parsed) {
+      if (parsed?.ok) {
+        if (parsed.action === "relationships.clearContactPatchOverlays") {
+          connectUiSetMessage(`已清除 ${parsed.removedCount || 0} 个接触面 overlay 对象。`, "ok");
+          connectUiSetOperation(`清除完成：${parsed.removedCount || 0} 项`);
+        } else {
+          connectUiSetMessage("接触面 overlay 已显示。请在 Fusion 模型视图中查看矩形与标签。", "ok");
+          connectUiSetOperation(parsed.labelText || "接触面 overlay 已创建");
+        }
+      } else {
+        connectUiSetMessage((parsed?.errors || ["接触面 overlay 操作失败"]).join(" "), "error");
+      }
     }
 
     function connectUiHandleExecuteResult(parsed) {
       const requested = parsed?.requestedAction || parsed?.action;
       if (!parsed?.ok) {
-        connectUiSetMessage((parsed?.errors || ["Connect 操作被拦截 / Connect action blocked."]).join(" "), "error");
-        connectUiSetOperation((parsed?.errors || ["已拦截 Blocked"]).join(" "));
-        return;
-      }
-      if (requested === "preview") {
-        const relationship = connectUiActiveRelationship();
-        connectUiSetMessage("Preview 门控通过，请求螺丝孔预览… / Preview gate passed.", "ok");
-        fusionSend("hardware.previewScrewHolesFromRelationship", connectUiBuildCutPayload(relationship));
+        connectUiSetMessage((parsed?.errors || ["操作被拦截"]).join(" "), "error");
+        connectUiSetOperation((parsed?.errors || ["已拦截"]).join(" "));
         return;
       }
       if (requested === "confirm") {
-        connectUiState.confirmedRelationship = parsed.confirmedRelationship || parsed.relationship;
-        connectUiSetMessage(`已确认 ${parsed.relationshipId || "relationship"} 可切割（仅本会话）/ Confirmed for cut (session only).`, "ok");
-        connectUiSetOperation(`已确认 Confirmed: ${parsed.relationshipId || "-"}`);
-        connectUiRequestList({ selectedRelationshipId: parsed.relationshipId });
+        connectContactState.confirmedRelationship = parsed.confirmedRelationship || parsed.relationship;
+        connectUiRenderInspect(connectContactState.lastInspect || { ok: true, relationship: connectContactState.lastRelationship, panels: connectContactState.lastPanels, contactPatch: connectContactState.lastContactPatch });
+        connectUiSetMessage(`已确认关系 ${parsed.relationshipId || ""}（仅本会话）。`, "ok");
+        connectUiSetOperation(`已确认：${parsed.relationshipId || "-"}`);
         return;
       }
       if (requested === "cut") {
         const relationship = connectUiActiveRelationship();
-        connectUiSetMessage("Cut 门控通过，在 Host 上创建螺丝孔… / Cut gate passed.", "ok");
+        connectUiSetMessage("Cut 门控通过，正在 Host 上创建螺丝孔…", "ok");
         fusionSend("hardware.createScrewHolesFromRelationship", connectUiBuildCutPayload(relationship));
-      }
-    }
-
-    function connectUiHandlePreviewResult(parsed) {
-      if (parsed?.ok) {
-        connectUiSetOperation(`Preview 成功 / OK: ${parsed.holeCount || 0} 孔 hole(s) · ${parsed.relationshipId || "relationship"}.`);
-        connectUiSetMessage(`预览生成 ${parsed.holeCount || 0} 个螺丝孔。/ Preview generated screw hole(s).`, "ok");
-      } else {
-        connectUiSetOperation((parsed?.errors || ["预览失败 / Preview failed"]).join(" "));
-        connectUiSetMessage((parsed?.errors || ["预览失败 / Preview failed"]).join(" "), "error");
       }
     }
 
@@ -11157,13 +11172,22 @@
       const audit = parsed?.audit && typeof parsed.audit === "object" ? parsed.audit : parsed;
       if (parsed?.ok) {
         connectUiSetOperation(
-          `Cut 成功 / OK: ${audit.cutFeatureName || "feature"} · holes=${audit.holeCount || 0} · metadataWritten=${audit.metadataWritten === true}`,
+          `切割成功：${audit.cutFeatureName || "feature"} · ${audit.holeCount || 0} 孔 · metadataWritten=${audit.metadataWritten === true}`,
         );
-        connectUiSetMessage(`已在 Host 创建切割（${audit.cutFeatureName || "timeline feature"}）。/ Cut created on host.`, "ok");
+        connectUiSetMessage(`已在 Host 创建切割（${audit.cutFeatureName || "timeline feature"}）。`, "ok");
       } else {
-        connectUiSetOperation((parsed?.errors || ["切割失败 / Cut failed"]).join(" "));
-        connectUiSetMessage((parsed?.errors || ["切割失败 / Cut failed"]).join(" "), "error");
+        connectUiSetOperation((parsed?.errors || ["切割失败"]).join(" "));
+        connectUiSetMessage((parsed?.errors || ["切割失败"]).join(" "), "error");
       }
+    }
+
+    function connectUiInit() {
+      connectUiEl("connectScanBtn")?.addEventListener("click", connectUiScan);
+      connectUiEl("connectInspectBtn")?.addEventListener("click", connectUiInspectSelected);
+      connectUiEl("connectShowContactPatchBtn")?.addEventListener("click", connectUiShowContactPatch);
+      connectUiEl("connectClearContactPatchBtn")?.addEventListener("click", connectUiClearContactPatch);
+      connectUiEl("connectConfirmBtn")?.addEventListener("click", connectUiConfirm);
+      connectUiEl("connectCutBtn")?.addEventListener("click", connectUiCut);
     }
 
     const hwRelDebugState = {
@@ -11679,31 +11703,17 @@
 
     function hwRelDebugInitUi() {
       hwRelDebugEl("hwRelCreateFixtureBtn")?.addEventListener("click", hwRelDebugCreateFixture);
-      hwRelDebugEl("hwRelScanBtn")?.addEventListener("click", hwRelDebugScan);
-      hwRelDebugEl("hwRelInspectSelectedBtn")?.addEventListener("click", hwRelDebugInspectSelected);
       hwRelDebugEl("hwRelVerifySelectedFacesBtn")?.addEventListener("click", hwRelDebugVerifySelectedPairFaces);
       hwRelDebugEl("hwRelReconcileOverheadDeclarationsBtn")?.addEventListener("click", hwRelDebugReconcileOverheadDeclarations);
-      hwRelDebugEl("hwRelPreviewScrewHolesBtn")?.addEventListener("click", hwRelDebugPreviewScrewHoles);
-      hwRelDebugEl("hwRelConfirmForCutBtn")?.addEventListener("click", hwRelDebugConfirmForCut);
-      hwRelDebugEl("hwRelCreateCutFromConfirmedBtn")?.addEventListener("click", hwRelDebugCreateCutFromConfirmed);
       hwRelDebugEl("hwRelRunDemoFixtureFlowBtn")?.addEventListener("click", hwRelDebugRunDemoFixtureFlow);
       hwRelDebugEl("hwRelRunDemoPackOfflineBtn")?.addEventListener("click", hwRelDebugRunDemoPackOffline);
       hwRelDebugEl("hwRelRunDemoNegativeBtn")?.addEventListener("click", hwRelDebugRunDemoNegativeReport);
       hwRelDebugEl("hwRelCopyLastJsonBtn")?.addEventListener("click", hwRelDebugCopyLastJsonReport);
-      hwRelDebugEl("hwRelShowDemoSummaryBtn")?.addEventListener("click", hwRelDebugShowDemoSummary);
       hwRelDebugEl("hwRelShowOverlayForSelectedBtn")?.addEventListener("click", hwRelDebugShowOverlayForSelectedPair);
       hwRelDebugEl("hwRelRunOverlaySelfCheckBtn")?.addEventListener("click", hwRelDebugRunOverlaySelfCheck);
       hwRelDebugEl("hwRelClearRelationshipOverlaysBtn")?.addEventListener("click", hwRelDebugClearRelationshipOverlays);
       hwRelDebugEl("hwRelClearResultBtn")?.addEventListener("click", hwRelDebugClearResult);
-
-      connectUiEl("connectScanBtn")?.addEventListener("click", connectUiScan);
-      connectUiEl("connectFilterGeometry")?.addEventListener("change", connectUiApplyFilters);
-      connectUiEl("connectFilterVerification")?.addEventListener("change", connectUiApplyFilters);
-      connectUiEl("connectFilterCutSafe")?.addEventListener("change", connectUiApplyFilters);
-      connectUiEl("connectPreviewBtn")?.addEventListener("click", connectUiPreview);
-      connectUiEl("connectConfirmBtn")?.addEventListener("click", connectUiConfirm);
-      connectUiEl("connectCutBtn")?.addEventListener("click", connectUiCut);
-      hwRelDebugUpdateConfirmButtonLabel();
+      connectUiInit();
     }
 
     function hwEl(id) {

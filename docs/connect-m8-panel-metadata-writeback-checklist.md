@@ -16,13 +16,13 @@
 
 ## Runners
 
-| Script | Environment |
-|--------|-------------|
-| `tests/test_panel_metadata_writeback.py` | Terminal — unit tests |
-| `tests/run_connect_pipeline_smoke_offline.py` | Terminal — M6–M9 offline (includes M8 step) |
-| **`connect_pipeline_smoke.py`** | Fusion — M6–M9 unified smoke |
+> **Note (2026-07-05):** One-click smoke scripts removed.
 
-Install: `powershell -ExecutionPolicy Bypass -File scripts/install_connect_pipeline_smoke.ps1`
+| Script / surface | Environment |
+|------------------|-------------|
+| `tests/test_panel_metadata_writeback.py` | Terminal — M8 unit tests |
+| `tests/run_plugin_offline_regression.py` | Terminal — full offline regression |
+| **CabinetNC palette → Connect cut flow** | Fusion — verify `metadataWritten` + body `features[]` after cut |
 
 ---
 

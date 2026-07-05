@@ -18,24 +18,27 @@
 
 ## Runners
 
-| Script | Environment |
-|--------|-------------|
-| `tests/run_connect_pipeline_smoke_offline.py` | Terminal — **M6–M9 unified offline** (includes M6 step) |
-| **`connect_pipeline_smoke.py`** (plugin root) | Fusion Scripts & Add-Ins — **M6–M9 unified Fusion** |
+> **Note (2026-07-05):** One-click smoke scripts (`connect_pipeline_smoke`, `contact_patch_smoke`) removed. M6 seal used historical Fusion smoke JSON; ongoing verification uses offline regression + manual Fusion reconcile flow.
 
-**Install into Fusion (removes legacy m6/m7 scripts):**
+| Script / surface | Environment |
+|------------------|-------------|
+| `tests/run_plugin_offline_regression.py` | Terminal — full offline regression |
+| `tests/run_generator_relationship_regression.py` | Generator declared-relationship matrix |
+| `tests/run_connect_demo_pack_offline.py` | Connect demo pack (includes Overhead structural joint) |
+| **CabinetNC palette → Debug** | Fusion — generate Overhead → Reconcile Declarations → cut |
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/install_connect_pipeline_smoke.ps1
+cd fusion360-unified-cabinet-plugin
+python tests/run_plugin_offline_regression.py
 ```
 
-Then Fusion → Scripts and Add-Ins → Run → **connect_pipeline_smoke**
+Fusion: load **UnifiedCabinetPlugin** add-in, then follow Debug UI — no Scripts-folder smoke runner.
 
 ---
 
-## Results (2026-07-05)
+## Results (2026-07-05, historical)
 
-**Offline:**
+**Offline (sealed via connect pipeline smoke — script since removed):**
 
 ```text
 M6 offline: PASS
@@ -43,9 +46,9 @@ declarations=4 geometryOk=4
 BP↔D0: generator_declared + geometryValidation.ok + cut plan OK
 ```
 
-JSON: `tests/output/connect_pipeline_smoke_offline_results.json` (regenerated; gitignored)
+Historical JSON (no longer generated): `tests/output/connect_pipeline_smoke_offline_results.json`
 
-**Fusion:**
+**Fusion (historical):**
 
 ```text
 M6 Connect smoke: PASS

@@ -11,12 +11,13 @@
 - [x] Offline M4 passes (2026-07-03 — Overhead, rel.BP.D0, holeCount=2)
 - [x] Fusion M4 passes (2026-07-03)
 
-### Automated runners (historical — superseded by connect pipeline)
+### Automated runners
 
-- Offline: `tests/run_connect_pipeline_smoke_offline.py`
-- Fusion: `connect_pipeline_smoke.py`
+> **Note (2026-07-05):** One-click Fusion smoke scripts removed. M4 was sealed with historical `m4_fusion_smoke` / `connect_pipeline_smoke` runs; re-verify via offline regression + manual Fusion flow.
 
-Historical M4 seal log below (2026-07-03).
+- Full offline regression: `tests/run_plugin_offline_regression.py`
+- Connect demo pack: `tests/run_connect_demo_pack_offline.py`
+- Fusion: **CabinetNC palette** — generate Overhead → scan → preview → confirm → cut (manual)
 
 ---
 

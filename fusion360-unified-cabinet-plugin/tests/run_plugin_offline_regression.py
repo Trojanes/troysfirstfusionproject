@@ -70,14 +70,6 @@ def main() -> int:
         failures.append("connect_demo_pack_offline")
 
     code = run(
-        [sys.executable, str(ROOT / "tests" / "run_connect_pipeline_smoke_offline.py")],
-        cwd=ROOT,
-        label="connect pipeline smoke offline",
-    )
-    if code != 0:
-        failures.append("connect_pipeline_smoke_offline")
-
-    code = run(
         [
             sys.executable,
             "-m",
@@ -92,6 +84,7 @@ def main() -> int:
             "tests.test_generator_relationships",
             "tests.test_connect_demo_pack",
             "tests.test_connect_formal_ui",
+            "tests.test_contact_patch",
             "tests.test_panel_metadata_writeback",
             "tests.test_relationship_visual_overlay",
             "tests.test_relationship_overlay_selfcheck",

@@ -17,11 +17,13 @@
 
 ## Runners
 
-| Script | Environment |
-|--------|-------------|
-| `tests/test_panel_metadata_writeback.py` | Includes `HardwareRuleEngineTests` |
-| `tests/run_connect_pipeline_smoke_offline.py` | M6–M9 offline (includes M9 step) |
-| **`connect_pipeline_smoke.py`** | Fusion unified smoke |
+> **Note (2026-07-05):** One-click smoke scripts removed.
+
+| Script / surface | Environment |
+|------------------|-------------|
+| `tests/test_panel_metadata_writeback.py` | Terminal — includes `HardwareRuleEngineTests` |
+| `tests/run_plugin_offline_regression.py` | Terminal — full offline regression |
+| **CabinetNC palette → Connect** | Fusion — screw_hole cut; scaffold types preview-only |
 
 ---
 

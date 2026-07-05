@@ -88,6 +88,7 @@ class RelationshipsController:
                 if isinstance(report, dict):
                     report["panels"] = [panel.to_dict() for panel in panels]
                     report["selectedPanelIds"] = [panels[0].panelId, panels[1].panelId]
+                    self._attach_contact_patch(report, panels)
                 return "relationshipInspectResult", report
 
             report = self.service.scan_selected(
@@ -131,6 +132,115 @@ class RelationshipsController:
             return "relationshipInspectResult", {
                 "ok": False,
                 "action": "relationships.inspectPair",
+                "errors": [str(ex)],
+                "trace": traceback.format_exc(),
+            }
+
+    def _attach_contact_patch(self, report, panels):
+        if not isinstance(report, dict):
+            return
+        relationship = report.get("relationship")
+        if not isinstance(relationship, dict):
+            return
+        from contact_patch import build_contact_patch_from_relationship
+
+        patch_result = build_contact_patch_from_relationship(
+            relationship,
+            panels[0].to_dict(),
+            panels[1].to_dict(),
+        )
+        if patch_result.get("ok"):
+            report["contactPatch"] = patch_result.get("contactPatch")
+        else:
+            report["contactPatchErrors"] = list(patch_result.get("errors") or [])
+
+    def show_contact_patch_overlay_for_selected(self, payload, _palette):
+        try:
+            from contact_patch import build_contact_patch_from_relationship
+            from contact_patch_overlay_fusion import CONTACT_PATCH_FUSION_BUILD, create_contact_patch_overlay
+            from relationship_service import build_panel_snapshot, is_panel_body
+
+            tolerance_mm = self._float_param(payload, "toleranceMm", 0.5)
+            selected = self._selected_bodies()
+            panel_bodies = [body for body in (selected or []) if is_panel_body(body)]
+            if len(panel_bodies) != 2:
+                return "contactPatchOverlayResult", {
+                    "ok": False,
+                    "action": "relationships.showContactPatchOverlayForSelected",
+                    "selectedPanelBodyCount": len(panel_bodies),
+                    "errors": ["请在 Fusion 中恰好选中 2 个板件实体，然后点击显示接触面。"],
+                }
+
+            panels = [build_panel_snapshot(body) for body in panel_bodies]
+            inspect_report = self.service.inspect_pair_by_id(
+                panels,
+                panels[0].panelId,
+                panels[1].panelId,
+                tolerance_mm=tolerance_mm,
+            )
+            relationship = inspect_report.get("relationship") if isinstance(inspect_report, dict) else None
+            if not isinstance(relationship, dict):
+                return "contactPatchOverlayResult", {
+                    "ok": False,
+                    "action": "relationships.showContactPatchOverlayForSelected",
+                    "inspect": inspect_report,
+                    "errors": (inspect_report.get("errors") if isinstance(inspect_report, dict) else None)
+                    or ["无法为选中板件对分类关系。"],
+                }
+
+            panel_dicts = [panel.to_dict() for panel in panels]
+            patch_result = build_contact_patch_from_relationship(relationship, panel_dicts[0], panel_dicts[1])
+            if not patch_result.get("ok"):
+                return "contactPatchOverlayResult", {
+                    "ok": False,
+                    "action": "relationships.showContactPatchOverlayForSelected",
+                    "inspect": inspect_report,
+                    "errors": list(patch_result.get("errors") or ["ContactPatch 生成失败。"]),
+                }
+
+            contact_patch = patch_result.get("contactPatch") or {}
+            panels_map = {panel["panelId"]: panel for panel in panel_dicts if panel.get("panelId")}
+            root = self.fusion.get_root_component() if self.fusion else None
+            report = create_contact_patch_overlay(
+                root,
+                relationship,
+                contact_patch,
+                panels_map,
+                source="selected",
+            )
+            report["inspect"] = inspect_report
+            report["selectedPanelIds"] = [panels[0].panelId, panels[1].panelId]
+            report["panels"] = panel_dicts
+            report["implVersion"] = CONTACT_PATCH_FUSION_BUILD
+            try:
+                self.fusion.refresh_viewport()
+            except Exception:
+                pass
+            return "contactPatchOverlayResult", report
+        except Exception as ex:
+            return "contactPatchOverlayResult", {
+                "ok": False,
+                "action": "relationships.showContactPatchOverlayForSelected",
+                "errors": [str(ex)],
+                "trace": traceback.format_exc(),
+            }
+
+    def clear_contact_patch_overlays(self, _payload, _palette):
+        try:
+            from contact_patch_overlay_fusion import CONTACT_PATCH_FUSION_BUILD, clear_contact_patch_overlays
+
+            root = self.fusion.get_root_component() if self.fusion else None
+            report = clear_contact_patch_overlays(root)
+            report["implVersion"] = CONTACT_PATCH_FUSION_BUILD
+            try:
+                self.fusion.refresh_viewport()
+            except Exception:
+                pass
+            return "contactPatchOverlayResult", report
+        except Exception as ex:
+            return "contactPatchOverlayResult", {
+                "ok": False,
+                "action": "relationships.clearContactPatchOverlays",
                 "errors": [str(ex)],
                 "trace": traceback.format_exc(),
             }

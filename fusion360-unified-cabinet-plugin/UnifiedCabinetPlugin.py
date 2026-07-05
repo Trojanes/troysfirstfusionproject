@@ -113,6 +113,8 @@ class UnifiedCabinetPluginApp:
             "relationships.inspectPair": relationships.inspect_pair,
             "relationships.createTestFixture": relationships.create_test_fixture,
             "relationships.showRelationshipOverlayForSelected": relationships.show_relationship_overlay_for_selected,
+            "relationships.showContactPatchOverlayForSelected": relationships.show_contact_patch_overlay_for_selected,
+            "relationships.clearContactPatchOverlays": relationships.clear_contact_patch_overlays,
             "relationships.verifySelectedPairFaces": relationships.verify_selected_pair_faces,
             "relationships.reconcileGeneratorDeclarations": relationships.reconcile_generator_declarations,
             "relationships.connectList": relationships.connect_list,

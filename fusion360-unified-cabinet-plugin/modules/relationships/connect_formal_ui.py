@@ -7,6 +7,11 @@ from typing import Any, Dict, List, Optional, Set
 CUT_SAFE_LEVELS: Set[str] = {"manual_confirmed", "face_verified", "generator_declared", "cut_approved"}
 
 VERIFICATION_UI: Dict[str, Dict[str, Any]] = {
+    "bbox_contact_patch": {
+        "label": "BBox contact patch",
+        "tone": "warn",
+        "description": "Axis-aligned contact region — preview only, not safe for automatic cut.",
+    },
     "bbox_candidate": {
         "label": "BBox candidate",
         "tone": "warn",
