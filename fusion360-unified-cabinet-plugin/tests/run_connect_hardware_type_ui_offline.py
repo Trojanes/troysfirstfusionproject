@@ -134,16 +134,21 @@ def main() -> int:
         palette = handle.read()
     for token in (
         'id="connectHardwareType"',
+        'id="connectHardwareParams"',
+        "CONNECT_HW_PARAM_FIELDS",
+        "connectUiReadHardwareRuleFromForm",
         "hardware.previewHardwareFromRelationship",
         "hardware.createHardwareFromRelationship",
         "CONNECT_HW_RULES",
         "connectUiRefreshHardwareTypeUi",
         'id="connectInspectSummary"',
         "hardware-shell-simple",
+        "connectVerifyHint",
+        "connectContactDistance",
     ):
         if token not in palette:
             return _fail("palette missing", token)
-    print("[PASS] palette.html hardware-type selector + simplified layout wired")
+    print("[PASS] palette.html hardware-type selector + params + simplified layout wired")
 
     print()
     print("Connect hardware-type selector offline: ALL PASS")

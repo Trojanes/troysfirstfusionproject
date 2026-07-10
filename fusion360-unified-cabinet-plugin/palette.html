@@ -2260,6 +2260,7 @@
                   <div class="connect-detail-item"><strong>可预览</strong><span id="connectSafePreview">-</span></div>
                   <div class="connect-detail-item"><strong>可加工</strong><span id="connectSafeCut">-</span></div>
                   <div class="connect-detail-item"><strong>接触轴</strong><span id="connectContactAxis">-</span></div>
+                  <div class="connect-detail-item"><strong>间距</strong><span id="connectContactDistance">-</span></div>
                   <div class="connect-detail-item"><strong>接触面积</strong><span id="connectContactArea">-</span></div>
                   <div class="connect-detail-item"><strong>宿主板</strong><span id="connectHostPanel">-</span></div>
                   <div class="connect-detail-item"><strong>目标板</strong><span id="connectTargetPanel">-</span></div>
@@ -2289,10 +2290,14 @@
                 </div>
                 <div class="connect-detail-item"><strong>状态</strong><span id="connectHardwareCutReady">可切削</span></div>
               </div>
+              <div class="connect-detail-grid" id="connectHardwareParams" style="margin-bottom: 10px;"></div>
+              <div class="hardware-section-note" id="connectVerifyHint" style="margin-bottom:8px;">
+                验证优先：生成器声明 → 面验证 →（调试）手动确认。≤1mm 近接触视为可切接触。
+              </div>
               <div class="connect-actions">
                 <button type="button" class="ghost" id="connectPreviewBtn" disabled>预览</button>
-                <button type="button" class="ghost" id="connectConfirmBtn" disabled>确认关系</button>
                 <button type="button" class="ghost" id="connectFaceVerifyBtn" disabled>面验证</button>
+                <button type="button" class="ghost" id="connectConfirmBtn" disabled>确认关系</button>
                 <button type="button" class="primary" id="connectCutBtn" disabled>创建</button>
               </div>
               <div class="connect-detail-grid" style="margin-top: 10px;">
@@ -11041,6 +11046,37 @@
       lock_cutout: { label: "锁孔口袋", cutReady: true, previewOnly: false },
     };
 
+    // ponytail: per-type editable fields only; depthMode stays default for screw
+    const CONNECT_HW_PARAM_FIELDS = {
+      screw_hole: [
+        { key: "diameterMm", label: "孔径 (mm)", min: 0.1, step: 0.1 },
+        { key: "edgeOffsetMm", label: "边距 (mm)", min: 0, step: 1 },
+        { key: "minSpacingMm", label: "最小间距 (mm)", min: 1, step: 1 },
+      ],
+      tongue_groove: [
+        { key: "grooveDepthMm", label: "槽深 (mm)", min: 0.1, step: 0.1 },
+        { key: "grooveWidthMm", label: "槽宽 (mm)", min: 0.1, step: 0.1 },
+        { key: "tongueProtrusionMm", label: "榫出 (mm)", min: 0.1, step: 0.1 },
+      ],
+      hinge_hole: [
+        { key: "diameterMm", label: "杯径 (mm)", min: 0.1, step: 0.1 },
+        { key: "depthMm", label: "深度 (mm)", min: 0.1, step: 0.1 },
+        { key: "edgeOffsetMm", label: "边距 (mm)", min: 0, step: 1 },
+        { key: "holeCount", label: "数量", min: 1, step: 1 },
+      ],
+      drawer_runner_hole: [
+        { key: "diameterMm", label: "孔径 (mm)", min: 0.1, step: 0.1 },
+        { key: "depthMm", label: "深度 (mm)", min: 0.1, step: 0.1 },
+        { key: "edgeOffsetMm", label: "边距 (mm)", min: 0, step: 1 },
+        { key: "holeCount", label: "数量", min: 1, step: 1 },
+      ],
+      lock_cutout: [
+        { key: "widthMm", label: "宽 (mm)", min: 0.1, step: 0.1 },
+        { key: "heightMm", label: "高 (mm)", min: 0.1, step: 0.1 },
+        { key: "depthMm", label: "深 (mm)", min: 0.1, step: 0.1 },
+      ],
+    };
+
     // ponytail: default remains screw_hole; selector overrides via connectUiSelectedHardwareType
     let CONNECT_HW_RULE = Object.assign({}, CONNECT_HW_RULES.screw_hole);
 
@@ -11050,9 +11086,49 @@
       return CONNECT_HW_RULES[value] ? value : "screw_hole";
     }
 
-    function connectUiActiveHardwareRule() {
+    function connectUiRenderHardwareParams() {
+      const host = connectUiEl("connectHardwareParams");
+      if (!host) return;
       const hwType = connectUiSelectedHardwareType();
-      CONNECT_HW_RULE = Object.assign({}, CONNECT_HW_RULES[hwType] || CONNECT_HW_RULES.screw_hole);
+      const defaults = CONNECT_HW_RULES[hwType] || CONNECT_HW_RULES.screw_hole;
+      const fields = CONNECT_HW_PARAM_FIELDS[hwType] || [];
+      host.innerHTML = fields.map((field) => {
+        const value = defaults[field.key];
+        return (
+          `<div class="connect-detail-item">` +
+          `<strong>${field.label}</strong>` +
+          `<input id="connectHwParam_${field.key}" data-hw-param="${field.key}" type="number" ` +
+          `value="${value}" min="${field.min}" step="${field.step}" style="width:100%;margin-top:4px;">` +
+          `</div>`
+        );
+      }).join("");
+      host.querySelectorAll("input[data-hw-param]").forEach((input) => {
+        input.addEventListener("change", () => {
+          connectUiActiveHardwareRule();
+        });
+      });
+    }
+
+    function connectUiReadHardwareRuleFromForm() {
+      const hwType = connectUiSelectedHardwareType();
+      const rule = Object.assign({}, CONNECT_HW_RULES[hwType] || CONNECT_HW_RULES.screw_hole);
+      const fields = CONNECT_HW_PARAM_FIELDS[hwType] || [];
+      fields.forEach((field) => {
+        const el = connectUiEl(`connectHwParam_${field.key}`);
+        if (!el) return;
+        const raw = Number(el.value);
+        if (!Number.isFinite(raw)) return;
+        if (field.key === "holeCount") {
+          rule[field.key] = Math.max(1, Math.round(raw));
+        } else {
+          rule[field.key] = Math.max(field.min, raw);
+        }
+      });
+      return rule;
+    }
+
+    function connectUiActiveHardwareRule() {
+      CONNECT_HW_RULE = connectUiReadHardwareRuleFromForm();
       return CONNECT_HW_RULE;
     }
 
@@ -11063,6 +11139,7 @@
     function connectUiRefreshHardwareTypeUi() {
       const hwType = connectUiSelectedHardwareType();
       const meta = connectUiHardwareMeta(hwType);
+      connectUiRenderHardwareParams();
       connectUiActiveHardwareRule();
       const statusEl = connectUiEl("connectHardwareCutReady");
       if (statusEl) {
@@ -11285,6 +11362,7 @@
         connectUiEl("connectSafePreview") && (connectUiEl("connectSafePreview").textContent = "-");
         connectUiEl("connectSafeCut") && (connectUiEl("connectSafeCut").textContent = "-");
         connectUiEl("connectContactAxis") && (connectUiEl("connectContactAxis").textContent = "-");
+        connectUiEl("connectContactDistance") && (connectUiEl("connectContactDistance").textContent = "-");
         connectUiEl("connectContactArea") && (connectUiEl("connectContactArea").textContent = "-");
         connectUiEl("connectHostPanel") && (connectUiEl("connectHostPanel").textContent = "-");
         connectUiEl("connectTargetPanel") && (connectUiEl("connectTargetPanel").textContent = "-");
@@ -11311,6 +11389,14 @@
       connectUiEl("connectSafePreview") && (connectUiEl("connectSafePreview").textContent = connectUiYesNo(Boolean(verification.safeForPreview)));
       connectUiEl("connectSafeCut") && (connectUiEl("connectSafeCut").textContent = connectUiYesNo(Boolean(verification.safeForCut)));
       connectUiEl("connectContactAxis") && (connectUiEl("connectContactAxis").textContent = patch.contactAxis || rel.contact?.axis || "-");
+      const distanceMm = Number(rel.contact?.distanceMm ?? patch.planeDistanceMm);
+      let distanceText = "-";
+      if (Number.isFinite(distanceMm)) {
+        if (distanceMm <= 0) distanceText = "0 mm（贴合）";
+        else if (distanceMm <= 1.0) distanceText = `${distanceMm} mm（近接触，可切）`;
+        else distanceText = `${distanceMm} mm`;
+      }
+      connectUiEl("connectContactDistance") && (connectUiEl("connectContactDistance").textContent = distanceText);
       connectUiEl("connectContactArea") && (connectUiEl("connectContactArea").textContent = patch.contactAreaMm2 != null ? `${patch.contactAreaMm2} mm²` : "-");
       connectUiEl("connectHostPanel") && (connectUiEl("connectHostPanel").textContent = patch.hostPanelId || rel.roles?.hostPanelId || "-");
       connectUiEl("connectTargetPanel") && (connectUiEl("connectTargetPanel").textContent = patch.targetPanelId || rel.roles?.targetPanelId || "-");

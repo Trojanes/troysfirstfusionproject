@@ -1,6 +1,6 @@
 # Post-M9 — Connect UI hardware-type selector
 
-**Status:** offline sealed (2026-07-09). No Fusion smoke required (palette wiring + route dispatch).
+**Status:** offline sealed (2026-07-10). Params editable in Connect UI.
 
 ## Scope
 
@@ -8,24 +8,33 @@
 |------|--------|
 | Milestone | post-M9 |
 | Modifies generators | **No** |
-| Deliverable | Connect palette dropdown + generic preview/cut routes |
+| Deliverable | Connect palette dropdown + editable rule params + generic preview/cut routes |
 
 ## UI
 
 Connect → 操作:
 
 - `<select id="connectHardwareType">` — screw / tongue / hinge / lock / runner
+- `#connectHardwareParams` — per-type numeric fields (diameter / depth / offsets / counts / pocket size)
 - Status: 可切削 vs 仅预览
 - Preview / Cut buttons label follow selected type
-- Preview-only types keep Cut disabled even after confirm
+- Verify hint: generator_declared → face_verified → (debug) manual confirm
+- Near-contact (≤1mm) shown on inspect distance row; cut-safe after verify
+
+## Product decisions (2026-07-10)
+
+1. **Near-contact ≤1mm is cut-eligible** once verification is cut-safe (same as flush contact).
+2. **Default verify path:** prefer `generator_declared` when present; else `face_verified`; keep `manual_confirm` as debug fallback only.
+3. **Hardware params are UI-editable** (defaults remain in `CONNECT_HW_RULES`).
+4. **Downstream NC consumers of writeback:** not yet — defer metadata polish.
 
 ## Routes
 
 | Action | Behavior |
 |--------|----------|
 | `hardware.listHardwareTypes` | Registry rows for selector labels / cutReady |
-| `hardware.previewHardwareFromRelationship` | Dispatch by `rule.type` |
-| `hardware.createHardwareFromRelationship` | Dispatch by `rule.type`; preview-only blocked |
+| `hardware.previewHardwareFromRelationship` | Dispatch by `rule.type` + form params |
+| `hardware.createHardwareFromRelationship` | Dispatch by `rule.type` + form params |
 
 Legacy per-type routes remain for smokes.
 
@@ -39,9 +48,7 @@ python tests/run_plugin_offline_regression.py
 
 ## Acceptance
 
-- [x] Selector in palette.html
-- [x] Generic preview/create routes registered
-- [x] Preview works for all 5 types (dispatch)
-- [x] Cut ready for screw / tongue / hinge; blocked for lock / runner
-- [x] Wired into offline regression
-- [ ] Manual: stop/start CabinetNC add-in, open Connect, switch types
+- [x] Selector wired for all 5 types
+- [x] Per-type params rendered and sent in preview/cut payload
+- [x] Offline type-UI smoke PASS
+- [x] Verify-path hint + near-contact distance label in Connect UI

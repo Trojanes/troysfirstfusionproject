@@ -1276,13 +1276,16 @@ Post-M9 scaffold hardware lane is complete.
 **Relationship-truth follow-up (2026-07-10):**
 - Overhead BP↔FP0 face verify already sealed in Fusion Batch C; offline golden now asserts `face_verified` too.
 - **Shop contact rule:** separation ≤ **1.0 mm** counts as contact (`CONTACT_TOLERANCE_MM`); gap_parallel starts above 1mm.
-- Remaining truth gaps: BRep face-bounds refinement; `generator_declared` on General Tall / Kitchen.
+- **Near-contact is cut-eligible** after verify (same cut gate as flush contact).
+- **Default verify path:** `generator_declared` (when present) → else `face_verified` → `manual_confirm` debug-only.
+- **Connect UI hardware params** are editable per type.
+- Remaining truth gaps: BRep face-bounds refinement; `generator_declared` on General Tall / Kitchen; NC consumers of writeback (none yet).
 
 Next options:
 1. General Tall `generator_declared` (design-intent joints beyond Overhead)
 2. BRep face bounds refinement (axis-aligned v1 ceiling)
 
-Checklist: `docs/connect-batch-c-checklist.md` · `docs/connect-post-m9-scaffold-hardware-checklist.md`
+Checklist: `docs/connect-batch-c-checklist.md` · `docs/connect-post-m9-hardware-type-ui-checklist.md` · `docs/connect-post-m9-scaffold-hardware-checklist.md`
 
 M7 reference (sealed):
 - Checklist: docs/connect-m7-formal-ui-checklist.md
