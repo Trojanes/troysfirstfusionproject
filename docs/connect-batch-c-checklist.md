@@ -32,10 +32,11 @@ python scripts/manage_fusion_smokes.py remove --batch c
 
 ## Acceptance
 
-- [x] Offline Batch C ALL PASS
+- [x] Offline Batch C ALL PASS (incl. overhead BP↔FP0 offline face_verified)
 - [x] Fusion smoke 8/8 PASS (create → reconcile → 2 pairs → confirm path → face-verify path)
 - [x] Temporary Scripts entry removed after PASS
 - [x] Roadmap Batch C marked SEALED
+- [x] Offline overhead golden face verify wired (CI closes Fusion-only gap)
 
 ## Notes
 

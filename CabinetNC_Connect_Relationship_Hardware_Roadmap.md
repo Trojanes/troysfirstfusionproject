@@ -857,8 +857,10 @@ Completed:
   ✅ Results: tests/output/m5_fusion_smoke_results.json
 
 Optional follow-up (not blocking M6):
-  ❌ real Overhead pair face verify in Fusion
+  ✅ real Overhead pair face verify in Fusion — Batch C SEALED (BP↔FP0, 2026-07-09)
+  ✅ offline Overhead BP↔FP0 face_verified on generator golden (Batch C offline)
   ❌ BRep face bounds refinement beyond axis-aligned v1
+  ❌ General Tall / Kitchen generator_declared (see M6 next extension)
 ```
 
 ## Goal
@@ -1268,11 +1270,18 @@ If any answer violates the global rules, stop and ask for clarification.
 # Immediate Next Task
 
 **Batch A/B/C**, **tongue/groove**, **hinge_hole**, **drawer_runner_hole**, **lock_cutout**, **Connect UI selector** sealed.
-
 All five Connect hardware types are cut-ready (host-only where applicable).
 Post-M9 scaffold hardware lane is complete.
 
-Checklist: `docs/connect-post-m9-scaffold-hardware-checklist.md`
+**Relationship-truth follow-up (2026-07-10):**
+- Overhead BP↔FP0 face verify already sealed in Fusion Batch C; offline golden now asserts `face_verified` too.
+- Remaining truth gaps: BRep face-bounds refinement; `generator_declared` on General Tall / Kitchen.
+
+Next options:
+1. General Tall `generator_declared` (design-intent joints beyond Overhead)
+2. BRep face bounds refinement (axis-aligned v1 ceiling)
+
+Checklist: `docs/connect-batch-c-checklist.md` · `docs/connect-post-m9-scaffold-hardware-checklist.md`
 
 M7 reference (sealed):
 - Checklist: docs/connect-m7-formal-ui-checklist.md

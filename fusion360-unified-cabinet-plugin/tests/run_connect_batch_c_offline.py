@@ -130,6 +130,78 @@ def _run_overhead_pairs() -> int:
         if not (preview.get("ok") and int(preview.get("holeCount") or 0) >= 1):
             return _fail("overhead {} preview".format(label), preview)
         print("[PASS] overhead {} preview holes={}".format(label, preview.get("holeCount")))
+
+    # CI gap close: offline face verify on Overhead BP↔FP0 (Fusion already sealed in Batch C).
+    code = _run_overhead_face_verify(panel_map, found)
+    if code != 0:
+        return code
+    return 0
+
+
+def _run_overhead_face_verify(panel_map: dict, found: list) -> int:
+    from connect_formal_ui import evaluate_connect_action
+    from face_verification import (
+        apply_face_verification_to_relationship,
+        verify_fixture_pair_offline,
+    )
+    from relationship_geometry import classify_pair
+    from relationship_service import build_panel_snapshot_from_dict
+    from screw_hole_from_relationship import (
+        preview_screw_holes_from_relationship,
+        validate_relationship_for_cut,
+    )
+
+    bp_fp0 = None
+    for suffixes, rel in found:
+        if suffixes == frozenset({"BP", "FP0"}):
+            bp_fp0 = rel
+            break
+    if bp_fp0 is None:
+        return _fail("overhead face verify pair missing", [list(item[0]) for item in found])
+
+    host_id = bp_fp0["roles"]["hostPanelId"]
+    target_id = bp_fp0["roles"]["targetPanelId"]
+    host = panel_map[host_id]
+    target = panel_map[target_id]
+
+    # Start from geometry classify (bbox_candidate), then upgrade via face verify —
+    # mirrors Fusion Batch C dual-path B without requiring generator_declared.
+    relationship = classify_pair(
+        build_panel_snapshot_from_dict(host),
+        build_panel_snapshot_from_dict(target),
+        tolerance_mm=0.5,
+    ).to_dict()
+    if relationship.get("geometryType") != "edge_to_surface":
+        return _fail("overhead BP-FP0 geometryType", relationship)
+
+    verify_report = verify_fixture_pair_offline(host, target, relationship, tolerance_mm=0.5)
+    if not verify_report.get("ok"):
+        return _fail("overhead BP-FP0 face verify", verify_report)
+    upgraded = apply_face_verification_to_relationship(relationship, verify_report)
+    verification = upgraded.get("verification") or {}
+    if verification.get("level") != "face_verified" or verification.get("safeForCut") is not True:
+        return _fail("overhead BP-FP0 face_verified upgrade", upgraded)
+    if validate_relationship_for_cut(upgraded) is not None:
+        return _fail("overhead BP-FP0 cut gate", upgraded)
+    if evaluate_connect_action("cut", upgraded).get("ok") is not True:
+        return _fail("overhead BP-FP0 cut allowed", upgraded)
+
+    preview_roles = upgraded.get("roles") or {}
+    preview_host = str(preview_roles.get("hostPanelId") or host_id)
+    preview_target = str(preview_roles.get("targetPanelId") or target_id)
+    preview = preview_screw_holes_from_relationship(
+        upgraded,
+        panel_snapshots={
+            preview_host: panel_map[preview_host],
+            preview_target: panel_map[preview_target],
+        },
+    )
+    if not (preview.get("ok") and int(preview.get("holeCount") or 0) >= 1):
+        return _fail("overhead BP-FP0 face_verified preview", preview)
+
+    print("[PASS] overhead BP-FP0 face_verified cut gate + preview holes={}".format(
+        preview.get("holeCount"),
+    ))
     return 0
 
 

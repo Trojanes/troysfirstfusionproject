@@ -10,7 +10,7 @@
 - [x] M4.6A sealed
 - [x] Offline face verification tests PASS
 - [x] Fusion smoke on fixture pair (`m5_connect_smoke.py`)
-- [ ] Fusion smoke on real Overhead pair (optional v1 follow-up)
+- [x] Fusion smoke on real Overhead pair (Batch C `connect_batch_c_smoke`, BP↔FP0)
 
 ---
 
@@ -70,4 +70,5 @@ JSON: `fusion360-unified-cabinet-plugin/tests/output/m5_fusion_smoke_results.jso
 
 ## After M5 passes
 
-Next: **M6 Generator-Declared Relationships**
+Next: **M6 Generator-Declared Relationships** (sealed).  
+Overhead real-pair face verify: see [`connect-batch-c-checklist.md`](./connect-batch-c-checklist.md).
