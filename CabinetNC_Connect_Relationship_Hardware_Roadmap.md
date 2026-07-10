@@ -88,6 +88,41 @@ M8 Panel Metadata Writeback:
 M9 Expand Hardware Types:
   ✅ SEALED (v1 scaffold — 2026-07-05) — hardware_rule_engine registry
   ✅ screw_hole implemented; tongue/groove/hinge/lock/runner scaffold (cut blocked)
+
+Batch B (Main Connect polish — SEALED 2026-07-09):
+  ✅ ContactPatch-centric Connect card (probe selection, contact overlay, preview/confirm/cut)
+  ✅ Main UI 面验证 button wired to relationships.verifySelectedPairFaces
+  ✅ Offline: day1/day2/connect_main_flow (+ face_verified cut gate) in run_plugin_offline_regression
+  ✅ Fusion: connect_main_flow_smoke PASS (13/13), then remove --batch main
+
+Batch C (Real cabinet pairs + dual-path — SEALED 2026-07-09):
+  ✅ Offline dual-path: confirm vs face_verified cut gates + preview
+  ✅ Offline overhead pairs BP–D0 + BP–FP0 preview
+  ✅ Fusion: connect_batch_c_smoke PASS (8/8), then remove --batch c
+  📄 docs/connect-batch-c-checklist.md
+
+Post-M9 Tongue/Groove full pair (SEALED 2026-07-09):
+  ✅ tongue_groove preview (host=groove, target=tongue) + groove.sketch + tongue shoulders
+  ✅ cut plan after confirm/face_verified; bbox still blocked
+  ✅ Fusion host-groove + target-tongue executors + dual writeback
+  ✅ offline: run_tongue_groove_offline.py + HardwareRuleEngineTests
+  ✅ Fusion: tongue_groove_connect_smoke PASS (7/7), then remove --batch tg
+  ✅ Fixture cleanup before create (avoids stale REL_* body cuts)
+  📄 docs/connect-post-m9-tongue-groove-checklist.md
+
+Post-M9 Hinge/Runner/Lock cut (SEALED 2026-07-10):
+  ✅ hinge_hole SEALED (Fusion 7/7)
+  ✅ drawer_runner_hole SEALED (Fusion 7/7; reuses screw-hole CAD)
+  ✅ lock_cutout SEALED (Fusion 7/7; reuses tongue/groove rect CAD)
+  ✅ offline: run_scaffold_hardware_offline.py + HardwareRuleEngineTests
+  ✅ Fusion: lock_cutout_connect_smoke PASS (7/7), then remove --batch lock
+  📄 docs/connect-post-m9-scaffold-hardware-checklist.md
+
+Post-M9 Connect UI hardware-type selector (offline sealed 2026-07-09):
+  ✅ palette dropdown + cutReady status
+  ✅ hardware.listHardwareTypes / previewHardwareFromRelationship / createHardwareFromRelationship
+  ✅ offline: run_connect_hardware_type_ui_offline.py
+  📄 docs/connect-post-m9-hardware-type-ui-checklist.md
 ```
 
 Current relationship layer is **not production-truth**. It is currently:
@@ -1232,22 +1267,12 @@ If any answer violates the global rules, stop and ask for clarification.
 
 # Immediate Next Task
 
-The Connect M6–M9 pipeline is sealed. Next work is post-M9 implementation of additional hardware types and generator extensions.
+**Batch A/B/C**, **tongue/groove**, **hinge_hole**, **drawer_runner_hole**, **lock_cutout**, **Connect UI selector** sealed.
 
-Unified verification (2026-07-05 — one-click Fusion smoke scripts removed):
+All five Connect hardware types are cut-ready (host-only where applicable).
+Post-M9 scaffold hardware lane is complete.
 
-```powershell
-# Terminal — full offline regression (relationship, generator, demo pack, unit tests)
-cd fusion360-unified-cabinet-plugin
-python tests/run_plugin_offline_regression.py
-
-# Optional focused runners
-python tests/run_connect_demo_pack_offline.py
-python tests/run_relationship_overlay_selfcheck.py
-python -m unittest tests.test_contact_patch -v
-```
-
-Fusion manual acceptance: load **UnifiedCabinetPlugin** add-in → **板件连接 Connect** card (and Debug tools as needed). No Scripts-folder smoke runner.
+Checklist: `docs/connect-post-m9-scaffold-hardware-checklist.md`
 
 M7 reference (sealed):
 - Checklist: docs/connect-m7-formal-ui-checklist.md

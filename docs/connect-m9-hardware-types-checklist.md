@@ -9,9 +9,9 @@
 
 - Central registry + dispatch: `hardware_rule_engine.py`
 - **Implemented:** `screw_hole` (existing relationship pipeline)
-- **Scaffold (preview-only):** `tongue_groove`, `hinge_hole`, `lock_cutout`, `drawer_runner_hole`
+- **Implemented:** `tongue_groove` — host groove + target tongue shoulders
+- **Implemented:** `hinge_hole`, `drawer_runner_hole`, `lock_cutout` (host-only cuts; post-M9)
 - All types follow VerifiedRelationship → RuleEngine → Preview → Cut → Metadata shape
-- Non-screw types block cut with explicit `previewOnly` errors (no ad-hoc Fusion scripts)
 
 ---
 
@@ -38,7 +38,15 @@
 
 ## Future (post-M9)
 
-- Implement preview/plan/cut for tongue/groove, hinge, lock, runner using same pipeline
-- Connect UI hardware-type selector (when more than screw_hole is cut-ready)
+- [x] Tongue/groove **preview** intent (`tongue_groove_from_relationship.py`)
+- [x] Tongue/groove **host groove** Fusion cut + metadata writeback
+- [x] Tongue CAD cut on target panel (shoulder cuts)
+- [x] Hinge / lock / runner **preview** intents (`scaffold_hardware_from_relationship.py`)
+- [x] Hinge Fusion cut (host cups) — SEALED 2026-07-09
+- [x] Runner Fusion cut (host mount holes) — SEALED 2026-07-10
+- [x] Lock Fusion cut (host pocket) — SEALED 2026-07-10
+- [x] Connect UI hardware-type selector
 
-See [`CabinetNC_Connect_Relationship_Hardware_Roadmap.md`](../CabinetNC_Connect_Relationship_Hardware_Roadmap.md).
+See [`connect-post-m9-tongue-groove-checklist.md`](./connect-post-m9-tongue-groove-checklist.md)  
+and [`connect-post-m9-scaffold-hardware-checklist.md`](./connect-post-m9-scaffold-hardware-checklist.md)  
+and [`connect-post-m9-hardware-type-ui-checklist.md`](./connect-post-m9-hardware-type-ui-checklist.md).

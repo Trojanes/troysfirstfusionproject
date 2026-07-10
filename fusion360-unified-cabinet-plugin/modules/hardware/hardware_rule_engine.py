@@ -10,42 +10,43 @@ HARDWARE_TYPE_HINGE_HOLE = "hinge_hole"
 HARDWARE_TYPE_LOCK_CUTOUT = "lock_cutout"
 HARDWARE_TYPE_DRAWER_RUNNER_HOLE = "drawer_runner_hole"
 
-IMPLEMENTED_TYPES = {HARDWARE_TYPE_SCREW_HOLE}
-PREVIEW_ONLY_TYPES = {
+IMPLEMENTED_TYPES = {
+    HARDWARE_TYPE_SCREW_HOLE,
     HARDWARE_TYPE_TONGUE_GROOVE,
     HARDWARE_TYPE_HINGE_HOLE,
     HARDWARE_TYPE_LOCK_CUTOUT,
     HARDWARE_TYPE_DRAWER_RUNNER_HOLE,
 }
+PREVIEW_READY_TYPES: set = set()
+PREVIEW_ONLY_TYPES: set = set()
 
 HARDWARE_TYPE_UI: Dict[str, Dict[str, Any]] = {
     HARDWARE_TYPE_SCREW_HOLE: {
-        "label": "Screw hole",
+        "label": "螺丝孔",
         "status": "implemented",
-        "description": "Edge-to-surface structural butt joint screw holes.",
+        "description": "边对面结构对接螺丝孔（可切削）。",
     },
     HARDWARE_TYPE_TONGUE_GROOVE: {
-        "label": "Tongue / groove",
-        "status": "preview_only",
-        "description": "Panel edge tongue and groove machining (scaffold).",
+        "label": "榫槽",
+        "status": "implemented",
+        "description": "边对面榫槽：宿主开槽 + 目标榫肩（可切削）。",
     },
     HARDWARE_TYPE_HINGE_HOLE: {
-        "label": "Hinge hole",
-        "status": "preview_only",
-        "description": "Front panel hinge cup holes (scaffold).",
+        "label": "铰链杯孔",
+        "status": "implemented",
+        "description": "宿主板铰链杯孔（默认 Ø35×13，可切削）。",
     },
     HARDWARE_TYPE_LOCK_CUTOUT: {
-        "label": "Lock cutout",
-        "status": "preview_only",
-        "description": "Front panel lock pocket (scaffold).",
+        "label": "锁孔口袋",
+        "status": "implemented",
+        "description": "宿主板锁孔口袋（默认 22×40×12，可切削）。",
     },
     HARDWARE_TYPE_DRAWER_RUNNER_HOLE: {
-        "label": "Drawer runner hole",
-        "status": "preview_only",
-        "description": "Side panel runner mounting holes (scaffold).",
+        "label": "抽屉滑轨孔",
+        "status": "implemented",
+        "description": "宿主板滑轨安装孔（默认 Ø5×12，可切削）。",
     },
 }
-
 
 def normalize_hardware_type(rule: Optional[Dict[str, Any]]) -> str:
     if not isinstance(rule, dict):
@@ -65,7 +66,9 @@ def list_hardware_types() -> List[Dict[str, Any]]:
         meta = dict(HARDWARE_TYPE_UI.get(key) or {})
         meta["type"] = key
         meta["implemented"] = key in IMPLEMENTED_TYPES
-        meta["previewOnly"] = key in PREVIEW_ONLY_TYPES
+        meta["previewOnly"] = key in PREVIEW_ONLY_TYPES or key in PREVIEW_READY_TYPES
+        meta["previewReady"] = key in IMPLEMENTED_TYPES or key in PREVIEW_READY_TYPES
+        meta["cutReady"] = key in IMPLEMENTED_TYPES
         rows.append(meta)
     return rows
 
@@ -81,11 +84,26 @@ def evaluate_hardware_rule(
     if not relationship:
         return {"ok": False, "hardwareType": hw_type, "action": action_key, "errors": ["No relationship selected."]}
 
-    if hw_type == HARDWARE_TYPE_SCREW_HOLE:
+    if hw_type in IMPLEMENTED_TYPES:
         from connect_formal_ui import evaluate_connect_action
 
-        mapped = "preview" if action_key in ("preview", "preview_screw_holes") else action_key
-        if action_key in ("cut", "create_cut", "create_screw_holes"):
+        mapped = "preview" if action_key in (
+            "preview",
+            "preview_screw_holes",
+            "preview_tongue_groove",
+            "preview_hinge_holes",
+            "preview_lock_cutout",
+            "preview_drawer_runner_holes",
+        ) else action_key
+        if action_key in (
+            "cut",
+            "create_cut",
+            "create_screw_holes",
+            "create_tongue_groove",
+            "create_hinge_holes",
+            "create_lock_cutout",
+            "create_drawer_runner_holes",
+        ):
             mapped = "cut"
         if action_key in ("confirm", "confirm_for_cut"):
             mapped = "confirm"
@@ -93,15 +111,26 @@ def evaluate_hardware_rule(
         gate["hardwareType"] = hw_type
         return gate
 
-    if hw_type in PREVIEW_ONLY_TYPES:
-        if action_key in ("cut", "create_cut", "create_screw_holes"):
+    if hw_type in PREVIEW_ONLY_TYPES or hw_type in PREVIEW_READY_TYPES:
+        if action_key in ("cut", "create_cut", "create_screw_holes", "create_tongue_groove"):
             return {
                 "ok": False,
                 "hardwareType": hw_type,
                 "action": action_key,
-                "errors": ["Hardware type '{}' is not cut-ready in M9 v1 (preview scaffold only).".format(hw_type)],
+                "errors": [
+                    "Hardware type '{}' is not cut-ready (preview only).".format(hw_type)
+                ],
                 "previewOnly": True,
+                "cutReady": False,
             }
+        if hw_type in PREVIEW_READY_TYPES:
+            from connect_formal_ui import evaluate_connect_action
+
+            gate = evaluate_connect_action("preview", relationship)
+            gate["hardwareType"] = hw_type
+            gate["previewOnly"] = True
+            gate["cutReady"] = False
+            return gate
         return {
             "ok": False,
             "hardwareType": hw_type,
@@ -132,15 +161,40 @@ def dispatch_hardware_preview(
             "hardwareType": hw_type,
             "errors": list(gate.get("errors") or ["Preview gate blocked."]),
             "gate": gate,
+            "previewOnly": bool(gate.get("previewOnly")),
+            "cutReady": False,
         }
-    if hw_type != HARDWARE_TYPE_SCREW_HOLE:
-        return gate
+    if hw_type == HARDWARE_TYPE_SCREW_HOLE:
+        from screw_hole_from_relationship import preview_screw_holes_from_relationship
 
-    from screw_hole_from_relationship import preview_screw_holes_from_relationship
+        report = preview_screw_holes_from_relationship(relationship, rule=rule, panel_snapshots=panel_snapshots)
+        report["hardwareType"] = hw_type
+        return report
+    if hw_type == HARDWARE_TYPE_TONGUE_GROOVE:
+        from tongue_groove_from_relationship import preview_tongue_groove_from_relationship
 
-    report = preview_screw_holes_from_relationship(relationship, rule=rule, panel_snapshots=panel_snapshots)
-    report["hardwareType"] = hw_type
-    return report
+        report = preview_tongue_groove_from_relationship(relationship, rule=rule, panel_snapshots=panel_snapshots)
+        report["hardwareType"] = hw_type
+        return report
+    if hw_type == HARDWARE_TYPE_HINGE_HOLE:
+        from scaffold_hardware_from_relationship import preview_hinge_holes_from_relationship
+
+        report = preview_hinge_holes_from_relationship(relationship, rule=rule, panel_snapshots=panel_snapshots)
+        report["hardwareType"] = hw_type
+        return report
+    if hw_type == HARDWARE_TYPE_LOCK_CUTOUT:
+        from scaffold_hardware_from_relationship import preview_lock_cutout_from_relationship
+
+        report = preview_lock_cutout_from_relationship(relationship, rule=rule, panel_snapshots=panel_snapshots)
+        report["hardwareType"] = hw_type
+        return report
+    if hw_type == HARDWARE_TYPE_DRAWER_RUNNER_HOLE:
+        from scaffold_hardware_from_relationship import preview_drawer_runner_holes_from_relationship
+
+        report = preview_drawer_runner_holes_from_relationship(relationship, rule=rule, panel_snapshots=panel_snapshots)
+        report["hardwareType"] = hw_type
+        return report
+    return gate
 
 
 def dispatch_hardware_cut_plan(
@@ -156,12 +210,37 @@ def dispatch_hardware_cut_plan(
             "hardwareType": hw_type,
             "errors": list(gate.get("errors") or ["Cut gate blocked."]),
             "gate": gate,
+            "previewOnly": bool(gate.get("previewOnly")),
+            "cutReady": False,
         }
-    if hw_type != HARDWARE_TYPE_SCREW_HOLE:
-        return gate
+    if hw_type == HARDWARE_TYPE_SCREW_HOLE:
+        from screw_hole_from_relationship import plan_screw_hole_cut_from_relationship
 
-    from screw_hole_from_relationship import plan_screw_hole_cut_from_relationship
+        report = plan_screw_hole_cut_from_relationship(relationship, rule=rule, panel_snapshots=panel_snapshots)
+        report["hardwareType"] = hw_type
+        return report
+    if hw_type == HARDWARE_TYPE_TONGUE_GROOVE:
+        from tongue_groove_from_relationship import plan_tongue_groove_cut_from_relationship
 
-    report = plan_screw_hole_cut_from_relationship(relationship, rule=rule, panel_snapshots=panel_snapshots)
-    report["hardwareType"] = hw_type
-    return report
+        report = plan_tongue_groove_cut_from_relationship(relationship, rule=rule, panel_snapshots=panel_snapshots)
+        report["hardwareType"] = hw_type
+        return report
+    if hw_type == HARDWARE_TYPE_HINGE_HOLE:
+        from scaffold_hardware_from_relationship import plan_hinge_hole_cut_from_relationship
+
+        report = plan_hinge_hole_cut_from_relationship(relationship, rule=rule, panel_snapshots=panel_snapshots)
+        report["hardwareType"] = hw_type
+        return report
+    if hw_type == HARDWARE_TYPE_DRAWER_RUNNER_HOLE:
+        from scaffold_hardware_from_relationship import plan_drawer_runner_hole_cut_from_relationship
+
+        report = plan_drawer_runner_hole_cut_from_relationship(relationship, rule=rule, panel_snapshots=panel_snapshots)
+        report["hardwareType"] = hw_type
+        return report
+    if hw_type == HARDWARE_TYPE_LOCK_CUTOUT:
+        from scaffold_hardware_from_relationship import plan_lock_cutout_from_relationship
+
+        report = plan_lock_cutout_from_relationship(relationship, rule=rule, panel_snapshots=panel_snapshots)
+        report["hardwareType"] = hw_type
+        return report
+    return gate

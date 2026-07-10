@@ -14,6 +14,8 @@ for path in (ROOT, HW_DIR, PANEL_ATTR_DIR, REL_DIR):
 from connect_demo_pack import find_first_screw_eligible  # noqa: E402
 from hardware_rule_engine import (  # noqa: E402
     HARDWARE_TYPE_DRAWER_RUNNER_HOLE,
+    HARDWARE_TYPE_HINGE_HOLE,
+    HARDWARE_TYPE_LOCK_CUTOUT,
     HARDWARE_TYPE_SCREW_HOLE,
     HARDWARE_TYPE_TONGUE_GROOVE,
     dispatch_hardware_cut_plan,
@@ -25,12 +27,18 @@ from panel_metadata_writeback import (  # noqa: E402
     OPERATION_TYPE,
     append_hardware_feature,
     build_panel_feature_record,
+    build_tongue_groove_panel_feature_record,
     find_hardware_features,
 )
 from relationship_fixtures import build_fixture_snapshots, expected_fixture_cases  # noqa: E402
+from relationship_models import confirm_relationship_for_cut  # noqa: E402
 from relationship_report import build_scan_report  # noqa: E402
 from relationship_service import scan_relationships  # noqa: E402
 from screw_hole_from_relationship import build_cut_feature_metadata  # noqa: E402
+from tongue_groove_from_relationship import (  # noqa: E402
+    build_cut_feature_metadata as build_tg_cut_metadata,
+    plan_tongue_groove_cut_from_relationship,
+)
 
 
 def _fixture_scan():
@@ -109,8 +117,128 @@ class HardwareRuleEngineTests(unittest.TestCase):
         self.assertIn(HARDWARE_TYPE_DRAWER_RUNNER_HOLE, types)
         screw = next(row for row in rows if row["type"] == HARDWARE_TYPE_SCREW_HOLE)
         tongue = next(row for row in rows if row["type"] == HARDWARE_TYPE_TONGUE_GROOVE)
+        hinge = next(row for row in rows if row["type"] == HARDWARE_TYPE_HINGE_HOLE)
+        lock = next(row for row in rows if row["type"] == HARDWARE_TYPE_LOCK_CUTOUT)
+        runner = next(row for row in rows if row["type"] == HARDWARE_TYPE_DRAWER_RUNNER_HOLE)
         self.assertTrue(screw["implemented"])
-        self.assertTrue(tongue["previewOnly"])
+        self.assertTrue(screw["cutReady"])
+        self.assertTrue(tongue["implemented"])
+        self.assertTrue(tongue["cutReady"])
+        self.assertFalse(tongue["previewOnly"])
+        self.assertTrue(tongue["previewReady"])
+        self.assertTrue(hinge["implemented"])
+        self.assertTrue(hinge["cutReady"])
+        self.assertFalse(hinge["previewOnly"])
+        self.assertTrue(hinge["previewReady"])
+        self.assertTrue(runner["implemented"])
+        self.assertTrue(runner["cutReady"])
+        self.assertFalse(runner["previewOnly"])
+        self.assertTrue(runner["previewReady"])
+        self.assertTrue(lock["implemented"])
+        self.assertTrue(lock["cutReady"])
+        self.assertFalse(lock["previewOnly"])
+        self.assertTrue(lock["previewReady"])
+
+    def test_scaffold_hardware_preview_dispatch_fixture(self):
+        scan = _fixture_scan()
+        rel = find_first_screw_eligible(scan.get("relationships") or [])
+        panel_map = {panel.panelId: panel.to_dict() for panel in build_fixture_snapshots()}
+        host_id = rel["roles"]["hostPanelId"]
+        target_id = rel["roles"]["targetPanelId"]
+        panels = {host_id: panel_map[host_id], target_id: panel_map[target_id]}
+
+        hinge = dispatch_hardware_preview(rel, rule={"type": HARDWARE_TYPE_HINGE_HOLE}, panel_snapshots=panels)
+        self.assertTrue(hinge.get("ok"), hinge.get("errors"))
+        self.assertGreaterEqual(int(hinge.get("holeCount") or 0), 1)
+        self.assertFalse(hinge.get("previewOnly"))
+        self.assertTrue(hinge.get("cutReady"))
+
+        lock = dispatch_hardware_preview(rel, rule={"type": HARDWARE_TYPE_LOCK_CUTOUT}, panel_snapshots=panels)
+        self.assertTrue(lock.get("ok"), lock.get("errors"))
+        pocket = ((lock.get("features") or [{}])[0].get("geometry") or {}).get("pocket") or {}
+        self.assertGreater(float(pocket.get("depthMm") or 0), 0)
+        self.assertFalse(lock.get("previewOnly"))
+        self.assertTrue(lock.get("cutReady"))
+
+        runner = dispatch_hardware_preview(
+            rel, rule={"type": HARDWARE_TYPE_DRAWER_RUNNER_HOLE}, panel_snapshots=panels
+        )
+        self.assertTrue(runner.get("ok"), runner.get("errors"))
+        self.assertGreaterEqual(int(runner.get("holeCount") or 0), 2)
+        self.assertFalse(runner.get("previewOnly"))
+        self.assertTrue(runner.get("cutReady"))
+
+        for hw_type in (HARDWARE_TYPE_HINGE_HOLE, HARDWARE_TYPE_LOCK_CUTOUT, HARDWARE_TYPE_DRAWER_RUNNER_HOLE):
+            blocked = dispatch_hardware_cut_plan(rel, rule={"type": hw_type})
+            self.assertFalse(blocked.get("ok"))
+
+    def test_hinge_hole_cut_plan_after_confirm(self):
+        scan = _fixture_scan()
+        rel = find_first_screw_eligible(scan.get("relationships") or [])
+        panel_map = {panel.panelId: panel.to_dict() for panel in build_fixture_snapshots()}
+        host_id = rel["roles"]["hostPanelId"]
+        target_id = rel["roles"]["targetPanelId"]
+        panels = {host_id: panel_map[host_id], target_id: panel_map[target_id]}
+        confirmed = dict(rel)
+        confirmed["verification"] = {
+            "level": "manual_confirmed",
+            "safeForPreview": True,
+            "safeForCut": True,
+            "requiresManualConfirmation": False,
+        }
+        plan = dispatch_hardware_cut_plan(
+            confirmed, rule={"type": HARDWARE_TYPE_HINGE_HOLE}, panel_snapshots=panels
+        )
+        self.assertTrue(plan.get("ok"), plan.get("errors"))
+        self.assertEqual(plan.get("hardwareType"), HARDWARE_TYPE_HINGE_HOLE)
+        self.assertTrue(plan.get("feature"))
+        self.assertEqual((plan.get("metadata") or {}).get("operationType"), "HINGE_HOLE_FROM_RELATIONSHIP")
+
+    def test_lock_cutout_cut_plan_after_confirm(self):
+        scan = _fixture_scan()
+        rel = find_first_screw_eligible(scan.get("relationships") or [])
+        panel_map = {panel.panelId: panel.to_dict() for panel in build_fixture_snapshots()}
+        host_id = rel["roles"]["hostPanelId"]
+        target_id = rel["roles"]["targetPanelId"]
+        panels = {host_id: panel_map[host_id], target_id: panel_map[target_id]}
+        confirmed = dict(rel)
+        confirmed["verification"] = {
+            "level": "manual_confirmed",
+            "safeForPreview": True,
+            "safeForCut": True,
+            "requiresManualConfirmation": False,
+        }
+        plan = dispatch_hardware_cut_plan(
+            confirmed, rule={"type": HARDWARE_TYPE_LOCK_CUTOUT}, panel_snapshots=panels
+        )
+        self.assertTrue(plan.get("ok"), plan.get("errors"))
+        self.assertEqual(plan.get("hardwareType"), HARDWARE_TYPE_LOCK_CUTOUT)
+        self.assertTrue(plan.get("feature"))
+        self.assertEqual((plan.get("metadata") or {}).get("operationType"), "LOCK_CUTOUT_FROM_RELATIONSHIP")
+        pocket = ((plan.get("feature") or {}).get("geometry") or {}).get("pocket") or {}
+        self.assertGreater(float(pocket.get("depthMm") or 0), 0)
+
+    def test_drawer_runner_hole_cut_plan_after_confirm(self):
+        scan = _fixture_scan()
+        rel = find_first_screw_eligible(scan.get("relationships") or [])
+        panel_map = {panel.panelId: panel.to_dict() for panel in build_fixture_snapshots()}
+        host_id = rel["roles"]["hostPanelId"]
+        target_id = rel["roles"]["targetPanelId"]
+        panels = {host_id: panel_map[host_id], target_id: panel_map[target_id]}
+        confirmed = dict(rel)
+        confirmed["verification"] = {
+            "level": "manual_confirmed",
+            "safeForPreview": True,
+            "safeForCut": True,
+            "requiresManualConfirmation": False,
+        }
+        plan = dispatch_hardware_cut_plan(
+            confirmed, rule={"type": HARDWARE_TYPE_DRAWER_RUNNER_HOLE}, panel_snapshots=panels
+        )
+        self.assertTrue(plan.get("ok"), plan.get("errors"))
+        self.assertEqual(plan.get("hardwareType"), HARDWARE_TYPE_DRAWER_RUNNER_HOLE)
+        self.assertTrue(plan.get("feature"))
+        self.assertEqual((plan.get("metadata") or {}).get("operationType"), "DRAWER_RUNNER_HOLE_FROM_RELATIONSHIP")
 
     def test_screw_hole_preview_dispatch_fixture(self):
         scan = _fixture_scan()
@@ -127,12 +255,76 @@ class HardwareRuleEngineTests(unittest.TestCase):
         self.assertTrue(report.get("ok"))
         self.assertGreaterEqual(int(report.get("holeCount") or 0), 1)
 
-    def test_tongue_groove_cut_blocked_scaffold(self):
+    def test_tongue_groove_preview_dispatch_fixture(self):
+        scan = _fixture_scan()
+        rel = find_first_screw_eligible(scan.get("relationships") or [])
+        panel_map = {panel.panelId: panel.to_dict() for panel in build_fixture_snapshots()}
+        host_id = rel["roles"]["hostPanelId"]
+        target_id = rel["roles"]["targetPanelId"]
+        report = dispatch_hardware_preview(
+            rel,
+            rule={"type": HARDWARE_TYPE_TONGUE_GROOVE},
+            panel_snapshots={host_id: panel_map[host_id], target_id: panel_map[target_id]},
+        )
+        self.assertTrue(report.get("ok"), report.get("errors"))
+        self.assertEqual(report.get("hardwareType"), HARDWARE_TYPE_TONGUE_GROOVE)
+        self.assertFalse(report.get("previewOnly"))
+        self.assertTrue(report.get("cutReady"))
+        self.assertEqual(int(report.get("featureCount") or 0), 1)
+        feature = (report.get("features") or [{}])[0]
+        self.assertEqual(feature.get("hostRole"), "groove")
+        self.assertEqual(feature.get("targetRole"), "tongue")
+        self.assertEqual(feature.get("geometry", {}).get("groove", {}).get("panelId"), host_id)
+        self.assertIn("sketch", feature.get("geometry", {}).get("groove", {}))
+        tongue = feature.get("geometry", {}).get("tongue", {})
+        self.assertFalse(tongue.get("cutDeferred"))
+        self.assertGreaterEqual(len((tongue.get("sketch") or {}).get("shoulders") or []), 1)
+
+    def test_tongue_groove_cut_requires_verification(self):
         scan = _fixture_scan()
         rel = find_first_screw_eligible(scan.get("relationships") or [])
         gate = evaluate_hardware_rule(HARDWARE_TYPE_TONGUE_GROOVE, rel, action="cut")
         self.assertFalse(gate.get("ok"))
-        self.assertTrue(gate.get("previewOnly"))
+        blocked = dispatch_hardware_cut_plan(rel, rule={"type": HARDWARE_TYPE_TONGUE_GROOVE})
+        self.assertFalse(blocked.get("ok"))
+
+    def test_tongue_groove_cut_plan_after_confirm(self):
+        scan = _fixture_scan()
+        rel = confirm_relationship_for_cut(find_first_screw_eligible(scan.get("relationships") or []))
+        panel_map = {panel.panelId: panel.to_dict() for panel in build_fixture_snapshots()}
+        host_id = rel["roles"]["hostPanelId"]
+        target_id = rel["roles"]["targetPanelId"]
+        plan = plan_tongue_groove_cut_from_relationship(
+            rel,
+            rule={"type": HARDWARE_TYPE_TONGUE_GROOVE},
+            panel_snapshots={host_id: panel_map[host_id], target_id: panel_map[target_id]},
+        )
+        self.assertTrue(plan.get("ok"), plan.get("errors"))
+        self.assertFalse((plan.get("metadata") or {}).get("tongueCutDeferred"))
+        self.assertGreaterEqual(int((plan.get("metadata") or {}).get("tongueShoulderCount") or 0), 1)
+        groove_record = build_tongue_groove_panel_feature_record(
+            plan.get("feature") or {},
+            cut_metadata=plan.get("metadata") or {},
+            cut_feature_name="HW_TG_GROOVE",
+            role="groove",
+        )
+        tongue_record = build_tongue_groove_panel_feature_record(
+            plan.get("feature") or {},
+            cut_metadata=plan.get("metadata") or {},
+            cut_feature_name="HW_TG_TONGUE",
+            role="tongue",
+        )
+        self.assertEqual(groove_record.get("kind"), "groove")
+        self.assertEqual(tongue_record.get("kind"), "tongue")
+        self.assertFalse(groove_record.get("tongueCutDeferred"))
+        meta = build_tg_cut_metadata(
+            plan["feature"],
+            relationship_id=plan["relationshipId"],
+            host_panel_id=host_id,
+            target_panel_id=target_id,
+        )
+        self.assertEqual(meta.get("operationType"), "TONGUE_GROOVE_FROM_RELATIONSHIP")
+        self.assertFalse(meta.get("tongueCutDeferred"))
 
     def test_screw_hole_cut_plan_requires_verification(self):
         scan = _fixture_scan()

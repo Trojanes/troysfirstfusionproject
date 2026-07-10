@@ -105,6 +105,31 @@
       gap: 10px;
       align-items: start;
     }
+    .hardware-shell-simple {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .connect-inspect-summary {
+      font-size: 12px;
+      line-height: 1.5;
+      color: var(--text);
+      background: #f8fafc;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 8px;
+    }
+    .connect-more {
+      margin-top: 4px;
+      border: none;
+      padding: 0;
+      background: transparent;
+    }
+    .connect-more summary {
+      cursor: pointer;
+      font-size: 12px;
+      color: #475569;
+      user-select: none;
+    }
     .hardware-section-note {
       font-size: 11px;
       color: var(--muted);
@@ -324,6 +349,33 @@
       padding: 8px 10px;
       background: #fafbfd;
       min-height: 48px;
+      line-height: 1.5;
+    }
+    .connect-op-result.ok {
+      border-color: #86efac;
+      background: #ecfdf5;
+      color: #166534;
+    }
+    .connect-op-result.error {
+      border-color: #fca5a5;
+      background: #fef2f2;
+      color: #991b1b;
+    }
+    .connect-op-result.warn {
+      border-color: #fcd34d;
+      background: #fffbeb;
+      color: #92400e;
+    }
+    .connect-selection-hint {
+      font-size: 12px;
+      color: #64748b;
+      margin: 0 0 8px;
+    }
+    .connect-flow-steps {
+      font-size: 12px;
+      color: #475569;
+      margin: 0 0 10px;
+      line-height: 1.55;
     }
     .module-nav, .params, .workspace, .validation {
       border-right: 1px solid var(--line);
@@ -1358,7 +1410,7 @@
   <div class="tabbar">
     <div class="brand">CabinetNC</div>
     <button class="tab active" data-page-tab="design">Design <span class="tab-badge">active</span></button>
-    <button class="tab" data-page-tab="hardware">五金与安装 / Hardware</button>
+    <button class="tab" data-page-tab="hardware">五金与安装</button>
     <button class="tab" data-page-tab="attributes">Attributes</button>
     <button class="tab" data-page-tab="nesting">Nesting</button>
     <button class="tab" data-page-tab="toolpath">Toolpath / Post Processing</button>
@@ -2175,193 +2227,176 @@
     </aside>
   </div>
 
-  <div class="hardware-page page" id="page-hardware" hidden>
-    <div class="hardware-shell">
-      <aside>
-        <div class="card">
-          <h3>钻孔计算 / Drill Hole Calculation <span class="pill">Side Contact</span></h3>
-          <div class="card-body">
-            <div class="hardware-section-note">初版 UI。计算前板件须已有 face metadata（面元数据）。</div>
-            <label>预设 Preset
-              <select id="hwPreset">
-                <option value="default">默认 3mm 通孔 / Default 3mm Through Host</option>
-              </select>
-            </label>
-            <div class="actions" style="margin-top:-2px;">
-              <button type="button" class="ghost" id="hwSavePresetBtn">保存 Save</button>
-              <button type="button" class="ghost" id="hwUpdatePresetBtn">更新 Update</button>
-              <button type="button" class="ghost" id="hwDeletePresetBtn">删除 Delete</button>
-            </div>
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>已选板件 / Selected Bodies</h3>
-          <div class="card-body">
-            <div class="hardware-body-pick">
-              <label>板件 1 Body 1
-                <div class="hardware-body-label" id="hwBody1Label">未选择 / No body selected</div>
-              </label>
-              <button type="button" class="ghost" id="hwSelectBody1Btn">选择 Select</button>
-            </div>
-            <div class="hardware-body-pick">
-              <label>板件 2 Body 2
-                <div class="hardware-body-label" id="hwBody2Label">未选择 / No body selected</div>
-              </label>
-              <button type="button" class="ghost" id="hwSelectBody2Btn">选择 Select</button>
-            </div>
-            <div class="actions" style="margin-top:4px;margin-bottom:0;">
-              <button type="button" class="primary" id="hwCreateTestBoardsBtn">创建测试板 / Create 2 Test Boards</button>
-            </div>
-            <div class="hardware-message warn" id="hwMetadataMessage">需要面元数据。未定义的板件请先完成面分类。</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>孔参数 / Hole Settings</h3>
-          <div class="card-body">
-            <label>孔径 Hole Diameter (mm)
-              <input id="hwHoleDiameter" type="number" value="3.0" min="0.1" step="0.1">
-            </label>
-            <label><span><input id="hwThroughHost" type="checkbox" checked style="width:auto"> 通孔 Through Host</span></label>
-            <label>孔深 Hole Depth (mm)
-              <input id="hwHoleDepth" type="number" value="16.0" min="0.1" step="0.1" disabled>
-            </label>
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>排孔 Pattern</h3>
-          <div class="card-body">
-            <div class="attr-radio-row" style="margin-bottom:10px;">
-              <label class="attr-radio"><input type="radio" name="hwPatternMode" value="EVEN_DISTRIBUTION" checked> 均分 Even Distribution</label>
-              <label class="attr-radio"><input type="radio" name="hwPatternMode" value="SIDE_DISTANCE_HOLE_DISTANCE"> 间距 Distance Spacing</label>
-            </div>
-            <div class="hardware-pattern-fields" id="hwEvenFields">
-              <div class="grid2">
-                <label>孔数 Hole Number
-                  <input id="hwHoleNumber" type="number" value="2" min="1" step="1">
-                </label>
-                <label>边距 Side Distance (mm)
-                  <input id="hwEvenSideDistance" type="number" value="50" min="0" step="1">
-                </label>
-              </div>
-            </div>
-            <div class="hardware-pattern-fields" id="hwSpacingFields" hidden>
-              <div class="grid2">
-                <label>边距 Side Distance (mm)
-                  <input id="hwSpacingSideDistance" type="number" value="50" min="0" step="1">
-                </label>
-                <label>孔间距 Hole Distance (mm)
-                  <input id="hwHoleDistance" type="number" value="200" min="1" step="1">
-                </label>
-              </div>
-              <div class="attr-radio-row">
-                <label class="attr-radio"><input type="radio" name="hwStartSide" value="A" checked> 起点 A Start A</label>
-                <label class="attr-radio"><input type="radio" name="hwStartSide" value="B"> 起点 B Start B</label>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div class="actions">
-          <button type="button" class="primary" id="hwCalculateBtn">计算预览 / Calculate Preview</button>
-          <button type="button" class="ghost" id="hwCreateHolesBtn" disabled>创建孔 / Create Holes</button>
-        </div>
-      </aside>
-
+      <div class="hardware-page page" id="page-hardware" hidden>
+    <div class="hardware-shell hardware-shell-simple">
       <main class="attributes-main">
-        <div class="card">
-          <h3>预览 / Preview</h3>
-          <div class="card-body">
-            <div class="hardware-preview" id="hwPreview">
-              <div class="muted">选择两块已定义板件后点击计算预览。/ Select two defined bodies, then calculate preview.</div>
-            </div>
-            <div class="hardware-message" id="hwActionMessage">等待选择板件… / Waiting for body selection.</div>
-          </div>
-        </div>
-
-        <div class="card">
-          <h3>检测结果 / Detection Result</h3>
-          <div class="card-body">
-            <div class="hardware-summary-grid">
-              <div class="hardware-summary-item">接触状态 Contact Status<strong id="hwSummaryStatus">未计算 / Not calculated</strong></div>
-              <div class="hardware-summary-item">接触类型 Contact Type<strong id="hwSummaryType">-</strong></div>
-              <div class="hardware-summary-item">Host 板 Host Body<strong id="hwSummaryHost">-</strong></div>
-              <div class="hardware-summary-item">Target 板 Target Body<strong id="hwSummaryTarget">-</strong></div>
-              <div class="hardware-summary-item">投影宽度 Projected Width<strong id="hwSummaryWidth">-</strong></div>
-              <div class="hardware-summary-item">孔数 Hole Count<strong id="hwSummaryHoleCount">-</strong></div>
-            </div>
-            <div class="hardware-message warn" id="hwWarningMessage">侧向接触 UI：Fusion 选体、元数据校验与 host-only 切割仍在迭代中。</div>
-          </div>
-        </div>
-
         <div class="card connect-card">
-          <h3>板件连接 Connect</h3>
+          <h3>板件连接</h3>
           <div class="card-body">
-            <div class="hardware-section-note">关系表示两块板之间可能存在连接；接触面是系统检测到的实际接触区域。后续 hardware 与加工判断应基于接触面，而不是只基于关系线。</div>
+            <div class="hardware-section-note">选中两块板 → 检查 → 选五金 → 预览 → 确认或面验证 → 创建。bbox 候选不可直接切削。</div>
 
             <div class="connect-section">
               <h4 class="connect-section-title">选中板件</h4>
+              <p class="connect-selection-hint" id="connectSelectionHint">在 Fusion 中选中 2 块板件，点击「刷新选中」。</p>
               <div class="connect-detail-grid">
                 <div class="connect-detail-item"><strong>板件 A</strong><span id="connectPanelA">-</span></div>
                 <div class="connect-detail-item"><strong>板件 B</strong><span id="connectPanelB">-</span></div>
               </div>
               <div class="connect-toolbar">
-                <button type="button" class="ghost" id="connectScanBtn">扫描关系</button>
-                <button type="button" class="primary" id="connectInspectBtn">检查选中板件对</button>
+                <button type="button" class="ghost" id="connectProbeSelectionBtn">刷新选中</button>
+                <button type="button" class="primary" id="connectInspectBtn">检查</button>
               </div>
             </div>
 
             <div class="connect-section">
-              <h4 class="connect-section-title">关系信息</h4>
-              <div class="connect-detail-grid">
-                <div class="connect-detail-item"><strong>关系类型</strong><span id="connectRelType">-</span></div>
-                <div class="connect-detail-item"><strong>几何类型</strong><span id="connectGeometryType">-</span></div>
-                <div class="connect-detail-item"><strong>验证状态</strong><span id="connectVerification">-</span></div>
-                <div class="connect-detail-item"><strong>可预览</strong><span id="connectSafePreview">-</span></div>
-                <div class="connect-detail-item"><strong>可加工</strong><span id="connectSafeCut">-</span></div>
-              </div>
+              <h4 class="connect-section-title">检查结果</h4>
+              <div class="connect-inspect-summary" id="connectInspectSummary">尚未检查。</div>
+              <details class="connect-more" id="connectInspectDetails">
+                <summary>详细信息</summary>
+                <div class="connect-detail-grid" style="margin-top:8px;">
+                  <div class="connect-detail-item"><strong>关系类型</strong><span id="connectRelType">-</span></div>
+                  <div class="connect-detail-item"><strong>几何类型</strong><span id="connectGeometryType">-</span></div>
+                  <div class="connect-detail-item"><strong>验证状态</strong><span id="connectVerification">-</span></div>
+                  <div class="connect-detail-item"><strong>可预览</strong><span id="connectSafePreview">-</span></div>
+                  <div class="connect-detail-item"><strong>可加工</strong><span id="connectSafeCut">-</span></div>
+                  <div class="connect-detail-item"><strong>接触轴</strong><span id="connectContactAxis">-</span></div>
+                  <div class="connect-detail-item"><strong>接触面积</strong><span id="connectContactArea">-</span></div>
+                  <div class="connect-detail-item"><strong>宿主板</strong><span id="connectHostPanel">-</span></div>
+                  <div class="connect-detail-item"><strong>目标板</strong><span id="connectTargetPanel">-</span></div>
+                  <div class="connect-detail-item"><strong>警告</strong><span id="connectWarnings">-</span></div>
+                  <div class="connect-detail-item"><strong>错误</strong><span id="connectErrors">-</span></div>
+                </div>
+                <div class="connect-actions" style="margin-top:8px;">
+                  <button type="button" class="ghost" id="connectScanBtn">扫描全部关系</button>
+                  <button type="button" class="ghost" id="connectShowContactPatchBtn" disabled>显示接触面</button>
+                  <button type="button" class="ghost" id="connectClearContactPatchBtn">清除接触面</button>
+                </div>
+              </details>
             </div>
 
             <div class="connect-section">
-              <h4 class="connect-section-title">接触面</h4>
-              <div class="connect-detail-grid">
-                <div class="connect-detail-item"><strong>接触轴</strong><span id="connectContactAxis">-</span></div>
-                <div class="connect-detail-item"><strong>接触面积</strong><span id="connectContactArea">-</span></div>
-                <div class="connect-detail-item"><strong>Host 板件</strong><span id="connectHostPanel">-</span></div>
-                <div class="connect-detail-item"><strong>Target 板件</strong><span id="connectTargetPanel">-</span></div>
-                <div class="connect-detail-item"><strong>警告</strong><span id="connectWarnings">-</span></div>
-                <div class="connect-detail-item"><strong>错误</strong><span id="connectErrors">-</span></div>
+              <h4 class="connect-section-title">五金</h4>
+              <div class="connect-detail-grid" style="margin-bottom: 10px;">
+                <div class="connect-detail-item">
+                  <strong>类型</strong>
+                  <select id="connectHardwareType" style="width: 100%; margin-top: 4px;">
+                    <option value="screw_hole">螺丝孔（可切削）</option>
+                    <option value="tongue_groove">榫槽（可切削）</option>
+                    <option value="hinge_hole">铰链杯孔（可切削）</option>
+                    <option value="drawer_runner_hole">抽屉滑轨孔（可切削）</option>
+                    <option value="lock_cutout">锁孔口袋（可切削）</option>
+                  </select>
+                </div>
+                <div class="connect-detail-item"><strong>状态</strong><span id="connectHardwareCutReady">可切削</span></div>
               </div>
               <div class="connect-actions">
-                <button type="button" class="primary" id="connectShowContactPatchBtn" disabled>显示接触面</button>
-                <button type="button" class="ghost" id="connectClearContactPatchBtn">清除接触面</button>
-              </div>
-            </div>
-
-            <div class="connect-section">
-              <h4 class="connect-section-title">操作</h4>
-              <div class="connect-actions">
+                <button type="button" class="ghost" id="connectPreviewBtn" disabled>预览</button>
                 <button type="button" class="ghost" id="connectConfirmBtn" disabled>确认关系</button>
-                <button type="button" class="primary" id="connectCutBtn" disabled>创建螺丝孔</button>
+                <button type="button" class="ghost" id="connectFaceVerifyBtn" disabled>面验证</button>
+                <button type="button" class="primary" id="connectCutBtn" disabled>创建</button>
+              </div>
+              <div class="connect-detail-grid" style="margin-top: 10px;">
+                <div class="connect-detail-item"><strong>预览</strong><span id="connectPreviewHoleCount">-</span></div>
+                <div class="connect-detail-item"><strong>尺寸</strong><span id="connectPreviewDiameter">-</span></div>
+                <div class="connect-detail-item"><strong>边距</strong><span id="connectPreviewEdgeOffset">-</span></div>
+                <div class="connect-detail-item"><strong>深度</strong><span id="connectPreviewDepth">-</span></div>
+              </div>
+              <div class="connect-detail-grid" style="margin-top: 8px;">
+                <div class="connect-detail-item"><strong>特征</strong><span id="connectCutFeature">-</span></div>
+                <div class="connect-detail-item"><strong>数量</strong><span id="connectCutHoleCount">-</span></div>
+                <div class="connect-detail-item"><strong>加工尺寸</strong><span id="connectCutDiameter">-</span></div>
+                <div class="connect-detail-item"><strong>宿主板</strong><span id="connectCutHost">-</span></div>
               </div>
             </div>
 
-            <div class="hardware-message" id="connectMessage">在 Fusion 中选中两块板件，然后点击「检查选中板件对」。</div>
-            <div class="connect-op-result" id="connectOperationResult">尚无操作。</div>
+            <div class="hardware-message" id="connectMessage">在 Fusion 中选中两块板件，然后点击「刷新选中」或「检查」。</div>
+            <div class="connect-op-result" id="connectOperationResult" hidden aria-hidden="true"></div>
+
+            <details class="connect-dev-tools" id="connectSideDrillTools">
+              <summary>侧向接触钻孔（试验）</summary>
+              <div class="hardware-section-note">早期试验 UI。正式流程请用上方「板件连接」。</div>
+              <div class="connect-detail-grid">
+                <div class="connect-detail-item">
+                  <strong>预设</strong>
+                  <select id="hwPreset" style="width:100%;margin-top:4px;">
+                    <option value="default">默认：3mm 通孔（穿宿主板）</option>
+                  </select>
+                </div>
+                <div class="connect-detail-item">
+                  <strong>孔径 (mm)</strong>
+                  <input id="hwHoleDiameter" type="number" value="3.0" min="0.1" step="0.1" style="width:100%;margin-top:4px;">
+                </div>
+                <div class="connect-detail-item">
+                  <strong>通孔</strong>
+                  <label style="display:block;margin-top:6px;"><input id="hwThroughHost" type="checkbox" checked style="width:auto"> 穿宿主板</label>
+                </div>
+                <div class="connect-detail-item">
+                  <strong>孔深 (mm)</strong>
+                  <input id="hwHoleDepth" type="number" value="16.0" min="0.1" step="0.1" disabled style="width:100%;margin-top:4px;">
+                </div>
+              </div>
+              <div class="attr-radio-row" style="margin:10px 0;">
+                <label class="attr-radio"><input type="radio" name="hwPatternMode" value="EVEN_DISTRIBUTION" checked> 均分</label>
+                <label class="attr-radio"><input type="radio" name="hwPatternMode" value="SIDE_DISTANCE_HOLE_DISTANCE"> 定距</label>
+              </div>
+              <div class="hardware-pattern-fields" id="hwEvenFields">
+                <div class="grid2">
+                  <label>孔数 <input id="hwHoleNumber" type="number" value="2" min="1" step="1"></label>
+                  <label>边距 (mm) <input id="hwEvenSideDistance" type="number" value="50" min="0" step="1"></label>
+                </div>
+              </div>
+              <div class="hardware-pattern-fields" id="hwSpacingFields" hidden>
+                <div class="grid2">
+                  <label>边距 (mm) <input id="hwSpacingSideDistance" type="number" value="50" min="0" step="1"></label>
+                  <label>孔间距 (mm) <input id="hwHoleDistance" type="number" value="200" min="1" step="1"></label>
+                </div>
+                <div class="attr-radio-row">
+                  <label class="attr-radio"><input type="radio" name="hwStartSide" value="A" checked> 起点 A</label>
+                  <label class="attr-radio"><input type="radio" name="hwStartSide" value="B"> 起点 B</label>
+                </div>
+              </div>
+              <div class="hardware-body-pick" style="margin-top:10px;">
+                <label>板件 1 <div class="hardware-body-label" id="hwBody1Label">未选择</div></label>
+                <button type="button" class="ghost" id="hwSelectBody1Btn">选择</button>
+              </div>
+              <div class="hardware-body-pick" style="margin-top:8px;">
+                <label>板件 2 <div class="hardware-body-label" id="hwBody2Label">未选择</div></label>
+                <button type="button" class="ghost" id="hwSelectBody2Btn">选择</button>
+              </div>
+              <div class="actions" style="margin-top:10px;">
+                <button type="button" class="ghost" id="hwCreateTestBoardsBtn">创建测试板</button>
+                <button type="button" class="ghost" id="hwSavePresetBtn">保存预设</button>
+                <button type="button" class="ghost" id="hwUpdatePresetBtn">更新预设</button>
+                <button type="button" class="ghost" id="hwDeletePresetBtn">删除预设</button>
+                <button type="button" class="primary" id="hwCalculateBtn">计算预览</button>
+                <button type="button" class="ghost" id="hwCreateHolesBtn" disabled>创建孔</button>
+              </div>
+              <div class="hardware-preview" id="hwPreview" style="margin-top:10px;min-height:60px;">
+                <div class="muted">试验区预览。</div>
+              </div>
+              <div class="hardware-summary-grid" style="margin-top:8px;">
+                <div class="hardware-summary-item">接触类型<strong id="hwSummaryContactType">-</strong></div>
+                <div class="hardware-summary-item">宿主板<strong id="hwSummaryHost">-</strong></div>
+                <div class="hardware-summary-item">目标板<strong id="hwSummaryTarget">-</strong></div>
+                <div class="hardware-summary-item">孔数<strong id="hwSummaryHoleCount">-</strong></div>
+              </div>
+              <div class="hardware-message" id="hwActionMessage">侧向钻孔试验区。</div>
+              <div class="hardware-message warn" id="hwMetadataMessage">需要面元数据。</div>
+              <div class="hardware-message warn" id="hwWarningMessage">正式流程请用上方「板件连接」。</div>
+            </details>
 
             <details class="connect-dev-tools" id="connectDevTools">
               <summary>开发工具</summary>
-              <div class="hardware-section-note">测试、Demo、回归与关系线 overlay。默认折叠，不影响主流程。</div>
+              <div class="hardware-section-note">测试、演示、回归与关系线。默认折叠。</div>
               <div class="hardware-debug-actions">
+                <button type="button" class="primary" id="hwRelRunDay1SmokeBtn">运行 Day 1 自动验证</button>
                 <button type="button" class="ghost" id="hwRelCreateFixtureBtn">创建关系测试板</button>
-                <button type="button" class="ghost" id="hwRelReconcileOverheadDeclarationsBtn">Reconcile Overhead 声明</button>
+                <button type="button" class="ghost" id="hwRelReconcileOverheadDeclarationsBtn">同步吊柜声明关系</button>
                 <button type="button" class="ghost" id="hwRelVerifySelectedFacesBtn">面验证</button>
                 <button type="button" class="primary" id="hwRelRunDemoFixtureFlowBtn">运行演示流程</button>
                 <button type="button" class="ghost" id="hwRelRunDemoNegativeBtn">运行负面案例检查</button>
-                <button type="button" class="ghost" id="hwRelRunDemoPackOfflineBtn">运行离线 Demo Pack</button>
-                <button type="button" class="ghost" id="hwRelRunOverlaySelfCheckBtn">运行 Overlay 自检</button>
+                <button type="button" class="ghost" id="hwRelRunDemoPackOfflineBtn">运行离线演示包</button>
+                <button type="button" class="ghost" id="hwRelRunOverlaySelfCheckBtn">运行叠加层自检</button>
                 <button type="button" class="ghost" id="hwRelShowOverlayForSelectedBtn">显示关系线</button>
                 <button type="button" class="ghost" id="hwRelClearRelationshipOverlaysBtn">清除关系线</button>
                 <button type="button" class="ghost" id="hwRelCopyLastJsonBtn">复制 JSON</button>
@@ -2375,7 +2410,7 @@
       </main>
     </div>
   </div>
-  <div class="attributes-page page" id="page-attributes" hidden>
+<div class="attributes-page page" id="page-attributes" hidden>
     <div class="attr-banner" id="attrUiBanner">Panel Attribute Manager — use Overhead Test to generate sample boards while testing attributes.</div>
     <div class="attr-page-tabs">
       <button type="button" class="attr-page-tab active" data-attr-view="overview">Overview</button>
@@ -8699,19 +8734,27 @@
           } else if (action === "relationshipInspectResult") {
             hwRelDebugHandleInspectResult(parsed);
             connectUiHandleInspectResult(parsed);
+          } else if (action === "relationshipSelectionResult") {
+            connectUiHandleSelectionResult(parsed);
           } else if (action === "hardwareRelationshipPreviewResult") {
             hwRelDebugHandlePreviewResult(parsed);
+            connectUiHandlePreviewResult(parsed);
           } else if (action === "hardwareRelationshipCutResult") {
             hwRelDebugHandleCutResult(parsed);
             connectUiHandleCutResult(parsed);
+          } else if (action === "hardwareTypesResult") {
+            connectUiHandleHardwareTypesResult(parsed);
           } else if (action === "connectDemoResult") {
             hwRelDebugHandleDemoResult(parsed);
+          } else if (action === "day1SmokeResult") {
+            hwRelDebugHandleDay1SmokeResult(parsed);
+            connectUiHandleDay1SmokeResult(parsed);
           } else if (action === "contactPatchOverlayResult") {
             connectUiHandleContactPatchOverlayResult(parsed);
           } else if (action === "relationshipOverlayResult") {
             hwRelDebugHandleOverlayResult(parsed);
           } else if (action === "relationshipFaceVerifyResult") {
-            hwRelDebugHandleFaceVerifyResult(parsed);
+            connectUiHandleFaceVerifyResult(parsed);
           } else if (action === "relationshipDeclaredResult") {
             hwRelDebugHandleDeclaredResult(parsed);
           } else if (action === "connectExecuteResult") {
@@ -10949,17 +10992,94 @@
       lastRelationship: null,
       lastContactPatch: null,
       lastPanels: [],
+      lastPreview: null,
       confirmedRelationship: null,
       lastScanCount: null,
     };
 
-    const CONNECT_HW_RULE = {
-      type: "screw_hole",
-      diameterMm: 4,
-      edgeOffsetMm: 30,
-      minSpacingMm: 80,
-      depthMode: "host_thickness",
+    const CONNECT_HW_RULES = {
+      screw_hole: {
+        type: "screw_hole",
+        diameterMm: 4,
+        edgeOffsetMm: 30,
+        minSpacingMm: 80,
+        depthMode: "host_thickness",
+      },
+      tongue_groove: {
+        type: "tongue_groove",
+        grooveDepthMm: 8,
+        grooveWidthMm: 4,
+        tongueProtrusionMm: 7,
+      },
+      hinge_hole: {
+        type: "hinge_hole",
+        diameterMm: 35,
+        depthMm: 13,
+        edgeOffsetMm: 100,
+        holeCount: 2,
+      },
+      lock_cutout: {
+        type: "lock_cutout",
+        widthMm: 22,
+        heightMm: 40,
+        depthMm: 12,
+      },
+      drawer_runner_hole: {
+        type: "drawer_runner_hole",
+        diameterMm: 5,
+        depthMm: 12,
+        edgeOffsetMm: 37,
+        holeCount: 3,
+      },
     };
+
+    const CONNECT_HW_META = {
+      screw_hole: { label: "螺丝孔", cutReady: true, previewOnly: false },
+      tongue_groove: { label: "榫槽", cutReady: true, previewOnly: false },
+      hinge_hole: { label: "铰链杯孔", cutReady: true, previewOnly: false },
+      drawer_runner_hole: { label: "抽屉滑轨孔", cutReady: true, previewOnly: false },
+      lock_cutout: { label: "锁孔口袋", cutReady: true, previewOnly: false },
+    };
+
+    // ponytail: default remains screw_hole; selector overrides via connectUiSelectedHardwareType
+    let CONNECT_HW_RULE = Object.assign({}, CONNECT_HW_RULES.screw_hole);
+
+    function connectUiSelectedHardwareType() {
+      const el = connectUiEl("connectHardwareType");
+      const value = el && el.value ? String(el.value) : "screw_hole";
+      return CONNECT_HW_RULES[value] ? value : "screw_hole";
+    }
+
+    function connectUiActiveHardwareRule() {
+      const hwType = connectUiSelectedHardwareType();
+      CONNECT_HW_RULE = Object.assign({}, CONNECT_HW_RULES[hwType] || CONNECT_HW_RULES.screw_hole);
+      return CONNECT_HW_RULE;
+    }
+
+    function connectUiHardwareMeta(hwType) {
+      return CONNECT_HW_META[hwType] || CONNECT_HW_META.screw_hole;
+    }
+
+    function connectUiRefreshHardwareTypeUi() {
+      const hwType = connectUiSelectedHardwareType();
+      const meta = connectUiHardwareMeta(hwType);
+      connectUiActiveHardwareRule();
+      const statusEl = connectUiEl("connectHardwareCutReady");
+      if (statusEl) {
+        statusEl.textContent = meta.cutReady ? "可切削" : "仅预览";
+      }
+      const previewBtn = connectUiEl("connectPreviewBtn");
+      if (previewBtn) previewBtn.textContent = `预览 ${meta.label}`;
+      const cutBtn = connectUiEl("connectCutBtn");
+      if (cutBtn) {
+        cutBtn.textContent = meta.cutReady ? `创建 ${meta.label}` : `${meta.label}（不可切）`;
+      }
+      connectUiClearPreviewResult();
+      connectUiClearCutResult();
+      if (connectContactState.lastInspect) {
+        connectUiRenderInspect(connectContactState.lastInspect);
+      }
+    }
 
     function connectUiEl(id) {
       return document.getElementById(id);
@@ -10972,9 +11092,143 @@
       el.className = `hardware-message ${tone}`.trim();
     }
 
-    function connectUiSetOperation(message) {
-      const el = connectUiEl("connectOperationResult");
-      if (el) el.textContent = message;
+    function connectUiSetOperation(message, tone = "") {
+      // ponytail: single status bar; keep hidden op result for any legacy readers
+      const hidden = connectUiEl("connectOperationResult");
+      if (hidden) {
+        hidden.textContent = message || "";
+        hidden.hidden = true;
+      }
+      if (message) connectUiSetMessage(message, tone);
+    }
+
+    function connectUiGeometryLabel(value) {
+      const map = {
+        edge_to_surface: "边对面",
+        surface_to_surface: "面对面",
+        gap_parallel: "平行间隙",
+        intersection: "相交",
+        none: "无接触",
+      };
+      return map[value] || value || "-";
+    }
+
+    function connectUiRelationshipLabel(value) {
+      const map = {
+        structural_butt_joint: "结构对接",
+        door_gap_candidate: "门缝候选",
+        collision: "碰撞",
+      };
+      return map[value] || value || "-";
+    }
+
+    function connectUiVerificationLabel(value) {
+      const map = {
+        bbox_candidate: "bbox 候选",
+        bbox_contact_patch: "bbox 接触面",
+        manual_confirmed: "已确认",
+        face_verified: "面已验证",
+        generator_declared: "生成器声明",
+      };
+      return map[value] || value || "-";
+    }
+
+    function connectUiUpdateInspectSummary(parsed) {
+      const el = connectUiEl("connectInspectSummary");
+      if (!el) return;
+      const rel = parsed?.relationship;
+      if (!parsed?.ok || !rel) {
+        el.textContent = (parsed?.errors || ["尚未检查或检查失败。"]).join(" ");
+        return;
+      }
+      const verification = rel.verification || {};
+      const patch = parsed.contactPatch || connectContactState.lastContactPatch || {};
+      const bits = [
+        connectUiGeometryLabel(rel.geometryType),
+        connectUiRelationshipLabel(rel.relationshipType),
+        connectUiVerificationLabel(verification.level),
+        verification.safeForPreview ? "可预览" : "不可预览",
+        verification.safeForCut ? "可加工" : "不可加工",
+      ];
+      if (patch.contactAreaMm2 != null) bits.push(`接触 ${patch.contactAreaMm2} mm²`);
+      const host = patch.hostPanelId || rel.roles?.hostPanelId;
+      const target = patch.targetPanelId || rel.roles?.targetPanelId;
+      if (host && target) bits.push(`${host} → ${target}`);
+      el.textContent = bits.join(" · ");
+    }
+
+    function connectUiSetSelectionHint(message, tone = "") {
+      const el = connectUiEl("connectSelectionHint");
+      if (!el) return;
+      el.textContent = message;
+      el.className = `connect-selection-hint ${tone}`.trim();
+    }
+
+    function connectUiRenderSelectionIds(panelIds, count) {
+      const ids = Array.isArray(panelIds) ? panelIds : [];
+      connectUiEl("connectPanelA") && (connectUiEl("connectPanelA").textContent = ids[0] || "-");
+      connectUiEl("connectPanelB") && (connectUiEl("connectPanelB").textContent = ids[1] || "-");
+      if (count === 2 && ids.length >= 2) {
+        connectUiSetSelectionHint(`已选中 2 块板件：${ids[0]} ↔ ${ids[1]}。可点击「检查选中板件对」。`, "ok");
+      } else if (count === 1) {
+        connectUiSetSelectionHint(`已选中 1 块板件（${ids[0] || "?"}），还需再选 1 块。`, "warn");
+      } else if (count > 2) {
+        connectUiSetSelectionHint(`已选中 ${count} 块板件；检查时会扫描全部选中板的两两关系。`, "warn");
+      } else {
+        connectUiSetSelectionHint("未检测到板件选中。请在 Fusion 视口中选中实体后点击「刷新选中」。", "");
+      }
+    }
+
+    function connectUiClearPreviewResult() {
+      connectContactState.lastPreview = null;
+      connectUiEl("connectPreviewHoleCount") && (connectUiEl("connectPreviewHoleCount").textContent = "-");
+      connectUiEl("connectPreviewDiameter") && (connectUiEl("connectPreviewDiameter").textContent = "-");
+      connectUiEl("connectPreviewEdgeOffset") && (connectUiEl("connectPreviewEdgeOffset").textContent = "-");
+      connectUiEl("connectPreviewDepth") && (connectUiEl("connectPreviewDepth").textContent = "-");
+    }
+
+    function connectUiClearCutResult() {
+      connectUiEl("connectCutFeature") && (connectUiEl("connectCutFeature").textContent = "-");
+      connectUiEl("connectCutHoleCount") && (connectUiEl("connectCutHoleCount").textContent = "-");
+      connectUiEl("connectCutDiameter") && (connectUiEl("connectCutDiameter").textContent = "-");
+      connectUiEl("connectCutHost") && (connectUiEl("connectCutHost").textContent = "-");
+    }
+
+    function connectUiRenderPreviewResult(parsed) {
+      const audit = parsed?.audit && typeof parsed.audit === "object" ? parsed.audit : {};
+      const feature = Array.isArray(parsed?.features) && parsed.features[0] ? parsed.features[0] : {};
+      const geometry = feature.geometry || {};
+      connectContactState.lastPreview = parsed;
+      const hwType = parsed?.hardwareType || connectUiSelectedHardwareType();
+      const holeCount = parsed?.holeCount ?? audit.holeCount;
+      const diameter = audit.diameterMm ?? geometry.diameterMm ?? CONNECT_HW_RULE.diameterMm;
+      const edgeOffset = audit.edgeOffsetMm ?? CONNECT_HW_RULE.edgeOffsetMm;
+      const depth = audit.depthMm
+        ?? geometry.depthMm
+        ?? (geometry.groove && geometry.groove.depthMm)
+        ?? (geometry.pocket && geometry.pocket.depthMm);
+      connectUiEl("connectPreviewHoleCount") && (connectUiEl("connectPreviewHoleCount").textContent =
+        holeCount != null ? String(holeCount) : (hwType === "tongue_groove" ? "槽+榫" : (hwType === "lock_cutout" ? "口袋" : "-")));
+      connectUiEl("connectPreviewDiameter") && (connectUiEl("connectPreviewDiameter").textContent =
+        diameter != null ? `${diameter} mm` : (geometry.pocket ? `${geometry.pocket.widthMm || "?"}×${geometry.pocket.heightMm || "?"} mm` : "-"));
+      connectUiEl("connectPreviewEdgeOffset") && (connectUiEl("connectPreviewEdgeOffset").textContent =
+        edgeOffset != null ? `${edgeOffset} mm` : "-");
+      connectUiEl("connectPreviewDepth") && (connectUiEl("connectPreviewDepth").textContent =
+        depth != null ? `${depth} mm` : (hwType === "screw_hole" ? "宿主板厚" : "-"));
+      connectUiEl("connectCutHost") && (connectUiEl("connectCutHost").textContent = parsed?.hostPanelId || "-");
+    }
+
+    function connectUiRenderCutResult(audit) {
+      const data = audit && typeof audit === "object" ? audit : {};
+      const meta = data.metadata && typeof data.metadata === "object" ? data.metadata : {};
+      connectUiEl("connectCutFeature") && (connectUiEl("connectCutFeature").textContent =
+        data.cutFeatureName || data.tongueFeatureName || "-");
+      connectUiEl("connectCutHoleCount") && (connectUiEl("connectCutHoleCount").textContent =
+        data.holeCount != null ? String(data.holeCount) : "-");
+      const diameter = data.diameterMm ?? meta.diameterMm;
+      connectUiEl("connectCutDiameter") && (connectUiEl("connectCutDiameter").textContent =
+        diameter != null ? `${diameter} mm` : "-");
+      connectUiEl("connectCutHost") && (connectUiEl("connectCutHost").textContent = data.hostPanelId || "-");
     }
 
     function connectUiBadge(tone, text) {
@@ -10993,11 +11247,15 @@
       return connectContactState.confirmedRelationship || connectContactState.lastRelationship || null;
     }
 
+    function connectUiBuildPreviewPayload(relationship) {
+      return connectUiBuildCutPayload(relationship);
+    }
+
     function connectUiBuildCutPayload(relationship) {
       const panels = connectUiPanelsMapFromList(connectContactState.lastPanels);
       const hostId = relationship?.roles?.hostPanelId;
       const targetId = relationship?.roles?.targetPanelId;
-      const payload = { relationship, rule: CONNECT_HW_RULE };
+      const payload = { relationship, rule: connectUiActiveHardwareRule() };
       if (hostId && targetId && panels[hostId] && panels[targetId]) {
         payload.panels = { [hostId]: panels[hostId], [targetId]: panels[targetId] };
       }
@@ -11020,6 +11278,7 @@
       connectUiEl("connectPanelB") && (connectUiEl("connectPanelB").textContent = panelIds[1] || "-");
 
       if (!parsed?.ok || !rel) {
+        connectUiUpdateInspectSummary(parsed);
         connectUiEl("connectRelType") && (connectUiEl("connectRelType").textContent = "-");
         connectUiEl("connectGeometryType") && (connectUiEl("connectGeometryType").textContent = "-");
         connectUiEl("connectVerification") && (connectUiEl("connectVerification").textContent = "-");
@@ -11033,6 +11292,8 @@
         connectUiEl("connectErrors") && (connectUiEl("connectErrors").textContent = (parsed?.errors || parsed?.contactPatchErrors || ["检查失败"]).join(" "));
         connectUiEl("connectShowContactPatchBtn") && (connectUiEl("connectShowContactPatchBtn").disabled = true);
         connectUiEl("connectConfirmBtn") && (connectUiEl("connectConfirmBtn").disabled = true);
+        connectUiEl("connectFaceVerifyBtn") && (connectUiEl("connectFaceVerifyBtn").disabled = true);
+        connectUiEl("connectPreviewBtn") && (connectUiEl("connectPreviewBtn").disabled = true);
         connectUiEl("connectCutBtn") && (connectUiEl("connectCutBtn").disabled = true);
         return;
       }
@@ -11040,11 +11301,12 @@
       const verification = rel.verification || {};
       const patch = connectContactState.lastContactPatch || {};
       const patchVerification = patch.verification || {};
-      connectUiEl("connectRelType") && (connectUiEl("connectRelType").textContent = rel.relationshipType || "-");
-      connectUiEl("connectGeometryType") && (connectUiEl("connectGeometryType").textContent = rel.geometryType || "-");
+      connectUiUpdateInspectSummary(parsed);
+      connectUiEl("connectRelType") && (connectUiEl("connectRelType").textContent = connectUiRelationshipLabel(rel.relationshipType));
+      connectUiEl("connectGeometryType") && (connectUiEl("connectGeometryType").textContent = connectUiGeometryLabel(rel.geometryType));
       connectUiEl("connectVerification") && (connectUiEl("connectVerification").innerHTML = connectUiBadge(
-        patchVerification.level === "bbox_contact_patch" ? "warn" : "ok",
-        patchVerification.level || verification.level || "-",
+        verification.level === "bbox_candidate" || verification.level === "bbox_contact_patch" ? "warn" : "ok",
+        connectUiVerificationLabel(verification.level || patchVerification.level),
       ));
       connectUiEl("connectSafePreview") && (connectUiEl("connectSafePreview").textContent = connectUiYesNo(Boolean(verification.safeForPreview)));
       connectUiEl("connectSafeCut") && (connectUiEl("connectSafeCut").textContent = connectUiYesNo(Boolean(verification.safeForCut)));
@@ -11064,9 +11326,25 @@
         && rel.roles?.targetPanelId;
       connectUiEl("connectConfirmBtn") && (connectUiEl("connectConfirmBtn").disabled = !confirmAllowed);
 
-      const cutAllowed = Boolean(connectContactState.confirmedRelationship?.verification?.safeForCut)
+      const previewAllowed = confirmAllowed && Boolean(verification.safeForPreview !== false);
+      connectUiEl("connectPreviewBtn") && (connectUiEl("connectPreviewBtn").disabled = !previewAllowed);
+      connectUiEl("connectFaceVerifyBtn") && (connectUiEl("connectFaceVerifyBtn").disabled = !confirmAllowed);
+
+      const hwMeta = connectUiHardwareMeta(connectUiSelectedHardwareType());
+      const cutGateOpen = Boolean(connectContactState.confirmedRelationship?.verification?.safeForCut)
         || (Boolean(verification.safeForCut) && verification.level !== "bbox_candidate" && verification.level !== "bbox_contact_patch");
+      const cutAllowed = cutGateOpen && Boolean(hwMeta.cutReady);
       connectUiEl("connectCutBtn") && (connectUiEl("connectCutBtn").disabled = !cutAllowed);
+      const statusEl = connectUiEl("connectHardwareCutReady");
+      if (statusEl) {
+        statusEl.textContent = hwMeta.cutReady ? "可切削" : "仅预览";
+      }
+      const previewBtn = connectUiEl("connectPreviewBtn");
+      if (previewBtn) previewBtn.textContent = `预览 ${hwMeta.label}`;
+      const cutBtn = connectUiEl("connectCutBtn");
+      if (cutBtn && !String(cutBtn.textContent || "").startsWith("已创建")) {
+        cutBtn.textContent = hwMeta.cutReady ? `创建 ${hwMeta.label}` : `${hwMeta.label}（不可切）`;
+      }
     }
 
     function connectUiScan() {
@@ -11077,8 +11355,15 @@
 
     function connectUiInspectSelected() {
       connectContactState.confirmedRelationship = null;
+      connectUiClearPreviewResult();
+      connectUiClearCutResult();
       connectUiSetMessage("正在检查 Fusion 中选中的板件对…");
       fusionSend("relationships.inspectSelected", { toleranceMm: 0.5 });
+    }
+
+    function connectUiProbeSelection() {
+      connectUiSetMessage("正在读取 Fusion 当前选中…");
+      fusionSend("relationships.probeSelection", {});
     }
 
     function connectUiShowContactPatch() {
@@ -11091,6 +11376,18 @@
       fusionSend("relationships.clearContactPatchOverlays", {});
     }
 
+    function connectUiPreview() {
+      const relationship = connectContactState.lastRelationship;
+      if (!relationship) {
+        connectUiSetMessage("请先检查选中板件对。", "error");
+        return;
+      }
+      const meta = connectUiHardwareMeta(connectUiSelectedHardwareType());
+      connectUiSetMessage(`正在预览 ${meta.label}…`);
+      connectUiSetOperation("预览计算中…", "warn");
+      fusionSend("hardware.previewHardwareFromRelationship", connectUiBuildPreviewPayload(relationship));
+    }
+
     function connectUiConfirm() {
       const relationship = connectContactState.lastRelationship;
       if (!relationship) {
@@ -11098,6 +11395,17 @@
         return;
       }
       fusionSend("relationships.connectExecute", { action: "confirm", relationship });
+    }
+
+    function connectUiFaceVerify() {
+      const relationship = connectContactState.lastRelationship;
+      if (!relationship) {
+        connectUiSetMessage("请先检查选中板件对。", "error");
+        return;
+      }
+      connectUiSetMessage("正在验证选中板对的面接触…");
+      connectUiSetOperation("面验证计算中…", "warn");
+      fusionSend("relationships.verifySelectedPairFaces", { toleranceMm: 0.5 });
     }
 
     function connectUiCut() {
@@ -11111,16 +11419,49 @@
 
     function connectUiHandleInspectResult(parsed) {
       connectUiRenderInspect(parsed);
+      const count = parsed?.selectedPanelBodyCount;
+      if (count != null && !parsed?.ok) {
+        connectUiRenderSelectionIds(parsed?.selectedPanelIds || [], count);
+      }
       if (parsed?.ok) {
         const patch = parsed.contactPatch;
         connectUiSetMessage(
           patch
-            ? `已识别关系；接触面积 ${patch.contactAreaMm2} mm²（${patch.verification?.level || "bbox_contact_patch"}）。`
-            : "已识别关系，但未能生成 ContactPatch。",
+            ? `已识别关系；接触面积 ${patch.contactAreaMm2} mm²。`
+            : "已识别关系，但未能生成接触面。",
           patch ? "ok" : "warn",
         );
+        connectUiSetOperation("检查完成。下一步：选五金 → 预览 → 确认或面验证 → 创建。", "ok");
       } else {
-        connectUiSetMessage((parsed?.errors || ["检查选中板件对失败"]).join(" "), "error");
+        const errors = parsed?.errors || [];
+        const msg = errors.length
+          ? errors.join(" ")
+          : (count === 1
+            ? "只选中了 1 块板件，请再选 1 块后重试。"
+            : count === 0
+              ? "未选中板件。请在 Fusion 中选中 2 块板件实体。"
+              : "检查选中板件对失败");
+        connectUiSetMessage(msg, "error");
+        connectUiSetOperation(msg, "error");
+      }
+    }
+
+    function connectUiHandleSelectionResult(parsed) {
+      const count = parsed?.selectedPanelBodyCount ?? 0;
+      const ids = parsed?.selectedPanelIds || [];
+      connectUiRenderSelectionIds(ids, count);
+      if (parsed?.ok) {
+        if (count === 2) {
+          connectUiSetMessage(`已读取选中：${ids.join(" ↔ ")}`, "ok");
+        } else if (count === 1) {
+          connectUiSetMessage(`已读取 1 块板件：${ids[0] || "?"}，还需再选 1 块。`, "warn");
+        } else if (count > 2) {
+          connectUiSetMessage(`已读取 ${count} 块板件；「检查」将扫描全部选中板的两两关系。`, "warn");
+        } else {
+          connectUiSetMessage("Fusion 中未选中板件实体。请先选中测试板 REL_EDGE_A 与 REL_SURFACE_B。", "warn");
+        }
+      } else {
+        connectUiSetMessage((parsed?.errors || ["读取选中失败"]).join(" "), "error");
       }
     }
 
@@ -11147,6 +11488,38 @@
       }
     }
 
+    function connectUiHandleFaceVerifyResult(parsed) {
+      hwRelDebugHandleFaceVerifyResult(parsed);
+      const rel = parsed?.relationship;
+      if (parsed?.panels?.length) {
+        connectContactState.lastPanels = parsed.panels;
+      }
+      if (rel?.relationshipId) {
+        connectContactState.lastRelationship = rel;
+        if (parsed?.ok && rel?.verification?.level === "face_verified") {
+          connectContactState.confirmedRelationship = rel;
+        }
+        connectUiRenderInspect({
+          ok: true,
+          relationship: rel,
+          panels: connectContactState.lastPanels,
+          contactPatch: connectContactState.lastContactPatch,
+          selectedPanelIds: parsed?.selectedPanelIds || [],
+        });
+      }
+      if (parsed?.ok) {
+        const match = parsed.faceMatch || {};
+        connectUiSetOperation(
+          `面验证通过：${match.matchedFaceAId || "?"} ↔ ${match.matchedFaceBId || "?"} · 距离 ${match.planeDistanceMm ?? "?"} mm`,
+          "ok",
+        );
+        connectUiSetMessage("面验证通过，可直接创建五金（无需手动确认）。", "ok");
+      } else {
+        connectUiSetOperation((parsed?.errors || ["面验证失败"]).join(" "), "error");
+        connectUiSetMessage((parsed?.errors || ["面验证失败"]).join(" "), "error");
+      }
+    }
+
     function connectUiHandleExecuteResult(parsed) {
       const requested = parsed?.requestedAction || parsed?.action;
       if (!parsed?.ok) {
@@ -11157,37 +11530,135 @@
       if (requested === "confirm") {
         connectContactState.confirmedRelationship = parsed.confirmedRelationship || parsed.relationship;
         connectUiRenderInspect(connectContactState.lastInspect || { ok: true, relationship: connectContactState.lastRelationship, panels: connectContactState.lastPanels, contactPatch: connectContactState.lastContactPatch });
-        connectUiSetMessage(`已确认关系 ${parsed.relationshipId || ""}（仅本会话）。`, "ok");
-        connectUiSetOperation(`已确认：${parsed.relationshipId || "-"}`);
+        connectUiSetMessage(`已确认关系 ${parsed.relationshipId || ""}（仅本会话）。可创建五金（若当前类型可切削）。`, "ok");
         return;
       }
       if (requested === "cut") {
         const relationship = connectUiActiveRelationship();
-        connectUiSetMessage("Cut 门控通过，正在 Host 上创建螺丝孔…", "ok");
-        fusionSend("hardware.createScrewHolesFromRelationship", connectUiBuildCutPayload(relationship));
+        const meta = connectUiHardwareMeta(connectUiSelectedHardwareType());
+        if (!meta.cutReady) {
+          connectUiSetMessage(`${meta.label} 仅预览，不可切削。`, "error");
+          return;
+        }
+        connectUiSetMessage(`门控通过，正在创建 ${meta.label}…`, "ok");
+        fusionSend("hardware.createHardwareFromRelationship", connectUiBuildCutPayload(relationship));
+      }
+    }
+
+    function connectUiHandlePreviewResult(parsed) {
+      if (parsed?.ok) {
+        connectUiRenderPreviewResult(parsed);
+        const hwType = parsed.hardwareType || connectUiSelectedHardwareType();
+        const meta = connectUiHardwareMeta(hwType);
+        const holeCount = parsed.holeCount;
+        const audit = parsed.audit || {};
+        const summaryBits = [
+          meta.label,
+          holeCount != null ? `${holeCount} 孔` : null,
+          audit.diameterMm != null ? `孔径 ${audit.diameterMm} mm` : null,
+          audit.depthMm != null ? `深 ${audit.depthMm} mm` : null,
+          `Host ${parsed.hostPanelId || "?"}`,
+          parsed.previewOnly || meta.previewOnly ? "仅预览" : null,
+        ].filter(Boolean);
+        connectUiSetOperation(`预览：${summaryBits.join(" · ")}`, "ok");
+        connectUiSetMessage(
+          parsed.previewOnly || meta.previewOnly
+            ? `预览完成（${meta.label} 仅预览，不可切削）。`
+            : `预览完成：${meta.label}（仅计算，未切割）。确认关系后可创建。`,
+          "ok",
+        );
+      } else {
+        connectUiClearPreviewResult();
+        connectUiSetOperation((parsed?.errors || ["预览失败"]).join(" "), "error");
+        connectUiSetMessage((parsed?.errors || ["五金预览失败"]).join(" "), "error");
       }
     }
 
     function connectUiHandleCutResult(parsed) {
       const audit = parsed?.audit && typeof parsed.audit === "object" ? parsed.audit : parsed;
       if (parsed?.ok) {
+        connectUiRenderCutResult(audit);
+        const featureName = audit.cutFeatureName || audit.tongueFeatureName || "timeline feature";
+        const holeCount = audit.holeCount;
+        const meta = connectUiHardwareMeta(parsed.hardwareType || connectUiSelectedHardwareType());
         connectUiSetOperation(
-          `切割成功：${audit.cutFeatureName || "feature"} · ${audit.holeCount || 0} 孔 · metadataWritten=${audit.metadataWritten === true}`,
+          `切割成功：${featureName}`
+            + (holeCount != null ? ` · ${holeCount} 孔` : "")
+            + ` · 元数据已写入=${audit.metadataWritten === true}`,
+          "ok",
         );
-        connectUiSetMessage(`已在 Host 创建切割（${audit.cutFeatureName || "timeline feature"}）。`, "ok");
+        connectUiSetMessage(
+          `已创建 ${meta.label}（${featureName}）。请在 Fusion 时间轴与 3D 视口核对。`,
+          "ok",
+        );
+        const cutBtn = connectUiEl("connectCutBtn");
+        if (cutBtn) {
+          cutBtn.textContent = holeCount != null ? `已创建 ${holeCount} 孔（可再切）` : `已创建 ${meta.label}（可再切）`;
+          cutBtn.disabled = false;
+        }
       } else {
-        connectUiSetOperation((parsed?.errors || ["切割失败"]).join(" "));
+        connectUiClearCutResult();
+        connectUiSetOperation((parsed?.errors || ["切割失败"]).join(" "), "error");
         connectUiSetMessage((parsed?.errors || ["切割失败"]).join(" "), "error");
       }
     }
 
+    function connectUiHandleHardwareTypesResult(parsed) {
+      if (!parsed?.ok || !Array.isArray(parsed.types)) return;
+      const select = connectUiEl("connectHardwareType");
+      if (!select) return;
+      const previous = select.value || "screw_hole";
+      parsed.types.forEach((row) => {
+        if (!row || !row.type) return;
+        CONNECT_HW_META[row.type] = {
+          label: row.label || row.type,
+          cutReady: Boolean(row.cutReady),
+          previewOnly: Boolean(row.previewOnly),
+        };
+        let option = Array.from(select.options).find((opt) => opt.value === row.type);
+        if (!option) {
+          option = document.createElement("option");
+          option.value = row.type;
+          select.appendChild(option);
+        }
+        const suffix = row.cutReady ? "（可切削）" : "（仅预览）";
+        option.textContent = `${row.label || row.type}${suffix}`;
+      });
+      if (CONNECT_HW_RULES[previous]) select.value = previous;
+      connectUiRefreshHardwareTypeUi();
+    }
+
+    function connectUiHandleDay1SmokeResult(parsed) {
+      const overall = parsed?.overall || (parsed?.ok ? "PASS" : "FAIL");
+      const summary = parsed?.summaryText || "";
+      const cutAudit = parsed?.cutAudit || {};
+      if (parsed?.ok) {
+        connectUiRenderCutResult(cutAudit);
+        connectUiSetOperation(summary || `Day 1 自动验证 ${overall}`, "ok");
+        connectUiSetMessage(
+          `Day 1 自动验证 ${overall}：${cutAudit.holeCount || 0} 孔 · ${cutAudit.cutFeatureName || "feature"}`,
+          "ok",
+        );
+      } else {
+        connectUiClearCutResult();
+        connectUiSetOperation(summary || `Day 1 自动验证 ${overall}`, "error");
+        connectUiSetMessage((parsed?.errors || [summary || "Day 1 自动验证失败"]).join(" "), "error");
+      }
+    }
+
     function connectUiInit() {
+      connectUiEl("connectProbeSelectionBtn")?.addEventListener("click", connectUiProbeSelection);
       connectUiEl("connectScanBtn")?.addEventListener("click", connectUiScan);
       connectUiEl("connectInspectBtn")?.addEventListener("click", connectUiInspectSelected);
       connectUiEl("connectShowContactPatchBtn")?.addEventListener("click", connectUiShowContactPatch);
       connectUiEl("connectClearContactPatchBtn")?.addEventListener("click", connectUiClearContactPatch);
       connectUiEl("connectConfirmBtn")?.addEventListener("click", connectUiConfirm);
+      connectUiEl("connectFaceVerifyBtn")?.addEventListener("click", connectUiFaceVerify);
+      connectUiEl("connectPreviewBtn")?.addEventListener("click", connectUiPreview);
       connectUiEl("connectCutBtn")?.addEventListener("click", connectUiCut);
+      connectUiEl("connectHardwareType")?.addEventListener("change", connectUiRefreshHardwareTypeUi);
+      connectUiRefreshHardwareTypeUi();
+      fusionSend("hardware.listHardwareTypes", {});
     }
 
     const hwRelDebugState = {
@@ -11411,6 +11882,24 @@
       } else {
         hwRelDebugSetMessage((parsed?.errors || [`Demo ${parsed?.demoId || ""} 失败 / failed.`]).join(" "), "error");
       }
+    }
+
+    function hwRelDebugRunDay1Smoke() {
+      hwRelDebugSetMessage("正在运行 Day 1 自动验证（夹具 → 检查 → 接触面 → 确认 → 打孔）…");
+      connectUiSetMessage("正在运行 Day 1 自动验证…");
+      connectUiSetOperation("自动验证进行中…", "warn");
+      fusionSend("relationships.runDay1Smoke", {});
+    }
+
+    function hwRelDebugHandleDay1SmokeResult(parsed) {
+      hwRelDebugState.lastDemoReport = parsed;
+      hwRelDebugShowResult(parsed);
+      const overall = parsed?.overall || (parsed?.ok ? "PASS" : "FAIL");
+      const lines = (parsed?.steps || []).map((step) => `[${step.status}] ${step.step}`);
+      hwRelDebugSetMessage(
+        `Day 1 自动验证 ${overall}${lines.length ? " · " + lines.join(" · ") : ""}`,
+        parsed?.ok ? "ok" : "error",
+      );
     }
 
     function hwRelDebugRunDemoFixtureFlow() {
@@ -11702,6 +12191,7 @@
     }
 
     function hwRelDebugInitUi() {
+      hwRelDebugEl("hwRelRunDay1SmokeBtn")?.addEventListener("click", hwRelDebugRunDay1Smoke);
       hwRelDebugEl("hwRelCreateFixtureBtn")?.addEventListener("click", hwRelDebugCreateFixture);
       hwRelDebugEl("hwRelVerifySelectedFacesBtn")?.addEventListener("click", hwRelDebugVerifySelectedPairFaces);
       hwRelDebugEl("hwRelReconcileOverheadDeclarationsBtn")?.addEventListener("click", hwRelDebugReconcileOverheadDeclarations);
@@ -11757,7 +12247,7 @@
       hwEl("hwSpacingFields").hidden = mode !== "SIDE_DISTANCE_HOLE_DISTANCE";
       hardwareState.previewValid = false;
       hwEl("hwCreateHolesBtn").disabled = true;
-      hardwareSetMessage("hwActionMessage", "排孔方式已变更，请重新计算预览后再创建孔。/ Pattern changed. Recalculate preview before creating holes.");
+      hardwareSetMessage("hwActionMessage", "排孔方式已变更，请重新计算预览后再创建孔。");
     }
 
     function hardwareSelectBody(slot) {
@@ -11803,7 +12293,7 @@
       if (!parsed?.ok) {
         hardwareState.previewValid = false;
         hwEl("hwCreateHolesBtn").disabled = true;
-        hardwareSetSummary({ status: "错误 / Error", type: "TEST_BOARD_CREATE_FAILED" });
+        hardwareSetSummary({ status: "错误", type: "TEST_BOARD_CREATE_FAILED" });
         hardwareRenderPreview({ ok: false, message: (parsed?.errors || ["无法创建测试板 / Could not create test boards."]).join(" ") });
         hardwareSetMessage("hwActionMessage", (parsed?.errors || ["无法创建测试板 / Could not create test boards."]).join(" "), "error");
         return;
@@ -11836,45 +12326,45 @@
         warnings.length ? `${parsed.message || "测试板已创建 / Test boards created."} ${warnings.join(" ")}` : (parsed.message || "测试板已创建并选中 / Test boards created and selected."),
         warnings.length ? "warn" : "ok",
       );
-      hardwareSetMessage("hwWarningMessage", `已创建于 ${parsed.assemblyComponentName || "hardware test assembly"}。请点击计算预览在 Fusion 中绘制草图。/ Created in assembly. Click Calculate / Preview.`, "ok");
-      hardwareRenderPreview({ message: "测试板已在 Fusion 中就绪。点击计算预览在模型上绘制标记。/ Test boards ready. Click Calculate / Preview." });
+      hardwareSetMessage("hwWarningMessage", `已创建于 ${parsed.assemblyComponentName || "五金测试装配"}。请点击「计算预览」在 Fusion 中绘制草图。`, "ok");
+      hardwareRenderPreview({ message: "测试板已在 Fusion 中就绪。点击「计算预览」在模型上绘制标记。" });
     }
 
     function hardwareHandlePreviewResult(parsed) {
       if (!parsed?.ok) {
         hardwareState.previewValid = false;
         hwEl("hwCreateHolesBtn").disabled = true;
-        hardwareSetSummary({ status: "错误 / Error", type: "PREVIEW_FAILED" });
-        hardwareRenderPreview({ message: (parsed?.errors || ["预览失败 / Preview failed."]).join(" ") });
-        hardwareSetMessage("hwActionMessage", (parsed?.errors || ["预览失败 / Preview failed."]).join(" "), "error");
+        hardwareSetSummary({ status: "错误", type: "PREVIEW_FAILED" });
+        hardwareRenderPreview({ message: (parsed?.errors || ["预览失败"]).join(" ") });
+        hardwareSetMessage("hwActionMessage", (parsed?.errors || ["预览失败"]).join(" "), "error");
         return;
       }
       hardwareState.previewValid = true;
       hwEl("hwCreateHolesBtn").disabled = false;
       hardwareSetSummary({
-        status: "Fusion 预览有效 / Valid Fusion Preview",
+        status: "Fusion 预览有效",
         type: parsed.contactType || "DIRECT_SIDE_CONTACT",
         host: parsed.hostBody || "-",
         target: parsed.targetBody || "-",
         width: `${parsed.projectedWidthMm || "-"} mm`,
         holeCount: String(parsed.holeCount || 0),
       });
-      hardwareRenderPreview({ message: "Fusion 预览草图已在 Host 入射面创建。请在模型画布查看，非本网页。/ Fusion preview sketch created on Host entry face." });
+      hardwareRenderPreview({ message: "Fusion 预览草图已在宿主板入射面创建。请在模型画布查看（非本网页）。" });
       const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
-      hardwareSetMessage("hwActionMessage", `${parsed.message || "Fusion 预览已创建 / Fusion preview created."} 请检查模型后点击创建孔。/ Review the model, then Create Holes.`, warnings.length ? "warn" : "ok");
-      hardwareSetMessage("hwWarningMessage", warnings.length ? warnings.join(" ") : `接触路径长度 Contact path length: ${parsed.contactPathLengthMm || "-"} mm`, warnings.length ? "warn" : "ok");
+      hardwareSetMessage("hwActionMessage", `${parsed.message || "Fusion 预览已创建。"} 请检查模型后点击「创建孔」。`, warnings.length ? "warn" : "ok");
+      hardwareSetMessage("hwWarningMessage", warnings.length ? warnings.join(" ") : `接触路径长度：${parsed.contactPathLengthMm || "-"} mm`, warnings.length ? "warn" : "ok");
     }
 
     function hardwareHandleCreateHolesResult(parsed) {
       if (!parsed?.ok) {
         if (hardwareState.previewValid) hwEl("hwCreateHolesBtn").disabled = false;
-        hardwareSetMessage("hwActionMessage", (parsed?.errors || ["创建孔失败 / Create Holes failed."]).join(" "), "error");
+        hardwareSetMessage("hwActionMessage", (parsed?.errors || ["创建孔失败"]).join(" "), "error");
         return;
       }
       hardwareState.previewValid = false;
       hwEl("hwCreateHolesBtn").disabled = true;
       hardwareSetSummary({
-        status: "孔已创建 / Holes Created",
+        status: "孔已创建",
         type: "HOST_ONLY_CUT",
         host: parsed.hostBody || "-",
         target: parsed.targetBody || "-",
@@ -11882,25 +12372,25 @@
         holeCount: String(parsed.holeCount || 0),
       });
       const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
-      hardwareSetMessage("hwActionMessage", parsed.message || "Host-only 孔已创建 / Host-only holes created.", "ok");
-      hardwareSetMessage("hwWarningMessage", warnings.length ? warnings.join(" ") : `切割深度 Cut depth: ${parsed.depthMm || "-"} mm`, warnings.length ? "warn" : "ok");
-      hardwareRenderPreview({ message: `已创建 Fusion 切割特征 / Created Fusion cut feature: ${parsed.cutFeatureName || "HW_SIDE_CONTACT_HOLE_CUT"}` });
+      hardwareSetMessage("hwActionMessage", parsed.message || "已在宿主板创建钻孔。", "ok");
+      hardwareSetMessage("hwWarningMessage", warnings.length ? warnings.join(" ") : `切割深度：${parsed.depthMm || "-"} mm`, warnings.length ? "warn" : "ok");
+      hardwareRenderPreview({ message: `已创建 Fusion 切割特征：${parsed.cutFeatureName || "HW_SIDE_CONTACT_HOLE_CUT"}` });
     }
 
     function hardwareCalculatePreview() {
       hardwareState.previewValid = false;
       hwEl("hwCreateHolesBtn").disabled = true;
-      hardwareSetMessage("hwActionMessage", "正在根据最新测试板计算 Fusion 真实预览… / Calculating real Fusion preview...");
+      hardwareSetMessage("hwActionMessage", "正在根据最新测试板计算 Fusion 预览…");
       fusionSend("hardware.calculateSideContactPreview", hardwarePreviewPayload());
     }
 
     function hardwareCreateHoles() {
       if (!hardwareState.previewValid) {
-        hardwareSetMessage("hwActionMessage", "请先成功完成计算预览后再创建孔。/ Create Holes is blocked until Calculate / Preview succeeds.", "error");
+        hardwareSetMessage("hwActionMessage", "请先成功完成计算预览后再创建孔。", "error");
         return;
       }
       hwEl("hwCreateHolesBtn").disabled = true;
-      hardwareSetMessage("hwActionMessage", "正在创建 host-only 钻孔… / Creating host-only drill holes...");
+      hardwareSetMessage("hwActionMessage", "正在创建宿主板钻孔…");
       fusionSend("hardware.createSideContactHoles", hardwarePreviewPayload());
     }
 
@@ -11911,7 +12401,7 @@
       });
       hwEl("hwThroughHost").addEventListener("change", (event) => {
         hwEl("hwHoleDepth").disabled = event.target.checked;
-        hardwareSetMessage("hwActionMessage", event.target.checked ? "已选通孔深度 / Through Host depth selected." : "已启用自定义孔深 / Custom depth enabled.");
+        hardwareSetMessage("hwActionMessage", event.target.checked ? "已选通孔（穿宿主板）。" : "已启用自定义孔深。");
       });
       hwEl("hwSelectBody1Btn").addEventListener("click", () => hardwareSelectBody(1));
       hwEl("hwSelectBody2Btn").addEventListener("click", () => hardwareSelectBody(2));
@@ -11923,7 +12413,7 @@
         if (input) input.addEventListener("change", () => {
           hardwareState.previewValid = false;
           hwEl("hwCreateHolesBtn").disabled = true;
-          hardwareSetMessage("hwActionMessage", "参数已变更，请重新计算预览后再创建孔。/ Settings changed. Recalculate preview before creating holes.");
+          hardwareSetMessage("hwActionMessage", "参数已变更，请重新计算预览后再创建孔。");
         });
       });
     }

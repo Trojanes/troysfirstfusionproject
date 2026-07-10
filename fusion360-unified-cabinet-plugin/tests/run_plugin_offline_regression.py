@@ -69,6 +69,23 @@ def main() -> int:
     if code != 0:
         failures.append("connect_demo_pack_offline")
 
+    for smoke_script in (
+        "run_day1_smoke_offline.py",
+        "run_day2_smoke_offline.py",
+        "run_connect_main_flow_offline.py",
+        "run_connect_batch_c_offline.py",
+        "run_tongue_groove_offline.py",
+        "run_scaffold_hardware_offline.py",
+        "run_connect_hardware_type_ui_offline.py",
+    ):
+        code = run(
+            [sys.executable, str(ROOT / "tests" / smoke_script)],
+            cwd=ROOT,
+            label=smoke_script,
+        )
+        if code != 0:
+            failures.append(smoke_script)
+
     code = run(
         [
             sys.executable,

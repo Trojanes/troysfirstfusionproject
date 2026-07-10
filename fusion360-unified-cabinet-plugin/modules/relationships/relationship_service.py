@@ -253,6 +253,8 @@ def find_component_by_name(component, name: str):
             return component
     except Exception:
         pass
+    if _attr_value(component, LEGACY_ATTRIBUTE_GROUP, "assemblyName") == name:
+        return component
     try:
         occurrences = component.occurrences
         count = occurrences.count if occurrences else 0

@@ -93,7 +93,10 @@ def create_host_screw_hole_cut(
     host_body,
     feature: Dict[str, Any],
     metadata: Dict[str, Any],
+    *,
+    name_prefix: str = "HW_REL_SCREW_HOLE",
 ) -> Tuple[Any, bool]:
+    """Host-only circular hole cut. Same path for screw_hole and hinge_hole cups."""
     geometry = feature.get("geometry") or {}
     contact_axis = str(geometry.get("axis") or "Y")
     diameter_mm = float(geometry.get("diameterMm") or 4.0)
@@ -102,6 +105,7 @@ def create_host_screw_hole_cut(
     if not positions or depth_mm <= 0:
         raise ValueError("Feature geometry must include positions and positive depthMm.")
 
+    prefix = str(name_prefix or "HW_REL_SCREW_HOLE").strip() or "HW_REL_SCREW_HOLE"
     host_body = _resolve_body_in_component(component, host_body)
 
     host_bbox = _bbox_mm(host_body)
@@ -113,10 +117,10 @@ def create_host_screw_hole_cut(
     plane_input = construction.createInput()
     plane_input.setByOffset(base_plane, adsk.core.ValueInput.createByReal(plane_offset_cm))
     plane = construction.add(plane_input)
-    plane.name = "HW_REL_SCREW_HOLE_PLANE"
+    plane.name = "{}_PLANE".format(prefix)
 
     sketch = component.sketches.add(plane)
-    sketch.name = "HW_REL_SCREW_HOLE_SKETCH"
+    sketch.name = "{}_SKETCH".format(prefix)
     circles = sketch.sketchCurves.sketchCircles
     radius_cm = mm_to_cm(max(0.1, diameter_mm / 2.0))
     for position in positions:
@@ -127,7 +131,7 @@ def create_host_screw_hole_cut(
     for index in range(sketch.profiles.count):
         profiles.add(sketch.profiles.item(index))
     if profiles.count < 1:
-        raise ValueError("No screw-hole profiles were created for cut.")
+        raise ValueError("No hole profiles were created for cut.")
 
     extrudes = component.features.extrudeFeatures
     ext_input = extrudes.createInput(profiles, adsk.fusion.FeatureOperations.CutFeatureOperation)
@@ -137,7 +141,7 @@ def create_host_screw_hole_cut(
     _set_host_participant_bodies(ext_input, host_body)
 
     cut = extrudes.add(ext_input)
-    cut.name = "HW_REL_SCREW_HOLE_{}".format(sanitize_token(str(int(time.time())), limit=40))
+    cut.name = "{}_{}".format(prefix, sanitize_token(str(int(time.time())), limit=40))
 
     metadata_written = _write_cut_metadata(cut, metadata)
 
@@ -151,6 +155,36 @@ def create_host_screw_hole_cut(
         pass
 
     return cut, metadata_written
+
+
+def create_host_hinge_hole_cut(
+    component,
+    host_body,
+    feature: Dict[str, Any],
+    metadata: Dict[str, Any],
+) -> Tuple[Any, bool]:
+    return create_host_screw_hole_cut(
+        component,
+        host_body,
+        feature,
+        metadata,
+        name_prefix="HW_REL_HINGE_HOLE",
+    )
+
+
+def create_host_drawer_runner_hole_cut(
+    component,
+    host_body,
+    feature: Dict[str, Any],
+    metadata: Dict[str, Any],
+) -> Tuple[Any, bool]:
+    return create_host_screw_hole_cut(
+        component,
+        host_body,
+        feature,
+        metadata,
+        name_prefix="HW_REL_RUNNER_HOLE",
+    )
 
 
 def _write_cut_metadata(cut_feature, metadata: Dict[str, Any]) -> bool:

@@ -62,6 +62,29 @@ class RelationshipsController:
                 "trace": traceback.format_exc(),
             }
 
+    def probe_selection(self, _payload, _palette):
+        try:
+            from relationship_service import build_panel_snapshot, is_panel_body
+
+            selected = self._selected_bodies()
+            panel_bodies = [body for body in (selected or []) if is_panel_body(body)]
+            snapshots = [build_panel_snapshot(body) for body in panel_bodies[:8]]
+            panel_ids = [snap.panelId for snap in snapshots if snap.panelId]
+            return "relationshipSelectionResult", {
+                "ok": True,
+                "action": "relationships.probeSelection",
+                "selectedPanelBodyCount": len(panel_bodies),
+                "selectedPanelIds": panel_ids,
+                "totalSelectedEntities": len(selected or []),
+            }
+        except Exception as ex:
+            return "relationshipSelectionResult", {
+                "ok": False,
+                "action": "relationships.probeSelection",
+                "errors": [str(ex)],
+                "trace": traceback.format_exc(),
+            }
+
     def inspect_selected(self, payload, _palette):
         try:
             from relationship_service import build_panel_snapshot, is_panel_body

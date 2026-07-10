@@ -19,7 +19,43 @@ from screw_hole_from_relationship import (
     plan_screw_hole_cut_from_relationship,
     preview_screw_holes_from_relationship,
 )
-from relationship_screw_hole_fusion import create_host_screw_hole_cut
+from relationship_screw_hole_fusion import (
+    create_host_drawer_runner_hole_cut,
+    create_host_hinge_hole_cut,
+    create_host_screw_hole_cut,
+)
+from relationship_tongue_groove_fusion import (
+    create_host_groove_cut,
+    create_host_lock_pocket_cut,
+    create_target_tongue_cut,
+)
+from hardware_rule_engine import (
+    HARDWARE_TYPE_DRAWER_RUNNER_HOLE,
+    HARDWARE_TYPE_HINGE_HOLE,
+    HARDWARE_TYPE_LOCK_CUTOUT,
+    HARDWARE_TYPE_SCREW_HOLE,
+    HARDWARE_TYPE_TONGUE_GROOVE,
+    dispatch_hardware_cut_plan,
+    dispatch_hardware_preview,
+    list_hardware_types,
+    normalize_hardware_type,
+)
+from scaffold_hardware_from_relationship import (
+    build_hinge_cut_success_report,
+    build_lock_cut_success_report,
+    build_runner_cut_success_report,
+    plan_drawer_runner_hole_cut_from_relationship,
+    plan_hinge_hole_cut_from_relationship,
+    plan_lock_cutout_from_relationship,
+    preview_drawer_runner_holes_from_relationship,
+    preview_hinge_holes_from_relationship,
+    preview_lock_cutout_from_relationship,
+)
+from tongue_groove_from_relationship import (
+    build_cut_success_report as build_tongue_groove_cut_success_report,
+    plan_tongue_groove_cut_from_relationship,
+    preview_tongue_groove_from_relationship,
+)
 
 
 class HardwareController:
@@ -209,8 +245,13 @@ class HardwareController:
 
             host_panel_id = plan["hostPanelId"]
             target_panel_id = plan["targetPanelId"]
-            host_body = self._find_body_by_panel_id(root, host_panel_id)
-            target_body = self._find_body_by_panel_id(root, target_panel_id)
+            panels_for_match = panel_snapshots if isinstance(panel_snapshots, dict) else {}
+            host_body = self._find_body_by_panel_id(
+                root, host_panel_id, panels_for_match.get(host_panel_id)
+            )
+            target_body = self._find_body_by_panel_id(
+                root, target_panel_id, panels_for_match.get(target_panel_id)
+            )
             if host_body is None:
                 return "hardwareRelationshipCutResult", {
                     "ok": False,
@@ -288,6 +329,820 @@ class HardwareController:
             return "hardwareRelationshipCutResult", {
                 "ok": False,
                 "action": "hardware.createScrewHolesFromRelationship",
+                "errors": [str(ex)],
+                "trace": traceback.format_exc(),
+            }
+
+    def list_hardware_types(self, _payload, _palette):
+        try:
+            return "hardwareTypesResult", {
+                "ok": True,
+                "action": "hardware.listHardwareTypes",
+                "types": list_hardware_types(),
+            }
+        except Exception as ex:
+            return "hardwareTypesResult", {
+                "ok": False,
+                "action": "hardware.listHardwareTypes",
+                "errors": [str(ex)],
+                "types": [],
+                "trace": traceback.format_exc(),
+            }
+
+    def preview_hardware_from_relationship(self, payload, palette):
+        """Route preview by rule.type (Connect UI hardware-type selector)."""
+        try:
+            if not isinstance(payload, dict):
+                return "hardwareRelationshipPreviewResult", {
+                    "ok": False,
+                    "action": "hardware.previewHardwareFromRelationship",
+                    "errors": ["Missing preview payload."],
+                    "features": [],
+                }
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            hw_type = normalize_hardware_type(rule)
+            if hw_type == HARDWARE_TYPE_SCREW_HOLE:
+                event, report = self.preview_screw_holes_from_relationship(payload, palette)
+                if isinstance(report, dict):
+                    report["hardwareType"] = hw_type
+                return event, report
+            if hw_type == HARDWARE_TYPE_TONGUE_GROOVE:
+                event, report = self.preview_tongue_groove_from_relationship(payload, palette)
+                if isinstance(report, dict):
+                    report["hardwareType"] = hw_type
+                return event, report
+            if hw_type == HARDWARE_TYPE_HINGE_HOLE:
+                event, report = self.preview_hinge_holes_from_relationship(payload, palette)
+                if isinstance(report, dict):
+                    report["hardwareType"] = hw_type
+                return event, report
+            if hw_type == HARDWARE_TYPE_LOCK_CUTOUT:
+                event, report = self.preview_lock_cutout_from_relationship(payload, palette)
+                if isinstance(report, dict):
+                    report["hardwareType"] = hw_type
+                return event, report
+            if hw_type == HARDWARE_TYPE_DRAWER_RUNNER_HOLE:
+                event, report = self.preview_drawer_runner_holes_from_relationship(payload, palette)
+                if isinstance(report, dict):
+                    report["hardwareType"] = hw_type
+                return event, report
+            return "hardwareRelationshipPreviewResult", {
+                "ok": False,
+                "action": "hardware.previewHardwareFromRelationship",
+                "errors": ["Unsupported hardware type: {}.".format(hw_type)],
+                "features": [],
+            }
+        except Exception as ex:
+            return "hardwareRelationshipPreviewResult", {
+                "ok": False,
+                "action": "hardware.previewHardwareFromRelationship",
+                "errors": [str(ex)],
+                "features": [],
+                "trace": traceback.format_exc(),
+            }
+
+    def create_hardware_from_relationship(self, payload, palette):
+        """Route cut by rule.type (Connect UI hardware-type selector)."""
+        try:
+            if not isinstance(payload, dict):
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createHardwareFromRelationship",
+                    "errors": ["Missing create payload."],
+                }
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            hw_type = normalize_hardware_type(rule)
+            if hw_type == HARDWARE_TYPE_SCREW_HOLE:
+                event, report = self.create_screw_holes_from_relationship(payload, palette)
+                if isinstance(report, dict):
+                    report["hardwareType"] = hw_type
+                return event, report
+            if hw_type == HARDWARE_TYPE_TONGUE_GROOVE:
+                event, report = self.create_tongue_groove_from_relationship(payload, palette)
+                if isinstance(report, dict):
+                    report["hardwareType"] = hw_type
+                return event, report
+            if hw_type == HARDWARE_TYPE_HINGE_HOLE:
+                event, report = self.create_hinge_holes_from_relationship(payload, palette)
+                if isinstance(report, dict):
+                    report["hardwareType"] = hw_type
+                return event, report
+            if hw_type == HARDWARE_TYPE_LOCK_CUTOUT:
+                event, report = self.create_lock_cutout_from_relationship(payload, palette)
+                if isinstance(report, dict):
+                    report["hardwareType"] = hw_type
+                return event, report
+            if hw_type == HARDWARE_TYPE_DRAWER_RUNNER_HOLE:
+                event, report = self.create_drawer_runner_holes_from_relationship(payload, palette)
+                if isinstance(report, dict):
+                    report["hardwareType"] = hw_type
+                return event, report
+            relationship = payload.get("relationship") if isinstance(payload.get("relationship"), dict) else {}
+            panel_snapshots = payload.get("panels") if isinstance(payload.get("panels"), dict) else None
+            blocked = dispatch_hardware_cut_plan(
+                relationship, rule=rule, panel_snapshots=panel_snapshots
+            )
+            blocked["action"] = "hardware.createHardwareFromRelationship"
+            return "hardwareRelationshipCutResult", blocked
+        except Exception as ex:
+            return "hardwareRelationshipCutResult", {
+                "ok": False,
+                "action": "hardware.createHardwareFromRelationship",
+                "errors": [str(ex)],
+                "trace": traceback.format_exc(),
+            }
+
+    def preview_hinge_holes_from_relationship(self, payload, _palette):
+        try:
+            if not isinstance(payload, dict):
+                return "hardwareRelationshipPreviewResult", {
+                    "ok": False,
+                    "action": "hardware.previewHingeHolesFromRelationship",
+                    "errors": ["Missing preview payload."],
+                    "features": [],
+                }
+            relationship = payload.get("relationship")
+            if not isinstance(relationship, dict):
+                return "hardwareRelationshipPreviewResult", {
+                    "ok": False,
+                    "action": "hardware.previewHingeHolesFromRelationship",
+                    "errors": ["Missing relationship object."],
+                    "features": [],
+                }
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            panel_snapshots = payload.get("panels") if isinstance(payload.get("panels"), dict) else None
+            if panel_snapshots is None:
+                panel_snapshots = self._panel_snapshots_from_design(payload, relationship)
+            report = preview_hinge_holes_from_relationship(
+                relationship,
+                rule=rule,
+                panel_snapshots=panel_snapshots,
+            )
+            return "hardwareRelationshipPreviewResult", report
+        except Exception as ex:
+            return "hardwareRelationshipPreviewResult", {
+                "ok": False,
+                "action": "hardware.previewHingeHolesFromRelationship",
+                "errors": [str(ex)],
+                "features": [],
+                "trace": traceback.format_exc(),
+            }
+
+    def create_hinge_holes_from_relationship(self, payload, _palette):
+        try:
+            root = self.fusion.get_root_component() if self.fusion else None
+            if not root:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createHingeHolesFromRelationship",
+                    "errors": ["No active Fusion design."],
+                    "features": [],
+                }
+
+            if not isinstance(payload, dict):
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createHingeHolesFromRelationship",
+                    "errors": ["Missing create payload."],
+                }
+
+            relationship = payload.get("relationship")
+            if not isinstance(relationship, dict):
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createHingeHolesFromRelationship",
+                    "errors": ["Missing relationship object."],
+                }
+
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            panel_snapshots = payload.get("panels") if isinstance(payload.get("panels"), dict) else None
+            if panel_snapshots is None:
+                panel_snapshots = self._panel_snapshots_from_design(payload, relationship)
+
+            plan = plan_hinge_hole_cut_from_relationship(
+                relationship,
+                rule=rule,
+                panel_snapshots=panel_snapshots,
+            )
+            if not plan.get("ok"):
+                return "hardwareRelationshipCutResult", plan
+
+            host_panel_id = plan["hostPanelId"]
+            target_panel_id = plan["targetPanelId"]
+            panels_for_match = panel_snapshots if isinstance(panel_snapshots, dict) else {}
+            host_body = self._find_body_by_panel_id(
+                root, host_panel_id, panels_for_match.get(host_panel_id)
+            )
+            target_body = self._find_body_by_panel_id(
+                root, target_panel_id, panels_for_match.get(target_panel_id)
+            )
+            if host_body is None:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createHingeHolesFromRelationship",
+                    "errors": ["Host body not found for panelId: {}.".format(host_panel_id)],
+                }
+            if target_body is None:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createHingeHolesFromRelationship",
+                    "errors": ["Target body not found for panelId: {}.".format(target_panel_id)],
+                }
+
+            target_volume_before = self._safe_body_volume(target_body)
+            host_component = self._body_component(host_body) or root
+            cut, metadata_written = create_host_hinge_hole_cut(
+                host_component,
+                host_body,
+                plan["feature"],
+                plan["metadata"],
+            )
+            target_volume_after = self._safe_body_volume(target_body)
+            target_modified = abs(target_volume_after - target_volume_before) > 0.01
+
+            warnings = []
+            if target_modified:
+                warnings.append("Target body volume changed unexpectedly after host-only cut.")
+
+            try:
+                self.fusion.refresh_viewport()
+            except Exception:
+                pass
+
+            report = build_hinge_cut_success_report(
+                relationship_id=plan["relationshipId"],
+                host_panel_id=host_panel_id,
+                target_panel_id=target_panel_id,
+                host_body_name=str(getattr(host_body, "name", "") or ""),
+                target_body_name=str(getattr(target_body, "name", "") or ""),
+                cut_feature_name=str(getattr(cut, "name", "") or "HW_REL_HINGE_HOLE"),
+                metadata=plan["metadata"],
+                metadata_written=metadata_written,
+                warnings=warnings,
+            )
+            writeback_report: Dict[str, Any] = {}
+            try:
+                import importlib
+
+                import panel_metadata_writeback
+
+                panel_metadata_writeback = importlib.reload(panel_metadata_writeback)
+                writeback_report = panel_metadata_writeback.writeback_hinge_hole_feature(
+                    host_body,
+                    plan.get("feature") or {},
+                    plan.get("metadata") or {},
+                    cut_feature_name=str(getattr(cut, "name", "") or ""),
+                )
+                report["panelWriteback"] = writeback_report.get("panelWriteback")
+                report["panelFeatureCount"] = writeback_report.get("featureCount")
+                report["panelWritebackSkipped"] = writeback_report.get("skipped")
+                if writeback_report.get("errors"):
+                    report.setdefault("warnings", []).extend(writeback_report["errors"])
+            except Exception as ex:
+                report.setdefault("warnings", []).append("Panel metadata writeback failed: {}".format(ex))
+                report["panelWriteback"] = False
+            report["writeback"] = writeback_report
+            if target_modified:
+                report["ok"] = False
+                report["errors"] = ["Target body was modified during host-only hinge-hole cut."]
+                report["audit"]["errors"] = report["errors"]
+            report["targetBodyModified"] = target_modified
+            report["audit"]["targetBodyModified"] = target_modified
+            return "hardwareRelationshipCutResult", report
+        except Exception as ex:
+            return "hardwareRelationshipCutResult", {
+                "ok": False,
+                "action": "hardware.createHingeHolesFromRelationship",
+                "errors": [str(ex)],
+                "trace": traceback.format_exc(),
+            }
+
+    def preview_lock_cutout_from_relationship(self, payload, _palette):
+        try:
+            if not isinstance(payload, dict):
+                return "hardwareRelationshipPreviewResult", {
+                    "ok": False,
+                    "action": "hardware.previewLockCutoutFromRelationship",
+                    "errors": ["Missing preview payload."],
+                    "features": [],
+                }
+            relationship = payload.get("relationship")
+            if not isinstance(relationship, dict):
+                return "hardwareRelationshipPreviewResult", {
+                    "ok": False,
+                    "action": "hardware.previewLockCutoutFromRelationship",
+                    "errors": ["Missing relationship object."],
+                    "features": [],
+                }
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            panel_snapshots = payload.get("panels") if isinstance(payload.get("panels"), dict) else None
+            if panel_snapshots is None:
+                panel_snapshots = self._panel_snapshots_from_design(payload, relationship)
+            report = preview_lock_cutout_from_relationship(
+                relationship,
+                rule=rule,
+                panel_snapshots=panel_snapshots,
+            )
+            return "hardwareRelationshipPreviewResult", report
+        except Exception as ex:
+            return "hardwareRelationshipPreviewResult", {
+                "ok": False,
+                "action": "hardware.previewLockCutoutFromRelationship",
+                "errors": [str(ex)],
+                "features": [],
+                "trace": traceback.format_exc(),
+            }
+
+    def create_lock_cutout_from_relationship(self, payload, _palette):
+        try:
+            root = self.fusion.get_root_component() if self.fusion else None
+            if not root:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createLockCutoutFromRelationship",
+                    "errors": ["No active Fusion design."],
+                    "features": [],
+                }
+
+            if not isinstance(payload, dict):
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createLockCutoutFromRelationship",
+                    "errors": ["Missing create payload."],
+                }
+
+            relationship = payload.get("relationship")
+            if not isinstance(relationship, dict):
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createLockCutoutFromRelationship",
+                    "errors": ["Missing relationship object."],
+                }
+
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            panel_snapshots = payload.get("panels") if isinstance(payload.get("panels"), dict) else None
+            if panel_snapshots is None:
+                panel_snapshots = self._panel_snapshots_from_design(payload, relationship)
+
+            plan = plan_lock_cutout_from_relationship(
+                relationship,
+                rule=rule,
+                panel_snapshots=panel_snapshots,
+            )
+            if not plan.get("ok"):
+                return "hardwareRelationshipCutResult", plan
+
+            host_panel_id = plan["hostPanelId"]
+            target_panel_id = plan["targetPanelId"]
+            panels_for_match = panel_snapshots if isinstance(panel_snapshots, dict) else {}
+            host_body = self._find_body_by_panel_id(
+                root, host_panel_id, panels_for_match.get(host_panel_id)
+            )
+            target_body = self._find_body_by_panel_id(
+                root, target_panel_id, panels_for_match.get(target_panel_id)
+            )
+            if host_body is None:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createLockCutoutFromRelationship",
+                    "errors": ["Host body not found for panelId: {}.".format(host_panel_id)],
+                }
+            if target_body is None:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createLockCutoutFromRelationship",
+                    "errors": ["Target body not found for panelId: {}.".format(target_panel_id)],
+                }
+
+            target_volume_before = self._safe_body_volume(target_body)
+            host_component = self._body_component(host_body) or root
+            cut, metadata_written = create_host_lock_pocket_cut(
+                host_component,
+                host_body,
+                plan["feature"],
+                plan["metadata"],
+            )
+            target_volume_after = self._safe_body_volume(target_body)
+            target_modified = abs(target_volume_after - target_volume_before) > 0.01
+
+            warnings = []
+            if target_modified:
+                warnings.append("Target body volume changed unexpectedly after host-only cut.")
+
+            try:
+                self.fusion.refresh_viewport()
+            except Exception:
+                pass
+
+            report = build_lock_cut_success_report(
+                relationship_id=plan["relationshipId"],
+                host_panel_id=host_panel_id,
+                target_panel_id=target_panel_id,
+                host_body_name=str(getattr(host_body, "name", "") or ""),
+                target_body_name=str(getattr(target_body, "name", "") or ""),
+                cut_feature_name=str(getattr(cut, "name", "") or "HW_REL_LOCK_POCKET"),
+                metadata=plan["metadata"],
+                metadata_written=metadata_written,
+                warnings=warnings,
+            )
+            writeback_report: Dict[str, Any] = {}
+            try:
+                import importlib
+
+                import panel_metadata_writeback
+
+                panel_metadata_writeback = importlib.reload(panel_metadata_writeback)
+                writeback_report = panel_metadata_writeback.writeback_lock_cutout_feature(
+                    host_body,
+                    plan.get("feature") or {},
+                    plan.get("metadata") or {},
+                    cut_feature_name=str(getattr(cut, "name", "") or ""),
+                )
+                report["panelWriteback"] = writeback_report.get("panelWriteback")
+                report["panelFeatureCount"] = writeback_report.get("featureCount")
+                report["panelWritebackSkipped"] = writeback_report.get("skipped")
+                if writeback_report.get("errors"):
+                    report.setdefault("warnings", []).extend(writeback_report["errors"])
+            except Exception as ex:
+                report.setdefault("warnings", []).append("Panel metadata writeback failed: {}".format(ex))
+                report["panelWriteback"] = False
+            report["writeback"] = writeback_report
+            if target_modified:
+                report["ok"] = False
+                report["errors"] = ["Target body was modified during host-only lock-cutout cut."]
+                report["audit"]["errors"] = report["errors"]
+            report["targetBodyModified"] = target_modified
+            report["audit"]["targetBodyModified"] = target_modified
+            return "hardwareRelationshipCutResult", report
+        except Exception as ex:
+            return "hardwareRelationshipCutResult", {
+                "ok": False,
+                "action": "hardware.createLockCutoutFromRelationship",
+                "errors": [str(ex)],
+                "trace": traceback.format_exc(),
+            }
+
+    def preview_drawer_runner_holes_from_relationship(self, payload, _palette):
+        try:
+            if not isinstance(payload, dict):
+                return "hardwareRelationshipPreviewResult", {
+                    "ok": False,
+                    "action": "hardware.previewDrawerRunnerHolesFromRelationship",
+                    "errors": ["Missing preview payload."],
+                    "features": [],
+                }
+            relationship = payload.get("relationship")
+            if not isinstance(relationship, dict):
+                return "hardwareRelationshipPreviewResult", {
+                    "ok": False,
+                    "action": "hardware.previewDrawerRunnerHolesFromRelationship",
+                    "errors": ["Missing relationship object."],
+                    "features": [],
+                }
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            panel_snapshots = payload.get("panels") if isinstance(payload.get("panels"), dict) else None
+            if panel_snapshots is None:
+                panel_snapshots = self._panel_snapshots_from_design(payload, relationship)
+            report = preview_drawer_runner_holes_from_relationship(
+                relationship,
+                rule=rule,
+                panel_snapshots=panel_snapshots,
+            )
+            return "hardwareRelationshipPreviewResult", report
+        except Exception as ex:
+            return "hardwareRelationshipPreviewResult", {
+                "ok": False,
+                "action": "hardware.previewDrawerRunnerHolesFromRelationship",
+                "errors": [str(ex)],
+                "features": [],
+                "trace": traceback.format_exc(),
+            }
+
+    def create_drawer_runner_holes_from_relationship(self, payload, _palette):
+        try:
+            root = self.fusion.get_root_component() if self.fusion else None
+            if not root:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createDrawerRunnerHolesFromRelationship",
+                    "errors": ["No active Fusion design."],
+                    "features": [],
+                }
+
+            if not isinstance(payload, dict):
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createDrawerRunnerHolesFromRelationship",
+                    "errors": ["Missing create payload."],
+                }
+
+            relationship = payload.get("relationship")
+            if not isinstance(relationship, dict):
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createDrawerRunnerHolesFromRelationship",
+                    "errors": ["Missing relationship object."],
+                }
+
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            panel_snapshots = payload.get("panels") if isinstance(payload.get("panels"), dict) else None
+            if panel_snapshots is None:
+                panel_snapshots = self._panel_snapshots_from_design(payload, relationship)
+
+            plan = plan_drawer_runner_hole_cut_from_relationship(
+                relationship,
+                rule=rule,
+                panel_snapshots=panel_snapshots,
+            )
+            if not plan.get("ok"):
+                return "hardwareRelationshipCutResult", plan
+
+            host_panel_id = plan["hostPanelId"]
+            target_panel_id = plan["targetPanelId"]
+            panels_for_match = panel_snapshots if isinstance(panel_snapshots, dict) else {}
+            host_body = self._find_body_by_panel_id(
+                root, host_panel_id, panels_for_match.get(host_panel_id)
+            )
+            target_body = self._find_body_by_panel_id(
+                root, target_panel_id, panels_for_match.get(target_panel_id)
+            )
+            if host_body is None:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createDrawerRunnerHolesFromRelationship",
+                    "errors": ["Host body not found for panelId: {}.".format(host_panel_id)],
+                }
+            if target_body is None:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createDrawerRunnerHolesFromRelationship",
+                    "errors": ["Target body not found for panelId: {}.".format(target_panel_id)],
+                }
+
+            target_volume_before = self._safe_body_volume(target_body)
+            host_component = self._body_component(host_body) or root
+            cut, metadata_written = create_host_drawer_runner_hole_cut(
+                host_component,
+                host_body,
+                plan["feature"],
+                plan["metadata"],
+            )
+            target_volume_after = self._safe_body_volume(target_body)
+            target_modified = abs(target_volume_after - target_volume_before) > 0.01
+
+            warnings = []
+            if target_modified:
+                warnings.append("Target body volume changed unexpectedly after host-only cut.")
+
+            try:
+                self.fusion.refresh_viewport()
+            except Exception:
+                pass
+
+            report = build_runner_cut_success_report(
+                relationship_id=plan["relationshipId"],
+                host_panel_id=host_panel_id,
+                target_panel_id=target_panel_id,
+                host_body_name=str(getattr(host_body, "name", "") or ""),
+                target_body_name=str(getattr(target_body, "name", "") or ""),
+                cut_feature_name=str(getattr(cut, "name", "") or "HW_REL_RUNNER_HOLE"),
+                metadata=plan["metadata"],
+                metadata_written=metadata_written,
+                warnings=warnings,
+            )
+            writeback_report: Dict[str, Any] = {}
+            try:
+                import importlib
+
+                import panel_metadata_writeback
+
+                panel_metadata_writeback = importlib.reload(panel_metadata_writeback)
+                writeback_report = panel_metadata_writeback.writeback_drawer_runner_hole_feature(
+                    host_body,
+                    plan.get("feature") or {},
+                    plan.get("metadata") or {},
+                    cut_feature_name=str(getattr(cut, "name", "") or ""),
+                )
+                report["panelWriteback"] = writeback_report.get("panelWriteback")
+                report["panelFeatureCount"] = writeback_report.get("featureCount")
+                report["panelWritebackSkipped"] = writeback_report.get("skipped")
+                if writeback_report.get("errors"):
+                    report.setdefault("warnings", []).extend(writeback_report["errors"])
+            except Exception as ex:
+                report.setdefault("warnings", []).append("Panel metadata writeback failed: {}".format(ex))
+                report["panelWriteback"] = False
+            report["writeback"] = writeback_report
+            if target_modified:
+                report["ok"] = False
+                report["errors"] = ["Target body was modified during host-only drawer-runner-hole cut."]
+                report["audit"]["errors"] = report["errors"]
+            report["targetBodyModified"] = target_modified
+            report["audit"]["targetBodyModified"] = target_modified
+            return "hardwareRelationshipCutResult", report
+        except Exception as ex:
+            return "hardwareRelationshipCutResult", {
+                "ok": False,
+                "action": "hardware.createDrawerRunnerHolesFromRelationship",
+                "errors": [str(ex)],
+                "trace": traceback.format_exc(),
+            }
+
+    def preview_tongue_groove_from_relationship(self, payload, _palette):
+        try:
+            if not isinstance(payload, dict):
+                return "hardwareRelationshipPreviewResult", {
+                    "ok": False,
+                    "action": "hardware.previewTongueGrooveFromRelationship",
+                    "errors": ["Missing preview payload."],
+                    "features": [],
+                }
+            relationship = payload.get("relationship")
+            if not isinstance(relationship, dict):
+                return "hardwareRelationshipPreviewResult", {
+                    "ok": False,
+                    "action": "hardware.previewTongueGrooveFromRelationship",
+                    "errors": ["Missing relationship object."],
+                    "features": [],
+                }
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            panel_snapshots = payload.get("panels") if isinstance(payload.get("panels"), dict) else None
+            if panel_snapshots is None:
+                panel_snapshots = self._panel_snapshots_from_design(payload, relationship)
+            report = preview_tongue_groove_from_relationship(
+                relationship,
+                rule=rule,
+                panel_snapshots=panel_snapshots,
+            )
+            return "hardwareRelationshipPreviewResult", report
+        except Exception as ex:
+            return "hardwareRelationshipPreviewResult", {
+                "ok": False,
+                "action": "hardware.previewTongueGrooveFromRelationship",
+                "errors": [str(ex)],
+                "features": [],
+                "trace": traceback.format_exc(),
+            }
+
+    def create_tongue_groove_from_relationship(self, payload, _palette):
+        try:
+            root = self.fusion.get_root_component() if self.fusion else None
+            if not root:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createTongueGrooveFromRelationship",
+                    "errors": ["No active Fusion design."],
+                    "features": [],
+                }
+
+            if not isinstance(payload, dict):
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createTongueGrooveFromRelationship",
+                    "errors": ["Missing create payload."],
+                }
+
+            relationship = payload.get("relationship")
+            if not isinstance(relationship, dict):
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createTongueGrooveFromRelationship",
+                    "errors": ["Missing relationship object."],
+                }
+
+            rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            panel_snapshots = payload.get("panels") if isinstance(payload.get("panels"), dict) else None
+            if panel_snapshots is None:
+                panel_snapshots = self._panel_snapshots_from_design(payload, relationship)
+
+            plan = plan_tongue_groove_cut_from_relationship(
+                relationship,
+                rule=rule,
+                panel_snapshots=panel_snapshots,
+            )
+            if not plan.get("ok"):
+                return "hardwareRelationshipCutResult", plan
+
+            host_panel_id = plan["hostPanelId"]
+            target_panel_id = plan["targetPanelId"]
+            panels_for_match = panel_snapshots if isinstance(panel_snapshots, dict) else {}
+            host_body = self._find_body_by_panel_id(
+                root, host_panel_id, panels_for_match.get(host_panel_id)
+            )
+            target_body = self._find_body_by_panel_id(
+                root, target_panel_id, panels_for_match.get(target_panel_id)
+            )
+            if host_body is None:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createTongueGrooveFromRelationship",
+                    "errors": ["Host body not found for panelId: {}.".format(host_panel_id)],
+                }
+            if target_body is None:
+                return "hardwareRelationshipCutResult", {
+                    "ok": False,
+                    "action": "hardware.createTongueGrooveFromRelationship",
+                    "errors": ["Target body not found for panelId: {}.".format(target_panel_id)],
+                }
+
+            host_volume_before = self._safe_body_volume(host_body)
+            target_volume_before = self._safe_body_volume(target_body)
+            host_component = self._body_component(host_body) or root
+            target_component = self._body_component(target_body) or root
+            groove_cut, groove_metadata_written = create_host_groove_cut(
+                host_component,
+                host_body,
+                plan["feature"],
+                plan["metadata"],
+            )
+            tongue_cuts, tongue_metadata_written = create_target_tongue_cut(
+                target_component,
+                target_body,
+                plan["feature"],
+                plan["metadata"],
+            )
+            host_volume_after = self._safe_body_volume(host_body)
+            target_volume_after = self._safe_body_volume(target_body)
+            host_modified = abs(host_volume_after - host_volume_before) > 0.01
+            target_modified = abs(target_volume_after - target_volume_before) > 0.01
+            metadata_written = bool(groove_metadata_written and tongue_metadata_written)
+            tongue_feature_name = str(getattr(tongue_cuts[0], "name", "") or "") if tongue_cuts else ""
+
+            warnings = list(plan.get("warnings") or [])
+            if not host_modified:
+                warnings.append("Host body volume did not change after groove cut.")
+            if not target_modified:
+                warnings.append("Target body volume did not change after tongue shoulder cuts.")
+
+            try:
+                self.fusion.refresh_viewport()
+            except Exception:
+                pass
+
+            report = build_tongue_groove_cut_success_report(
+                relationship_id=plan["relationshipId"],
+                host_panel_id=host_panel_id,
+                target_panel_id=target_panel_id,
+                host_body_name=str(getattr(host_body, "name", "") or ""),
+                target_body_name=str(getattr(target_body, "name", "") or ""),
+                cut_feature_name=str(getattr(groove_cut, "name", "") or "HW_REL_TONGUE_GROOVE"),
+                metadata=plan["metadata"],
+                metadata_written=metadata_written,
+                warnings=warnings,
+                tongue_feature_name=tongue_feature_name,
+                host_body_modified=host_modified,
+                target_body_modified=target_modified,
+            )
+            report["tongueFeatureNames"] = [str(getattr(cut, "name", "") or "") for cut in tongue_cuts]
+            writeback_report: Dict[str, Any] = {}
+            target_writeback_report: Dict[str, Any] = {}
+            try:
+                import importlib
+
+                import panel_metadata_writeback
+
+                panel_metadata_writeback = importlib.reload(panel_metadata_writeback)
+                writeback_report = panel_metadata_writeback.writeback_tongue_groove_feature(
+                    host_body,
+                    plan.get("feature") or {},
+                    plan.get("metadata") or {},
+                    cut_feature_name=str(getattr(groove_cut, "name", "") or ""),
+                    role="groove",
+                )
+                target_writeback_report = panel_metadata_writeback.writeback_tongue_groove_feature(
+                    target_body,
+                    plan.get("feature") or {},
+                    plan.get("metadata") or {},
+                    cut_feature_name=tongue_feature_name,
+                    role="tongue",
+                )
+                report["panelWriteback"] = writeback_report.get("panelWriteback")
+                report["panelFeatureCount"] = writeback_report.get("featureCount")
+                report["panelWritebackSkipped"] = writeback_report.get("skipped")
+                report["targetPanelWriteback"] = target_writeback_report.get("panelWriteback")
+                report["targetPanelFeatureCount"] = target_writeback_report.get("featureCount")
+                report["targetPanelWritebackSkipped"] = target_writeback_report.get("skipped")
+                for wb in (writeback_report, target_writeback_report):
+                    if wb.get("errors"):
+                        report.setdefault("warnings", []).extend(wb["errors"])
+            except Exception as ex:
+                report.setdefault("warnings", []).append("Panel metadata writeback failed: {}".format(ex))
+                report["panelWriteback"] = False
+                report["targetPanelWriteback"] = False
+            report["writeback"] = writeback_report
+            report["targetWriteback"] = target_writeback_report
+            if not host_modified or not target_modified:
+                report["ok"] = False
+                report["errors"] = [
+                    "Expected both host groove and target tongue volume changes; hostModified={} targetModified={}.".format(
+                        host_modified, target_modified
+                    )
+                ]
+                report["audit"]["errors"] = report["errors"]
+            return "hardwareRelationshipCutResult", report
+        except Exception as ex:
+            return "hardwareRelationshipCutResult", {
+                "ok": False,
+                "action": "hardware.createTongueGrooveFromRelationship",
                 "errors": [str(ex)],
                 "trace": traceback.format_exc(),
             }
@@ -763,7 +1618,7 @@ class HardwareController:
         except Exception:
             return 0.0
 
-    def _find_body_by_panel_id(self, root, panel_id):
+    def _find_body_by_panel_id(self, root, panel_id, panel_snapshot=None):
         panel_id = str(panel_id or "").strip()
         if not panel_id or not root:
             return None
@@ -773,22 +1628,74 @@ class HardwareController:
         except Exception:
             return None
 
+        matches = []
+
         def walk(component):
             for body in list_solid_bodies(component):
-                if self._body_panel_id(body) == panel_id:
-                    return body
+                if self._body_matches_panel_id(body, panel_id):
+                    matches.append(body)
             try:
                 occurrences = component.occurrences
                 count = occurrences.count if occurrences else 0
             except Exception:
-                return None
+                return
             for index in range(count):
-                found = walk(occurrences.item(index).component)
-                if found:
-                    return found
-            return None
+                walk(occurrences.item(index).component)
 
-        return walk(root)
+        walk(root)
+        if not matches:
+            return None
+        if isinstance(panel_snapshot, dict) and isinstance(panel_snapshot.get("bbox"), dict):
+            return self._pick_body_matching_snapshot(matches, panel_snapshot) or matches[-1]
+        return matches[-1]
+
+    def _pick_body_matching_snapshot(self, bodies, panel_snapshot):
+        expected = panel_snapshot.get("bbox") if isinstance(panel_snapshot, dict) else None
+        if not isinstance(expected, dict):
+            return None
+        best = None
+        best_score = None
+        for body in bodies:
+            try:
+                actual = self._bbox_mm(body)
+            except Exception:
+                continue
+            score = 0.0
+            for key in ("x0", "x1", "y0", "y1", "z0", "z1"):
+                try:
+                    score += abs(float(actual.get(key, 0.0)) - float(expected.get(key, 0.0)))
+                except Exception:
+                    score += 1e9
+            if best_score is None or score < best_score:
+                best_score = score
+                best = body
+        return best
+
+    def _body_matches_panel_id(self, body, panel_id: str) -> bool:
+        if not body or not panel_id:
+            return False
+        try:
+            if str(getattr(body, "name", "") or "") == panel_id:
+                return True
+        except Exception:
+            pass
+        if self._body_panel_id(body) == panel_id:
+            return True
+        try:
+            attrs = getattr(body, "attributes", None)
+            if attrs is None:
+                return False
+            for group, name in (
+                ("UnifiedCabinet.Panel", "panelId"),
+                ("UnifiedCabinetPlugin", "panelId"),
+                ("UnifiedCabinetPlugin", "boardId"),
+            ):
+                attr = attrs.itemByName(group, name)
+                if attr is not None and str(getattr(attr, "value", "") or "") == panel_id:
+                    return True
+        except Exception:
+            return False
+        return False
 
     def _body_panel_id(self, body):
         try:

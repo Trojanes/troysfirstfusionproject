@@ -72,6 +72,28 @@ class ConnectDemoController:
                 "trace": traceback.format_exc(),
             }
 
+    def run_day1_smoke(self, _payload, palette):
+        """Day 1 automated Connect smoke: fixture → inspect → contact patch → confirm → cut."""
+        try:
+            from day1_connect_smoke_runner import run_day1_connect_smoke
+
+            report = run_day1_connect_smoke(
+                self.plugin_dir,
+                self.fusion,
+                self.relationships,
+                self.hardware,
+                write_json=True,
+            )
+            return "day1SmokeResult", report
+        except Exception as ex:
+            return "day1SmokeResult", {
+                "ok": False,
+                "overall": "FAIL",
+                "action": "relationships.runDay1Smoke",
+                "errors": [str(ex)],
+                "trace": traceback.format_exc(),
+            }
+
     def run_demo_fixture_flow(self, payload, palette):
         """Demo 1 end-to-end inside Fusion: fixture → scan → preview → confirm → cut."""
         rule = payload.get("rule") if isinstance(payload, dict) and isinstance(payload.get("rule"), dict) else None

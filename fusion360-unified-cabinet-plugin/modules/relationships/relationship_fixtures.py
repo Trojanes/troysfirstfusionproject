@@ -48,6 +48,20 @@ except Exception:
 FIXTURE_BASE_Z_MM = 12000.0
 FIXTURE_PART_BASE_Z_MM = 0.0
 FIXTURE_PART_X_OFFSET_MM = 3200.0
+FIXTURE_PANEL_IDS = frozenset(
+    {
+        "REL_SURFACE_B",
+        "REL_EDGE_A",
+        "REL_SURFACE_A",
+        "REL_SURFACE_B2",
+        "REL_GAP_A",
+        "REL_GAP_B",
+        "REL_COLLISION_A",
+        "REL_COLLISION_B",
+        "REL_NONE_A",
+        "REL_NONE_B",
+    }
+)
 FIXTURE_SPACING_X_MM = 1200.0
 
 
@@ -310,9 +324,87 @@ def _set_attribute(attrs, group, name, value):
         attrs.add(group, name, str(value))
 
 
+def _body_is_relationship_fixture(body) -> bool:
+    try:
+        name = str(getattr(body, "name", "") or "")
+        if name in FIXTURE_PANEL_IDS or name.startswith("REL_"):
+            return True
+        attrs = getattr(body, "attributes", None)
+        if attrs is None:
+            return False
+        marker = attrs.itemByName(ATTRIBUTE_GROUP, "relationshipFixture")
+        if marker is not None:
+            return True
+        panel_attr = attrs.itemByName(PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR)
+        if panel_attr is not None and str(panel_attr.value or "") in FIXTURE_PANEL_IDS:
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _delete_entity(entity) -> bool:
+    try:
+        if entity is not None:
+            entity.deleteMe()
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def clear_relationship_test_fixtures(root_component) -> Dict[str, Any]:
+    """Remove prior REL_* fixture bodies/occurrences so smokes do not hit stale geometry."""
+    removed_bodies = 0
+    removed_occurrences = 0
+    errors: List[str] = []
+    if not root_component:
+        return {"ok": False, "removedBodies": 0, "removedOccurrences": 0, "errors": ["Missing root."]}
+
+    def clear_component_bodies(component) -> None:
+        nonlocal removed_bodies
+        try:
+            bodies = component.bRepBodies
+            for index in range(bodies.count - 1, -1, -1):
+                body = bodies.item(index)
+                if _body_is_relationship_fixture(body) and _delete_entity(body):
+                    removed_bodies += 1
+        except Exception as ex:
+            errors.append("body cleanup: {}".format(ex))
+
+    clear_component_bodies(root_component)
+    try:
+        occurrences = root_component.occurrences
+        for index in range(occurrences.count - 1, -1, -1):
+            occ = occurrences.item(index)
+            try:
+                name = str(getattr(occ.component, "name", "") or "")
+            except Exception:
+                name = ""
+            if name.startswith("REL_TEST_FIXTURE_") or name in FIXTURE_PANEL_IDS:
+                if _delete_entity(occ):
+                    removed_occurrences += 1
+                    continue
+            try:
+                clear_component_bodies(occ.component)
+            except Exception as ex:
+                errors.append("occ body cleanup: {}".format(ex))
+    except Exception as ex:
+        errors.append("occurrence cleanup: {}".format(ex))
+
+    return {
+        "ok": not errors,
+        "removedBodies": removed_bodies,
+        "removedOccurrences": removed_occurrences,
+        "errors": errors,
+    }
+
+
 def create_relationship_test_fixture(root_component) -> Tuple[List[Dict[str, Any]], Optional[str], Optional[str], Dict[str, Any]]:
     if not root_component or _add_box_body is None or adsk_core is None:
         return [], "Fusion API or box-body helper is unavailable.", None
+
+    cleanup = clear_relationship_test_fixtures(root_component)
 
     run_id = time.strftime("%H%M%S")
     assembly_name = "REL_TEST_FIXTURE_{}".format(run_id)
@@ -323,6 +415,7 @@ def create_relationship_test_fixture(root_component) -> Tuple[List[Dict[str, Any
         "baseZMm": base_z_mm,
         "baseXMm": base_x_mm,
         "flatMode": flat_mode,
+        "cleanup": cleanup,
     }
     mode_note = None
     if flat_mode:
@@ -330,6 +423,12 @@ def create_relationship_test_fixture(root_component) -> Tuple[List[Dict[str, Any
             "Part design detected: fixture bodies were created on the root component at "
             "Z={:.0f} mm, X+{:.0f} mm (visible near the model floor).".format(base_z_mm, base_x_mm)
         )
+    if cleanup.get("removedBodies") or cleanup.get("removedOccurrences"):
+        note = "Cleared prior relationship fixtures: bodies={} occurrences={}.".format(
+            cleanup.get("removedBodies"),
+            cleanup.get("removedOccurrences"),
+        )
+        mode_note = "{}; {}".format(mode_note, note) if mode_note else note
     created: List[Dict[str, Any]] = []
 
     for panel_def in fixture_panel_definitions(base_z_mm=base_z_mm, base_x_mm=base_x_mm):

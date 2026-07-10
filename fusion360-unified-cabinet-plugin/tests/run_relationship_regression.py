@@ -346,6 +346,11 @@ def validate_controller_routes() -> bool:
         print("FAIL relationships.inspectPair", inspect_payload)
         return False
 
+    event, probe_payload = controller.probe_selection({}, None)
+    if event != "relationshipSelectionResult" or probe_payload.get("selectedPanelBodyCount") != 2:
+        print("FAIL relationships.probeSelection", probe_payload)
+        return False
+
     print("PASS controller routes: scan panelCount={} selectedRelationships={} inspect={}".format(
         scan_payload.get("panelCount"),
         selected_payload.get("relationshipCount"),
@@ -362,6 +367,7 @@ def validate_routes_registered() -> bool:
         "relationships.scan",
         "relationships.scanSelected",
         "relationships.inspectPair",
+        "relationships.probeSelection",
         "relationships.createTestFixture",
         "relationships.showRelationshipOverlayForSelected",
         "relationships.reconcileGeneratorDeclarations",

@@ -170,20 +170,81 @@ def write_panel_metadata_to_body(body, panel_metadata: Dict[str, Any]) -> bool:
         return False
 
 
-def writeback_screw_hole_feature(
-    host_body,
+def build_tongue_groove_panel_feature_record(
     feature_intent: Dict[str, Any],
-    cut_metadata: Dict[str, Any],
     *,
+    cut_metadata: Dict[str, Any],
     cut_feature_name: Optional[str] = None,
+    role: str = "groove",
+) -> Dict[str, Any]:
+    """Convert tongue/groove intent + cut metadata into a body features[] record."""
+    geometry = feature_intent.get("geometry") or {}
+    groove = geometry.get("groove") or {}
+    tongue = geometry.get("tongue") or {}
+    role_key = "tongue" if str(role or "").lower() == "tongue" else "groove"
+    part = tongue if role_key == "tongue" else groove
+    sketch = (part.get("sketch") or groove.get("sketch") or {})
+    relationship_id = str(
+        cut_metadata.get("sourceRelationshipId")
+        or feature_intent.get("sourceRelationshipId")
+        or ""
+    )
+    feature_id = str(
+        feature_intent.get("featureId") or "{}::tongue_groove".format(relationship_id)
+    )
+    if role_key == "tongue":
+        feature_id = "{}::tongue".format(relationship_id)
+    depth_mm = float(
+        part.get("depthMm")
+        or part.get("protrusionMm")
+        or cut_metadata.get("grooveDepthMm" if role_key == "groove" else "tongueProtrusionMm")
+        or 0.0
+    )
+    width_mm = float(part.get("widthMm") or cut_metadata.get("grooveWidthMm") or 0.0)
+    length_mm = float(part.get("lengthMm") or cut_metadata.get("grooveLengthMm") or 0.0)
+    record: Dict[str, Any] = {
+        "featureId": feature_id,
+        "kind": role_key,
+        "cutType": "POCKET" if role_key == "groove" else "SHOULDER",
+        "depthMm": round(depth_mm, 4),
+        "widthMm": round(width_mm, 4),
+        "lengthMm": round(length_mm, 4),
+        "isCircle": False,
+        "source": SOURCE_HARDWARE_RELATIONSHIP,
+        "operationType": str(cut_metadata.get("operationType") or "TONGUE_GROOVE_FROM_RELATIONSHIP"),
+        "sourceRelationshipId": relationship_id,
+        "hostPanelId": str(cut_metadata.get("hostPanelId") or feature_intent.get("hostPanelId") or ""),
+        "targetPanelId": str(cut_metadata.get("targetPanelId") or feature_intent.get("targetPanelId") or ""),
+        "hostRole": "groove",
+        "targetRole": "tongue",
+        "panelRole": role_key,
+        "ruleId": str((feature_intent.get("source") or {}).get("ruleId") or cut_metadata.get("ruleId") or ""),
+        "contactAxis": str(geometry.get("contactAxis") or sketch.get("planeAxis") or ""),
+        "tongueProtrusionMm": round(float(tongue.get("protrusionMm") or cut_metadata.get("tongueProtrusionMm") or 0.0), 4),
+        "tongueCutDeferred": False,
+    }
+    if cut_feature_name:
+        record["cutFeatureName"] = cut_feature_name
+    if sketch:
+        record["sketch"] = {
+            "u0": sketch.get("u0"),
+            "u1": sketch.get("u1"),
+            "v0": sketch.get("v0"),
+            "v1": sketch.get("v1"),
+            "planeMm": sketch.get("planeMm"),
+            "lengthAxis": sketch.get("lengthAxis"),
+            "widthAxis": sketch.get("widthAxis"),
+            "shoulderCount": len(sketch.get("shoulders") or []),
+        }
+    return record
+
+
+def _writeback_feature_record(
+    host_body,
+    record: Dict[str, Any],
+    *,
     allow_duplicate: bool = False,
 ) -> Dict[str, Any]:
-    """After a successful cut, append the hardware feature to host body metadata."""
-    record = build_panel_feature_record(
-        feature_intent,
-        cut_metadata=cut_metadata,
-        cut_feature_name=cut_feature_name,
-    )
     existing, read_error = read_panel_metadata_from_body(host_body)
     if read_error and existing is None and read_error not in (None, "Empty metadata attribute"):
         return {
@@ -218,3 +279,93 @@ def writeback_screw_hole_feature(
         "featureCount": len(updated.get("features") or []),
         "errors": [] if written else ["Failed to write panel metadata to host body."],
     }
+
+
+def writeback_screw_hole_feature(
+    host_body,
+    feature_intent: Dict[str, Any],
+    cut_metadata: Dict[str, Any],
+    *,
+    cut_feature_name: Optional[str] = None,
+    allow_duplicate: bool = False,
+) -> Dict[str, Any]:
+    """After a successful cut, append the hardware feature to host body metadata."""
+    record = build_panel_feature_record(
+        feature_intent,
+        cut_metadata=cut_metadata,
+        cut_feature_name=cut_feature_name,
+    )
+    return _writeback_feature_record(host_body, record, allow_duplicate=allow_duplicate)
+
+
+def writeback_hinge_hole_feature(
+    host_body,
+    feature_intent: Dict[str, Any],
+    cut_metadata: Dict[str, Any],
+    *,
+    cut_feature_name: Optional[str] = None,
+    allow_duplicate: bool = False,
+) -> Dict[str, Any]:
+    """After a successful hinge cup cut, append the feature to host body metadata."""
+    return writeback_screw_hole_feature(
+        host_body,
+        feature_intent,
+        cut_metadata,
+        cut_feature_name=cut_feature_name,
+        allow_duplicate=allow_duplicate,
+    )
+
+
+def writeback_drawer_runner_hole_feature(
+    host_body,
+    feature_intent: Dict[str, Any],
+    cut_metadata: Dict[str, Any],
+    *,
+    cut_feature_name: Optional[str] = None,
+    allow_duplicate: bool = False,
+) -> Dict[str, Any]:
+    """After a successful runner hole cut, append the feature to host body metadata."""
+    return writeback_screw_hole_feature(
+        host_body,
+        feature_intent,
+        cut_metadata,
+        cut_feature_name=cut_feature_name,
+        allow_duplicate=allow_duplicate,
+    )
+
+
+def writeback_lock_cutout_feature(
+    host_body,
+    feature_intent: Dict[str, Any],
+    cut_metadata: Dict[str, Any],
+    *,
+    cut_feature_name: Optional[str] = None,
+    allow_duplicate: bool = False,
+) -> Dict[str, Any]:
+    """After a successful lock pocket cut, append the feature to host body metadata."""
+    return writeback_screw_hole_feature(
+        host_body,
+        feature_intent,
+        cut_metadata,
+        cut_feature_name=cut_feature_name,
+        allow_duplicate=allow_duplicate,
+    )
+
+
+def writeback_tongue_groove_feature(
+    body,
+    feature_intent: Dict[str, Any],
+    cut_metadata: Dict[str, Any],
+    *,
+    cut_feature_name: Optional[str] = None,
+    allow_duplicate: bool = False,
+    role: str = "groove",
+) -> Dict[str, Any]:
+    """After a successful cut, append groove or tongue feature to the panel body metadata."""
+    record = build_tongue_groove_panel_feature_record(
+        feature_intent,
+        cut_metadata=cut_metadata,
+        cut_feature_name=cut_feature_name,
+        role=role,
+    )
+    return _writeback_feature_record(body, record, allow_duplicate=allow_duplicate)

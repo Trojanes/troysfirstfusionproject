@@ -202,6 +202,12 @@ def build_reconcile_report(
     geometry_relationships: List[BoardRelationship],
     action: str = "relationships.reconcileGeneratorDeclarations",
 ) -> Dict[str, Any]:
+    panel_payloads = []
+    for panel in panels or []:
+        if hasattr(panel, "to_dict"):
+            panel_payloads.append(panel.to_dict())
+        elif isinstance(panel, dict):
+            panel_payloads.append(panel)
     return {
         "ok": bool(reconcile_result.get("ok")),
         "action": action,
@@ -212,6 +218,7 @@ def build_reconcile_report(
         "geometryOkCount": reconcile_result.get("geometryOkCount", 0),
         "declaredRelationships": reconcile_result.get("relationships") or [],
         "reconciled": reconcile_result.get("reconciled") or [],
+        "panels": panel_payloads,
         "errors": list(reconcile_result.get("errors") or []),
         "warnings": list(reconcile_result.get("warnings") or []),
     }
