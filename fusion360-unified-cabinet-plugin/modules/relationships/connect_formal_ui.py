@@ -98,7 +98,7 @@ def evaluate_connect_action(action: str, relationship: Optional[Dict[str, Any]])
             return {
                 "ok": False,
                 "action": action_key,
-                "errors": ["Only edge_to_surface relationships support screw-hole preview in M7."],
+                "errors": ["Only edge_to_surface relationships support hardware preview."],
             }
         roles = relationship.get("roles") or {}
         if not roles.get("hostPanelId") or not roles.get("targetPanelId"):

@@ -26,6 +26,7 @@ from hardware_rule_engine import (  # noqa: E402
 from panel_metadata_writeback import (  # noqa: E402
     OPERATION_TYPE,
     append_hardware_feature,
+    build_lock_cutout_panel_feature_record,
     build_panel_feature_record,
     build_tongue_groove_panel_feature_record,
     find_hardware_features,
@@ -217,6 +218,21 @@ class HardwareRuleEngineTests(unittest.TestCase):
         self.assertEqual((plan.get("metadata") or {}).get("operationType"), "LOCK_CUTOUT_FROM_RELATIONSHIP")
         pocket = ((plan.get("feature") or {}).get("geometry") or {}).get("pocket") or {}
         self.assertGreater(float(pocket.get("depthMm") or 0), 0)
+        feature = plan.get("feature") or {}
+        record = build_lock_cutout_panel_feature_record(
+            feature,
+            cut_metadata=plan.get("metadata") or {},
+            cut_feature_name="HW_REL_LOCK_1",
+        )
+        self.assertEqual(record.get("kind"), "pocket")
+        self.assertEqual(record.get("cutType"), "POCKET")
+        self.assertFalse(record.get("isCircle"))
+        self.assertEqual(record.get("hardwareType"), "lock_cutout")
+        self.assertEqual(record.get("hostRole"), "lock_pocket")
+        self.assertGreater(float(record.get("widthMm") or 0), 0)
+        self.assertGreater(float(record.get("heightMm") or 0), 0)
+        self.assertGreater(float(record.get("depthMm") or 0), 0)
+        self.assertIn("sketch", record)
 
     def test_drawer_runner_hole_cut_plan_after_confirm(self):
         scan = _fixture_scan()

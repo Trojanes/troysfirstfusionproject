@@ -51,6 +51,8 @@ BATCH_SMOKE = {
     "hinge": "hinge_hole_connect_smoke",
     "runner": "drawer_runner_hole_connect_smoke",
     "lock": "lock_cutout_connect_smoke",
+    "generic": "generic_hardware_connect_smoke",
+    "realhw": "real_cabinet_hardware_connect_smoke",
 }
 
 ALL_TEMPORARY_SMOKES = list(DAY_SMOKE.values()) + list(BATCH_SMOKE.values())

@@ -78,6 +78,7 @@ def main() -> int:
         "run_scaffold_hardware_offline.py",
         "run_connect_hardware_type_ui_offline.py",
         "run_real_cabinet_hardware_offline.py",
+        "run_generic_hardware_route_offline.py",
     ):
         code = run(
             [sys.executable, str(ROOT / "tests" / smoke_script)],

@@ -239,6 +239,63 @@ def build_tongue_groove_panel_feature_record(
     return record
 
 
+def build_lock_cutout_panel_feature_record(
+    feature_intent: Dict[str, Any],
+    *,
+    cut_metadata: Dict[str, Any],
+    cut_feature_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Convert lock pocket intent + cut metadata into a rectangular body features[] record."""
+    geometry = feature_intent.get("geometry") or {}
+    pocket = geometry.get("pocket") or {}
+    relationship_id = str(
+        cut_metadata.get("sourceRelationshipId")
+        or feature_intent.get("sourceRelationshipId")
+        or ""
+    )
+    feature_id = str(feature_intent.get("featureId") or "{}::lock_cutout".format(relationship_id))
+    width_mm = float(geometry.get("widthMm") or cut_metadata.get("widthMm") or 0.0)
+    height_mm = float(geometry.get("heightMm") or cut_metadata.get("heightMm") or 0.0)
+    depth_mm = float(
+        geometry.get("depthMm")
+        or pocket.get("depthMm")
+        or cut_metadata.get("depthMm")
+        or 0.0
+    )
+    record: Dict[str, Any] = {
+        "featureId": feature_id,
+        "kind": "pocket",
+        "cutType": "POCKET",
+        "depthMm": round(depth_mm, 4),
+        "widthMm": round(width_mm, 4),
+        "heightMm": round(height_mm, 4),
+        "isCircle": False,
+        "source": SOURCE_HARDWARE_RELATIONSHIP,
+        "operationType": str(cut_metadata.get("operationType") or "LOCK_CUTOUT_FROM_RELATIONSHIP"),
+        "sourceRelationshipId": relationship_id,
+        "hostPanelId": str(cut_metadata.get("hostPanelId") or feature_intent.get("hostPanelId") or ""),
+        "targetPanelId": str(cut_metadata.get("targetPanelId") or feature_intent.get("targetPanelId") or ""),
+        "hostRole": str(feature_intent.get("hostRole") or "lock_pocket"),
+        "hardwareType": "lock_cutout",
+        "ruleId": str((feature_intent.get("source") or {}).get("ruleId") or cut_metadata.get("ruleId") or ""),
+        "contactAxis": str(geometry.get("contactAxis") or pocket.get("planeAxis") or ""),
+    }
+    if cut_feature_name:
+        record["cutFeatureName"] = cut_feature_name
+    if pocket:
+        record["sketch"] = {
+            "u0": pocket.get("u0"),
+            "u1": pocket.get("u1"),
+            "v0": pocket.get("v0"),
+            "v1": pocket.get("v1"),
+            "planeMm": pocket.get("planeMm"),
+            "lengthAxis": pocket.get("lengthAxis"),
+            "widthAxis": pocket.get("widthAxis"),
+            "planeAxis": pocket.get("planeAxis"),
+        }
+    return record
+
+
 def _writeback_feature_record(
     host_body,
     record: Dict[str, Any],
@@ -307,13 +364,15 @@ def writeback_hinge_hole_feature(
     allow_duplicate: bool = False,
 ) -> Dict[str, Any]:
     """After a successful hinge cup cut, append the feature to host body metadata."""
-    return writeback_screw_hole_feature(
-        host_body,
+    record = build_panel_feature_record(
         feature_intent,
-        cut_metadata,
+        cut_metadata=cut_metadata,
         cut_feature_name=cut_feature_name,
-        allow_duplicate=allow_duplicate,
     )
+    record["hostRole"] = str(feature_intent.get("hostRole") or "hinge_cup")
+    record["hardwareType"] = "hinge_hole"
+    record["operationType"] = str(cut_metadata.get("operationType") or "HINGE_HOLE_FROM_RELATIONSHIP")
+    return _writeback_feature_record(host_body, record, allow_duplicate=allow_duplicate)
 
 
 def writeback_drawer_runner_hole_feature(
@@ -325,13 +384,15 @@ def writeback_drawer_runner_hole_feature(
     allow_duplicate: bool = False,
 ) -> Dict[str, Any]:
     """After a successful runner hole cut, append the feature to host body metadata."""
-    return writeback_screw_hole_feature(
-        host_body,
+    record = build_panel_feature_record(
         feature_intent,
-        cut_metadata,
+        cut_metadata=cut_metadata,
         cut_feature_name=cut_feature_name,
-        allow_duplicate=allow_duplicate,
     )
+    record["hostRole"] = str(feature_intent.get("hostRole") or "runner_mount")
+    record["hardwareType"] = "drawer_runner_hole"
+    record["operationType"] = str(cut_metadata.get("operationType") or "DRAWER_RUNNER_HOLE_FROM_RELATIONSHIP")
+    return _writeback_feature_record(host_body, record, allow_duplicate=allow_duplicate)
 
 
 def writeback_lock_cutout_feature(
@@ -342,14 +403,13 @@ def writeback_lock_cutout_feature(
     cut_feature_name: Optional[str] = None,
     allow_duplicate: bool = False,
 ) -> Dict[str, Any]:
-    """After a successful lock pocket cut, append the feature to host body metadata."""
-    return writeback_screw_hole_feature(
-        host_body,
+    """After a successful lock pocket cut, append a rectangular pocket feature record."""
+    record = build_lock_cutout_panel_feature_record(
         feature_intent,
-        cut_metadata,
+        cut_metadata=cut_metadata,
         cut_feature_name=cut_feature_name,
-        allow_duplicate=allow_duplicate,
     )
+    return _writeback_feature_record(host_body, record, allow_duplicate=allow_duplicate)
 
 
 def writeback_tongue_groove_feature(

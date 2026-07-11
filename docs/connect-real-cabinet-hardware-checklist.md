@@ -22,3 +22,13 @@ Wired into `tests/run_plugin_offline_regression.py`.
 - [x] Registry: 5 types `cutReady`
 - [x] Overhead reconcile → BP↔D0 `generator_declared`
 - [x] screw / tongue_groove / hinge / runner / lock: preview + cut plan OK
+
+## Fusion Play (optional)
+
+```powershell
+python scripts/manage_fusion_smokes.py install --batch realhw
+# Restart Fusion → Shift+S → real_cabinet_hardware_connect_smoke → Play
+# Then: python scripts/manage_fusion_smokes.py remove --batch realhw
+```
+
+Cuts screw on BP↔D0 and tongue/groove on BP↔FP0 via `hardware.createHardwareFromRelationship`.
