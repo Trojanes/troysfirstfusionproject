@@ -64,6 +64,17 @@ class PanelBodyResolverTests(unittest.TestCase):
         )
         self.assertIs(found, body_b)
 
+    def test_nesting_workpiece_is_excluded_by_system_role(self):
+        body = MagicMock()
+
+        def attr(group, name):
+            if group == "UnifiedCabinet" and name == "systemRole":
+                return MagicMock(value="nestingWorkpiece")
+            return None
+
+        body.attributes.itemByName.side_effect = attr
+        self.assertTrue(resolver._is_nested_instance(body))
+
 
 if __name__ == "__main__":
     unittest.main()

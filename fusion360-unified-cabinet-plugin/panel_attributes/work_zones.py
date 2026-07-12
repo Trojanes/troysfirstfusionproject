@@ -34,6 +34,7 @@ INSTANCE_ROLE_ATTR_GROUP = "UnifiedCabinet"
 INSTANCE_ROLE_ATTR_NAME = "instanceRole"
 INSTANCE_ROLE_GENERATED = "generated"
 INSTANCE_ROLE_NESTED = "nested"
+SYSTEM_ROLE_NESTING_WORKPIECE = "nestingWorkpiece"
 
 WORK_ZONE_MARKER_GROUP = "UnifiedCabinet"
 WORK_ZONE_MARKER_NAME = "systemRole"
@@ -180,17 +181,25 @@ def _body_world_center_mm(body):
         cz = (bbox.minPoint.z + bbox.maxPoint.z) / 2.0
     except Exception:
         return None
+    # Proxy bodies (createForAssemblyContext) already expose world-space
+    # geometry. Applying assemblyContext.transform again would double-shift.
+    is_proxy = False
     try:
-        assembly_context = getattr(body, "assemblyContext", None)
-        transform = assembly_context.transform if assembly_context else None
-        if transform is not None:
-            import adsk.core  # noqa: PLC0415
-
-            point = adsk.core.Point3D.create(cx, cy, cz)
-            point.transformBy(transform)
-            cx, cy = point.x, point.y
+        is_proxy = bool(getattr(body, "isProxy", False))
     except Exception:
-        pass
+        is_proxy = False
+    if not is_proxy:
+        try:
+            assembly_context = getattr(body, "assemblyContext", None)
+            transform = assembly_context.transform if assembly_context else None
+            if transform is not None:
+                import adsk.core  # noqa: PLC0415
+
+                point = adsk.core.Point3D.create(cx, cy, cz)
+                point.transformBy(transform)
+                cx, cy = point.x, point.y
+        except Exception:
+            pass
     return (cx * 10.0, cy * 10.0)
 
 
@@ -207,6 +216,20 @@ def generation_zone_center_mm(root_component):
             (float(rect["x0"]) + float(rect["x1"])) / 2.0,
             (float(rect["y0"]) + float(rect["y1"])) / 2.0,
         )
+    except Exception:
+        return None
+
+
+def generation_zone_origin_mm(root_component):
+    """World XY min corner (x0, y0) of the generation zone from the saved layout."""
+    layout = load_zone_layout(root_component)
+    if not isinstance(layout, dict):
+        return None
+    rect = layout.get(ZONE_GENERATION)
+    if not isinstance(rect, dict):
+        return None
+    try:
+        return (float(rect["x0"]), float(rect["y0"]))
     except Exception:
         return None
 
@@ -249,7 +272,18 @@ def instance_role_of_body(body):
 
 
 def is_nested_instance(body):
-    return instance_role_of_body(body) == INSTANCE_ROLE_NESTED
+    if instance_role_of_body(body) == INSTANCE_ROLE_NESTED:
+        return True
+    try:
+        attr = body.attributes.itemByName(
+            WORK_ZONE_MARKER_GROUP, WORK_ZONE_MARKER_NAME
+        )
+        return bool(
+            attr
+            and str(attr.value or "") == SYSTEM_ROLE_NESTING_WORKPIECE
+        )
+    except Exception:
+        return False
 
 
 def mark_instance_role(body, role):

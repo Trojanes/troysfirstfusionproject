@@ -7,18 +7,35 @@ from modules.lounge import fusion_adapter as lounge_fusion_adapter
 
 
 def _naming_args(payload, fusion=None):
-    """assemblyName / origin from a palette payload; origin falls back to the
-    generation-zone centre when not explicitly provided."""
+    """assemblyName / origin from palette payload.
+
+    Lounge placement coords start at cabinet corner (0,0), so auto origin uses
+    the generation-zone min corner (x0, y0). Other modules keep zone centre.
+    """
     data = payload if isinstance(payload, dict) else {}
     name = data.get("assemblyName")
     name = str(name).strip() if name else ""
 
-    origin_x = origin_y = 0.0
+    has_explicit = data.get("originXMm") is not None or data.get("originYMm") is not None
     try:
         import work_zones
 
         root = fusion.get_root_component() if fusion is not None else None
+        if not has_explicit:
+            origin = work_zones.generation_zone_origin_mm(root)
+            if origin:
+                return {
+                    "component_name": name or None,
+                    "origin_x_mm": origin[0],
+                    "origin_y_mm": origin[1],
+                }
         origin_x, origin_y = work_zones.resolve_origin_from_payload(data, root)
+        if has_explicit:
+            center = work_zones.generation_zone_center_mm(root)
+            corner = work_zones.generation_zone_origin_mm(root)
+            if center and corner:
+                if abs(origin_x - center[0]) < 1.0 and abs(origin_y - center[1]) < 1.0:
+                    origin_x, origin_y = corner
     except Exception:
         def _num(key):
             try:

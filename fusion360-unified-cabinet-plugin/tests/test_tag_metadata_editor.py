@@ -25,13 +25,24 @@ class TagMetadataEditorTests(unittest.TestCase):
         updated = editor.apply_body_field_patch(metadata, "boardTypeTag", "door")
         self.assertEqual(updated["derivedTags"]["boardTypeTag"], "door")
         self.assertEqual(updated["typedTags"]["boardTypeTag"], "door")
+        self.assertEqual(updated["defaultAttributes"]["materialClass"], "door_board")
+        self.assertEqual(updated["defaultAttributes"]["role"], "door")
+        self.assertEqual(updated["identity"]["boardType"], "bottom_panel")
+        self.assertTrue(updated["classification"]["boardType"]["locked"])
+        self.assertEqual(updated["classification"]["boardType"]["source"], "manual")
+        # Workflow state is independent from pure nesting readiness.
         self.assertEqual(updated["lifecycle"]["state"], "adjusted")
 
-        updated = editor.apply_body_field_patch(updated, "materialClass", "door_board")
-        self.assertEqual(updated["defaultAttributes"]["materialClass"], "door_board")
+        updated = editor.apply_body_field_patch(updated, "boardTypeTag", "partition")
+        self.assertEqual(updated["derivedTags"]["boardTypeTag"], "partition")
+        self.assertEqual(updated["defaultAttributes"]["materialClass"], "partition_board")
+        self.assertEqual(updated["defaultAttributes"]["role"], "partition")
+        self.assertEqual(updated["identity"]["boardType"], "bottom_panel")
 
-        updated = editor.apply_body_field_patch(updated, "lifecycleState", "verified")
-        self.assertEqual(updated["lifecycle"]["state"], "verified")
+        with self.assertRaises(ValueError):
+            editor.apply_body_field_patch(updated, "materialClass", "door_board")
+        with self.assertRaises(ValueError):
+            editor.apply_body_field_patch(updated, "lifecycleState", "verified")
 
     def test_apply_face_field_patch_updates_finish_and_edge_banding(self):
         metadata = {
@@ -121,8 +132,70 @@ class TagMetadataEditorTests(unittest.TestCase):
         raw = body.attributes.itemByName("UnifiedCabinet.Panel", "metadata").value
         metadata = json.loads(raw)
         self.assertEqual(metadata["derivedTags"]["boardTypeTag"], "door")
+        # Workflow lifecycle is not overloaded by derived nesting readiness.
         self.assertEqual(metadata["lifecycle"]["state"], "adjusted")
+        self.assertTrue(metadata["classification"]["boardType"]["locked"])
         self.assertNotIn(("UnifiedCabinet.Panel", "metadata"), stored)
+
+    def test_slug_color_tag(self):
+        self.assertEqual(editor.slug_color_tag("Alpine White"), "alpine_white")
+        self.assertEqual(editor.slug_color_tag("  Smoked Oak!! "), "smoked_oak")
+        self.assertEqual(editor.slug_color_tag(""), "")
+        self.assertEqual(len(editor.slug_color_tag("a" * 50)), 32)
+
+    def test_apply_door_color_to_metadata(self):
+        metadata = {
+            "schemaVersion": 1,
+            "identity": {"panelId": "door-1"},
+            "defaultAttributes": {"materialClass": "door_board", "role": "door"},
+        }
+        updated, color_tag, mode = editor.apply_door_color_to_metadata(
+            metadata, "Alpine White", "single_sided"
+        )
+        self.assertEqual(color_tag, "alpine_white")
+        self.assertEqual(mode, "SINGLE_SIDED")
+        self.assertEqual(updated["defaultAttributes"]["colorName"], "Alpine White")
+        self.assertEqual(updated["defaultAttributes"]["doorColorName"], "Alpine White")
+        self.assertEqual(updated["defaultAttributes"]["surfaceMode"], "SINGLE_SIDED")
+        self.assertEqual(updated["faceRegistry"]["surfaceMode"], "SINGLE_SIDED")
+        self.assertEqual(updated["derivedTags"]["colorTag"], "alpine_white")
+        self.assertEqual(updated["typedTags"]["colorTag"], "alpine_white")
+        # Surface mode must not be baked into the colorTag.
+        self.assertNotIn("single", color_tag)
+        self.assertTrue(updated["classification"]["color"]["locked"])
+        self.assertEqual(updated["classification"]["color"]["source"], "manual")
+
+        with self.assertRaises(ValueError):
+            editor.apply_door_color_to_metadata(metadata, "", "single_sided")
+        with self.assertRaises(ValueError):
+            editor.apply_door_color_to_metadata(metadata, "Oak", "triple")
+
+    def test_apply_panel_color_is_generic_and_locked(self):
+        metadata = {
+            "schemaVersion": 1,
+            "identity": {"panelId": "panel-1", "boardType": "side_panel"},
+            "defaultAttributes": {
+                "materialClass": "carcass_board",
+                "role": "carcass",
+            },
+        }
+        updated, color_tag, mode = editor.apply_panel_color_to_metadata(
+            metadata, "Smoked Oak", "double_sided", is_door=False
+        )
+        self.assertEqual(color_tag, "smoked_oak")
+        self.assertEqual(mode, "DOUBLE_SIDED")
+        self.assertEqual(updated["defaultAttributes"]["colorName"], "Smoked Oak")
+        self.assertNotIn("doorColorName", updated["defaultAttributes"])
+        self.assertEqual(updated["classification"]["color"]["value"], "smoked_oak")
+        self.assertTrue(updated["classification"]["color"]["locked"])
+
+    def test_color_scope_rules(self):
+        self.assertTrue(editor.color_scope_allows("doors", True))
+        self.assertFalse(editor.color_scope_allows("doors", False))
+        self.assertTrue(editor.color_scope_allows("panels", True))
+        self.assertTrue(editor.color_scope_allows("panels", False))
+        with self.assertRaises(ValueError):
+            editor.color_scope_allows("invalid", True)
 
 
 if __name__ == "__main__":

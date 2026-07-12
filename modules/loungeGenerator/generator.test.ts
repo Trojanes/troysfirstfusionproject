@@ -167,7 +167,90 @@ function testParallelLounge(): void {
   assert.equal(noLockDoor?.hingeHoles?.length, 2);
 }
 
+function testIShapeLounge(): void {
+  const result = generateLoungeGeometry({
+    style: "I_SHAPE",
+    height: 420,
+    partitionPanelThickness: 18,
+    mainWidth: 2000,
+    mainDepth: 600,
+    topLidEnabled: true,
+  });
+  assert.equal(result.meta.style, "I_SHAPE");
+  assert.equal(result.validation.errors.length, 0);
+  assert.equal(result.validation.warnings.length, 0);
+  assert.equal(result.panels.length, 4);
+  assert.equal(result.openings.length, 1);
+  assert.equal(result.lids.length, 1);
+  assert.deepEqual(result.footprint.i, { x0: 0, x1: 2000, y0: 0, y1: 600 });
+  const front = result.panels.find((panel) => panel.id === "i_front");
+  assert.equal(front?.width, 2000);
+  assert.deepEqual(front?.placement, { x0: 0, x1: 2000, y0: 582, y1: 600, z0: 0, z1: 402 });
+  const left = result.panels.find((panel) => panel.id === "i_left_side");
+  assert.deepEqual(left?.placement, { x0: 0, x1: 18, y0: 0, y1: 582, z0: 0, z1: 402 });
+  assert.deepEqual(left?.outer, [[0, 0], [582, 0], [582, 402], [0, 402], [0, 0]]);
+  const right = result.panels.find((panel) => panel.id === "i_right_side");
+  assert.deepEqual(right?.placement, { x0: 1982, x1: 2000, y0: 0, y1: 582, z0: 0, z1: 402 });
+  const top = result.panels.find((panel) => panel.id === "i_top");
+  assert.deepEqual(top?.placement, { x0: 0, x1: 2000, y0: 0, y1: 600, z0: 402, z1: 420 });
+  const opening = result.openings[0];
+  assert.equal(opening.width, 1000);
+  assert.equal(opening.depth, 300);
+  const lid = result.lids[0];
+  assert.equal(lid.id, "i_top_lid");
+  assert.equal(lid.width, 997);
+  assert.equal(lid.depth, 297);
+  assert.equal(lid.fingerHole.diameter, 40);
+}
+
+function testIShapeLoungeWithAvoidance(): void {
+  const result = generateLoungeGeometry({
+    style: "I_SHAPE",
+    height: 420,
+    partitionPanelThickness: 18,
+    wheelAvoidanceEnabled: true,
+    mainWidth: 2000,
+    mainDepth: 600,
+    avoidanceDepth: 300,
+    avoidanceHeight: 250,
+    topLidEnabled: false,
+  });
+  assert.equal(result.validation.errors.length, 0);
+  assert.equal(result.validation.warnings.length, 0);
+  assert.equal(result.panels.length, 6);
+  assert.equal(result.openings.length, 0);
+  assert.equal(result.lids.length, 0);
+  const left = result.panels.find((panel) => panel.id === "i_left_side");
+  assert.deepEqual(left?.outer, [[300, 0], [582, 0], [582, 402], [0, 402], [0, 250], [300, 250], [300, 0]]);
+  assert.equal(left?.note, "Rear-lower wheel avoidance cutout applied.");
+  const right = result.panels.find((panel) => panel.id === "i_right_side");
+  assert.deepEqual(right?.outer, [[300, 0], [582, 0], [582, 402], [0, 402], [0, 250], [300, 250], [300, 0]]);
+  const avTop = result.panels.find((panel) => panel.id === "i_avoidance_top");
+  assert.deepEqual(avTop?.placement, { x0: 0, x1: 2000, y0: 0, y1: 300, z0: 232, z1: 250 });
+  const avFront = result.panels.find((panel) => panel.id === "i_avoidance_front");
+  assert.deepEqual(avFront?.placement, { x0: 0, x1: 2000, y0: 282, y1: 300, z0: 0, z1: 232 });
+}
+
+function testIShapeWarnings(): void {
+  const result = generateLoungeGeometry({
+    style: "I_SHAPE",
+    height: 420,
+    partitionPanelThickness: 18,
+    wheelAvoidanceEnabled: true,
+    mainWidth: 2000,
+    mainDepth: 600,
+    avoidanceDepth: 700,
+    avoidanceHeight: 500,
+  });
+  assert(result.validation.warnings.some((warning) => warning.includes("Avoidance Depth")));
+  assert(result.validation.warnings.some((warning) => warning.includes("Avoidance Height")));
+  assert(!result.panels.some((panel) => panel.id === "i_avoidance_top"));
+}
+
 testDefaultLShape();
 testLeftPositionAndNoLid();
 testParallelLounge();
+testIShapeLounge();
+testIShapeLoungeWithAvoidance();
+testIShapeWarnings();
 console.log("OK lounge generator tests");

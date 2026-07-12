@@ -6,7 +6,7 @@ import adsk.fusion
 
 from geometry_ops import ATTRIBUTE_GROUP, MODEL_Z_OFFSET_MM, mm_to_cm, offset_matching_bodies_z_mm, sanitize_token
 
-ADAPTER_REVISION = "loungeStagedInModelZComponent_v15"
+ADAPTER_REVISION = "loungeWorldAlignedAssembly_v23"
 
 
 def _num(value, fallback=0.0):
@@ -16,36 +16,47 @@ def _num(value, fallback=0.0):
         return fallback
 
 
+def _delete_lounge_artifacts_in_component(component, deleted, seen_components):
+    component_key = id(component)
+    if component_key in seen_components:
+        return
+    seen_components.add(component_key)
+    try:
+        for index in range(component.bRepBodies.count - 1, -1, -1):
+            body = component.bRepBodies.item(index)
+            name = str(getattr(body, "name", "") or "")
+            if name.startswith("LOUNGE_"):
+                body.deleteMe()
+                deleted["bodies"] += 1
+    except Exception:
+        pass
+    try:
+        for index in range(component.sketches.count - 1, -1, -1):
+            sketch = component.sketches.item(index)
+            name = str(getattr(sketch, "name", "") or "")
+            if name.startswith("LOUNGE_"):
+                sketch.deleteMe()
+                deleted["sketches"] += 1
+    except Exception:
+        pass
+    try:
+        for index in range(component.occurrences.count - 1, -1, -1):
+            occurrence = component.occurrences.item(index)
+            name = str(getattr(occurrence, "name", "") or "")
+            child_component = getattr(occurrence, "component", None)
+            child_name = str(getattr(child_component, "name", "") or "") if child_component else ""
+            if child_component:
+                _delete_lounge_artifacts_in_component(child_component, deleted, seen_components)
+            if name.startswith("LOUNGE_") or name.startswith("L_") or child_name.startswith("LOUNGE_") or child_name.startswith("L_"):
+                occurrence.deleteMe()
+                deleted["occurrences"] += 1
+    except Exception:
+        pass
+
+
 def _delete_previous_lounge_artifacts(root_comp):
-    deleted = {"bodies": 0, "sketches": 0, "failed": 0}
-    try:
-        body_count = root_comp.bRepBodies.count
-    except Exception:
-        body_count = 0
-    for idx in range(body_count - 1, -1, -1):
-        try:
-            body = root_comp.bRepBodies.item(idx)
-            if str(getattr(body, "name", "") or "").startswith("LOUNGE_"):
-                if body.deleteMe():
-                    deleted["bodies"] += 1
-                else:
-                    deleted["failed"] += 1
-        except Exception:
-            deleted["failed"] += 1
-    try:
-        sketch_count = root_comp.sketches.count
-    except Exception:
-        sketch_count = 0
-    for idx in range(sketch_count - 1, -1, -1):
-        try:
-            sketch = root_comp.sketches.item(idx)
-            if str(getattr(sketch, "name", "") or "").startswith("LOUNGE_"):
-                if sketch.deleteMe():
-                    deleted["sketches"] += 1
-                else:
-                    deleted["failed"] += 1
-        except Exception:
-            deleted["failed"] += 1
+    deleted = {"occurrences": 0, "bodies": 0, "sketches": 0, "failed": 0}
+    _delete_lounge_artifacts_in_component(root_comp, deleted, set())
     return deleted
 
 
@@ -73,7 +84,26 @@ def _assign_component_name(occurrence, component, desired_name):
         return base
 
 
-def _new_lounge_component(root_comp, run_label, mode, component_name=None, origin_x_mm=0.0, origin_y_mm=0.0):
+def _world_translation_transform(origin_x_mm=0.0, origin_y_mm=0.0, origin_z_mm=0.0):
+    """Pure translation with explicit world X/Y/Z axes (no accidental rotation)."""
+    transform = adsk.core.Matrix3D.create()
+    from_origin = adsk.core.Point3D.create(0, 0, 0)
+    to_origin = adsk.core.Point3D.create(
+        mm_to_cm(float(origin_x_mm or 0.0)),
+        mm_to_cm(float(origin_y_mm or 0.0)),
+        mm_to_cm(float(origin_z_mm or 0.0)),
+    )
+    x_axis = adsk.core.Vector3D.create(1, 0, 0)
+    y_axis = adsk.core.Vector3D.create(0, 1, 0)
+    z_axis = adsk.core.Vector3D.create(0, 0, 1)
+    transform.setToAlignCoordinateSystems(
+        from_origin, x_axis, y_axis, z_axis,
+        to_origin, x_axis, y_axis, z_axis,
+    )
+    return transform
+
+
+def _new_lounge_component(root_comp, run_label, mode, component_name=None, origin_x_mm=0.0, origin_y_mm=0.0, origin_z_mm=0.0):
     if component_name:
         name = sanitize_token(component_name, fallback="assembly", limit=80)
     else:
@@ -81,19 +111,14 @@ def _new_lounge_component(root_comp, run_label, mode, component_name=None, origi
             sanitize_token(mode or "run", fallback="run", limit=24),
             sanitize_token(run_label or int(time.time() * 1000), fallback="run", limit=60),
         )
+    occurrence = None
     try:
-        transform = adsk.core.Matrix3D.create()
-        transform.translation = adsk.core.Vector3D.create(
-            mm_to_cm(float(origin_x_mm or 0.0)),
-            mm_to_cm(float(origin_y_mm or 0.0)),
-            mm_to_cm(MODEL_Z_OFFSET_MM),
-        )
+        transform = _world_translation_transform(origin_x_mm, origin_y_mm, origin_z_mm)
         occurrence = root_comp.occurrences.addNewComponent(transform)
         component = occurrence.component
     except Exception as ex:
         return root_comp, None, "Could not create Lounge Z-offset component; using root component: {}".format(ex)
 
-    _capture_position_snapshot(root_comp)
     name = _assign_component_name(occurrence, component, name)
     try:
         component.attributes.add(ATTRIBUTE_GROUP, "module", "lounge")
@@ -105,7 +130,12 @@ def _new_lounge_component(root_comp, run_label, mode, component_name=None, origi
 
 
 def _new_item_component(parent_component, item_id):
-    """One lounge panel/lid = one child component (assembly semantics)."""
+    """One lounge panel/lid = one child component (assembly semantics).
+
+    Returns (component, occurrence). Occurrence transform is required for
+    flat→assembly placement; body-level moveFeatures are unreliable inside
+    per-panel child components.
+    """
     transform = adsk.core.Matrix3D.create()
     occurrence = parent_component.occurrences.addNewComponent(transform)
     component = occurrence.component
@@ -117,17 +147,22 @@ def _new_item_component(parent_component, item_id):
         component.attributes.add(ATTRIBUTE_GROUP, "boardId", str(item_id))
     except Exception:
         pass
-    return component
+    return component, occurrence
+
+
+def _item_component_for_assembly(container, item_id):
+    """Keep every assembly panel in the parent component so Fusion move axes stay world-aligned."""
+    return container, None
 
 
 def _item_component_or_fallback(container, root, item_id, warnings):
     if container is root:
-        return container
+        return container, None
     try:
         return _new_item_component(container, item_id)
     except Exception as ex:
         warnings.append("Could not create item component for {}: {}".format(item_id, ex))
-        return container
+        return container, None
 
 
 def _add_box_body(component, body_id, x0, x1, y0, y1, z0, z1):
@@ -168,6 +203,158 @@ def _add_box_body(component, body_id, x0, x1, y0, y1, z0, z1):
     return body, None
 
 
+def _draw_model_loop_on_sketch(sketch, world_points):
+    if not isinstance(world_points, list) or len(world_points) < 3:
+        return False
+    clean = [p for p in world_points if isinstance(p, (list, tuple)) and len(p) >= 3]
+    if len(clean) < 3:
+        return False
+    if clean[0] != clean[-1]:
+        clean.append(clean[0])
+    lines = sketch.sketchCurves.sketchLines
+    for idx in range(len(clean) - 1):
+        w0 = clean[idx]
+        w1 = clean[idx + 1]
+        m0 = adsk.core.Point3D.create(mm_to_cm(w0[0]), mm_to_cm(w0[1]), mm_to_cm(w0[2]))
+        m1 = adsk.core.Point3D.create(mm_to_cm(w1[0]), mm_to_cm(w1[1]), mm_to_cm(w1[2]))
+        lines.addByTwoPoints(sketch.modelToSketchSpace(m0), sketch.modelToSketchSpace(m1))
+    return True
+
+
+def _tag_lounge_body(body, item_id, preview_mode, profile_source):
+    prefix = "LOUNGE_ASM" if preview_mode == "assembly" else "LOUNGE_FLAT"
+    body.name = "{}_{}".format(prefix, sanitize_token(item_id, limit=90))
+    try:
+        body.attributes.add(ATTRIBUTE_GROUP, "module", "lounge")
+        body.attributes.add(ATTRIBUTE_GROUP, "bodyId", item_id)
+        body.attributes.add(ATTRIBUTE_GROUP, "previewMode", preview_mode)
+        body.attributes.add(ATTRIBUTE_GROUP, "profileSource", profile_source)
+    except Exception:
+        pass
+
+
+def _extrude_new_body(component, sketch, profile, distance_mm, item_id, preview_mode, profile_source):
+    extrudes = component.features.extrudeFeatures
+    ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm_to_cm(distance_mm)))
+    feature = extrudes.add(ext_input)
+    if feature.bodies.count < 1:
+        return None, "no_body"
+    body = feature.bodies.item(0)
+    _tag_lounge_body(body, item_id, preview_mode, profile_source)
+    return body, None
+
+
+def _add_xz_box_body(component, item_id, x0, x1, y0, y1, z0, z1, preview_mode="assembly"):
+    if x1 <= x0 or y1 <= y0 or z1 <= z0:
+        return None, "non_positive_dimension"
+    construction = component.constructionPlanes
+    plane_input = construction.createInput()
+    plane_input.setByOffset(component.xZConstructionPlane, adsk.core.ValueInput.createByReal(mm_to_cm(y0)))
+    sketch_plane = construction.add(plane_input)
+    sketch = component.sketches.add(sketch_plane)
+    sketch.name = "LOUNGE_ORIENT_SK_{}".format(sanitize_token(item_id, limit=60))
+    corners = [(x0, y0, z0), (x1, y0, z0), (x1, y0, z1), (x0, y0, z1), (x0, y0, z0)]
+    if not _draw_model_loop_on_sketch(sketch, corners):
+        return None, "invalid_outer"
+    profile = _largest_profile(sketch)
+    if profile is None:
+        return None, "no_profile"
+    return _extrude_new_body(component, sketch, profile, y1 - y0, item_id, preview_mode, "placementBoxXZ")
+
+
+def _add_yz_box_body(component, item_id, x0, x1, y0, y1, z0, z1, preview_mode="assembly", anchor_x1=False):
+    if x1 <= x0 or y1 <= y0 or z1 <= z0:
+        return None, "non_positive_dimension"
+    construction = component.constructionPlanes
+    plane_input = construction.createInput()
+    anchor = x1 if anchor_x1 else x0
+    plane_input.setByOffset(component.yZConstructionPlane, adsk.core.ValueInput.createByReal(mm_to_cm(anchor)))
+    sketch_plane = construction.add(plane_input)
+    sketch = component.sketches.add(sketch_plane)
+    sketch.name = "LOUNGE_ORIENT_SK_{}".format(sanitize_token(item_id, limit=60))
+    corners = [(x0, y0, z0), (x0, y1, z0), (x0, y1, z1), (x0, y0, z1), (x0, y0, z0)]
+    if not _draw_model_loop_on_sketch(sketch, corners):
+        return None, "invalid_outer"
+    profile = _largest_profile(sketch)
+    if profile is None:
+        return None, "no_profile"
+    thickness = x1 - x0
+    extrudes = component.features.extrudeFeatures
+    ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    if anchor_x1:
+        ext_input.setDistanceExtent(True, adsk.core.ValueInput.createByReal(-mm_to_cm(thickness)))
+    else:
+        ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm_to_cm(thickness)))
+    feature = extrudes.add(ext_input)
+    if feature.bodies.count < 1:
+        return None, "no_body"
+    body = feature.bodies.item(0)
+    _tag_lounge_body(body, item_id, preview_mode, "placementBoxYZ")
+    return body, None
+
+
+def _outer_is_axis_aligned_rectangle(item):
+    outer = _item_outer_points(item)
+    if len(outer) < 4:
+        return False
+    # Rounded lids are not simple rectangles.
+    if item.get("kind") == "lid" and _num(item.get("radius"), 0.0) > 0:
+        return False
+    if len(outer) > 5:
+        return False
+    xs = [_num(p[0]) for p in outer]
+    ys = [_num(p[1]) for p in outer]
+    width = max(xs) - min(xs)
+    depth = max(ys) - min(ys)
+    if width <= 0 or depth <= 0:
+        return False
+    placement = _item_placement(item)
+    plane = str(item.get("profilePlane") or "XY")
+    if plane == "XY":
+        return (
+            abs(width - (_num(placement.get("x1")) - _num(placement.get("x0")))) < 1.0
+            and abs(depth - (_num(placement.get("y1")) - _num(placement.get("y0")))) < 1.0
+        )
+    if plane == "XZ":
+        return (
+            abs(width - (_num(placement.get("x1")) - _num(placement.get("x0")))) < 1.0
+            and abs(depth - (_num(placement.get("z1")) - _num(placement.get("z0")))) < 1.0
+        )
+    if plane == "YZ":
+        return (
+            abs(width - (_num(placement.get("y1")) - _num(placement.get("y0")))) < 1.0
+            and abs(depth - (_num(placement.get("z1")) - _num(placement.get("z0")))) < 1.0
+        )
+    return False
+
+
+def _add_placement_box_body(component, item, preview_mode="assembly"):
+    placement = _item_placement(item)
+    item_id = str(item.get("id") or "panel")
+    plane = str(item.get("profilePlane") or "XY")
+    x0 = _num(placement.get("x0"))
+    x1 = _num(placement.get("x1"))
+    y0 = _num(placement.get("y0"))
+    y1 = _num(placement.get("y1"))
+    z0 = _num(placement.get("z0"))
+    z1 = _num(placement.get("z1"))
+    if plane == "XY":
+        body, err = _add_box_body(component, item_id, x0, x1, y0, y1, z0, z1)
+        if body is not None:
+            _tag_lounge_body(body, item_id, preview_mode, "placementBoxXY")
+        return body, err
+    if plane == "XZ":
+        return _add_xz_box_body(component, item_id, x0, x1, y0, y1, z0, z1, preview_mode=preview_mode)
+    if plane == "YZ":
+        anchor_x1 = item_id in ("main_left_l_piece", "main_right_l_piece")
+        return _add_yz_box_body(
+            component, item_id, x0, x1, y0, y1, z0, z1,
+            preview_mode=preview_mode, anchor_x1=anchor_x1,
+        )
+    return None, "unsupported_profile_plane"
+
+
 def _rounded_rect_points(x0, y0, x1, y1, radius, segments=10):
     r = max(0.0, min(float(radius or 0.0), (x1 - x0) / 2.0, (y1 - y0) / 2.0))
     if r <= 0:
@@ -187,7 +374,7 @@ def _rounded_rect_points(x0, y0, x1, y1, radius, segments=10):
     return pts
 
 
-def _draw_loop(sketch, points, offset_x=0.0, offset_y=0.0):
+def _draw_loop(sketch, points, offset_x=0.0, offset_y=0.0, plane_z_mm=None):
     if not isinstance(points, list) or len(points) < 3:
         return False
     clean = [p for p in points if isinstance(p, (list, tuple)) and len(p) >= 2]
@@ -199,8 +386,22 @@ def _draw_loop(sketch, points, offset_x=0.0, offset_y=0.0):
     for idx in range(len(clean) - 1):
         p0 = clean[idx]
         p1 = clean[idx + 1]
-        a = adsk.core.Point3D.create(mm_to_cm(_num(p0[0]) + offset_x), mm_to_cm(_num(p0[1]) + offset_y), 0)
-        b = adsk.core.Point3D.create(mm_to_cm(_num(p1[0]) + offset_x), mm_to_cm(_num(p1[1]) + offset_y), 0)
+        if plane_z_mm is None:
+            a = adsk.core.Point3D.create(mm_to_cm(_num(p0[0]) + offset_x), mm_to_cm(_num(p0[1]) + offset_y), 0)
+            b = adsk.core.Point3D.create(mm_to_cm(_num(p1[0]) + offset_x), mm_to_cm(_num(p1[1]) + offset_y), 0)
+        else:
+            a = adsk.core.Point3D.create(
+                mm_to_cm(_num(p0[0]) + offset_x),
+                mm_to_cm(_num(p0[1]) + offset_y),
+                mm_to_cm(plane_z_mm),
+            )
+            b = adsk.core.Point3D.create(
+                mm_to_cm(_num(p1[0]) + offset_x),
+                mm_to_cm(_num(p1[1]) + offset_y),
+                mm_to_cm(plane_z_mm),
+            )
+            a = sketch.modelToSketchSpace(a)
+            b = sketch.modelToSketchSpace(b)
         lines.addByTwoPoints(a, b)
     return True
 
@@ -265,6 +466,22 @@ def _item_outer_points(item):
     return [[0, 0], [width, 0], [width, depth], [0, depth], [0, 0]]
 
 
+def _set_cut_participant_bodies(ext_input, body):
+    """Restrict a cut extrude to one body; without this Fusion may cut every intersecting body."""
+    try:
+        ext_input.participantBodies = [body]
+        return None
+    except Exception:
+        pass
+    try:
+        participants = adsk.core.ObjectCollection.create()
+        participants.add(body)
+        ext_input.participantBodies = participants
+        return None
+    except Exception as ex:
+        return str(ex)
+
+
 def _item_cut_loops(item):
     # Openings, rebates, and finger holes are modeled as post-extrude cuts so stepped depths are visible.
     return []
@@ -286,7 +503,7 @@ def _cut_rounded_rect_from_top(component, body, item_id, x0, y0, x1, y1, radius,
     sketch = component.sketches.add(plane)
     sketch.name = "LOUNGE_CUT_{}".format(sanitize_token(item_id, limit=60))
     loop = _rounded_rect_points(x0, y0, x1, y1, radius)
-    if not _draw_loop(sketch, loop, offset_x, offset_y):
+    if not _draw_loop(sketch, loop, offset_x, offset_y, plane_z_mm=plane_z):
         return {"id": item_id, "status": "failed", "reason": "draw_loop_failed"}
     profile = _largest_profile(sketch)
     if profile is None:
@@ -295,12 +512,9 @@ def _cut_rounded_rect_from_top(component, body, item_id, x0, y0, x1, y1, radius,
     ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
     distance = mm_to_cm(thickness) if from_bottom else -mm_to_cm(thickness)
     ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(distance))
-    try:
-        participants = adsk.core.ObjectCollection.create()
-        participants.add(body)
-        ext_input.participantBodies = participants
-    except Exception:
-        pass
+    participant_error = _set_cut_participant_bodies(ext_input, body)
+    if participant_error:
+        return {"id": item_id, "status": "failed", "reason": "participantBodies: {}".format(participant_error)}
     try:
         cut = extrudes.add(ext_input)
         cut.name = "LOUNGE_CUT_FEAT_{}".format(sanitize_token(item_id, limit=60))
@@ -309,7 +523,7 @@ def _cut_rounded_rect_from_top(component, body, item_id, x0, y0, x1, y1, radius,
         return {"id": item_id, "status": "failed", "reason": str(ex)}
 
 
-def _cut_rounded_rect_ring_from_top(component, body, item_id, x0, y0, x1, y1, radius, inset, depth, offset_x=0.0, offset_y=0.0):
+def _cut_rounded_rect_ring_from_top(component, body, item_id, x0, y0, x1, y1, radius, inset, depth, offset_x=0.0, offset_y=0.0, face="top"):
     if x1 <= x0 or y1 <= y0 or inset <= 0 or depth <= 0:
         return {"id": item_id, "status": "skipped", "reason": "invalid ring bounds"}
     ix0 = x0 + inset
@@ -319,15 +533,21 @@ def _cut_rounded_rect_ring_from_top(component, body, item_id, x0, y0, x1, y1, ra
     if ix1 <= ix0 or iy1 <= iy0:
         return {"id": item_id, "status": "skipped", "reason": "inset consumes profile"}
     inner_radius = max(0.0, _num(radius) - inset)
-    top_z = _num(body.boundingBox.maxPoint.z) * 10.0
+    from_bottom = str(face or "top") == "bottom"
+    if from_bottom:
+        plane_z = _num(body.boundingBox.minPoint.z) * 10.0
+        cut_distance = mm_to_cm(depth)
+    else:
+        plane_z = _num(body.boundingBox.maxPoint.z) * 10.0
+        cut_distance = -mm_to_cm(depth)
     plane_input = component.constructionPlanes.createInput()
-    plane_input.setByOffset(component.xYConstructionPlane, adsk.core.ValueInput.createByReal(mm_to_cm(top_z)))
+    plane_input.setByOffset(component.xYConstructionPlane, adsk.core.ValueInput.createByReal(mm_to_cm(plane_z)))
     plane = component.constructionPlanes.add(plane_input)
     sketch = component.sketches.add(plane)
     sketch.name = "LOUNGE_CUT_{}".format(sanitize_token(item_id, limit=60))
-    if not _draw_loop(sketch, _rounded_rect_points(x0, y0, x1, y1, radius), offset_x, offset_y):
+    if not _draw_loop(sketch, _rounded_rect_points(x0, y0, x1, y1, radius), offset_x, offset_y, plane_z_mm=plane_z):
         return {"id": item_id, "status": "failed", "reason": "draw_outer_failed"}
-    if not _draw_loop(sketch, _rounded_rect_points(ix0, iy0, ix1, iy1, inner_radius), offset_x, offset_y):
+    if not _draw_loop(sketch, _rounded_rect_points(ix0, iy0, ix1, iy1, inner_radius), offset_x, offset_y, plane_z_mm=plane_z):
         return {"id": item_id, "status": "failed", "reason": "draw_inner_failed"}
     outer_area = _rounded_rect_area_mm2(x0, y0, x1, y1, radius)
     inner_area = _rounded_rect_area_mm2(ix0, iy0, ix1, iy1, inner_radius)
@@ -335,22 +555,19 @@ def _cut_rounded_rect_ring_from_top(component, body, item_id, x0, y0, x1, y1, ra
     if profile is None:
         return {"id": item_id, "status": "failed", "reason": "no_ring_profile"}
     ext_input = component.features.extrudeFeatures.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
-    ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(-mm_to_cm(depth)))
-    try:
-        participants = adsk.core.ObjectCollection.create()
-        participants.add(body)
-        ext_input.participantBodies = participants
-    except Exception:
-        pass
+    ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(cut_distance))
+    participant_error = _set_cut_participant_bodies(ext_input, body)
+    if participant_error:
+        return {"id": item_id, "status": "failed", "reason": "participantBodies: {}".format(participant_error)}
     try:
         cut = component.features.extrudeFeatures.add(ext_input)
         cut.name = "LOUNGE_CUT_FEAT_{}".format(sanitize_token(item_id, limit=60))
-        return {"id": item_id, "status": "created", "depth": depth, "inset": inset, "zTop": top_z}
+        return {"id": item_id, "status": "created", "depth": depth, "inset": inset, "face": face, "zPlane": plane_z}
     except Exception as ex:
         return {"id": item_id, "status": "failed", "reason": str(ex)}
 
 
-def _apply_flat_panel_cuts(component, body, item, offset_x, offset_y):
+def _apply_flat_panel_cuts(component, body, item, offset_x, offset_y, assembly_mode=False):
     audits = []
     thickness = max(0.1, _num(item.get("thickness"), 18))
     opening = item.get("opening") if isinstance(item.get("opening"), dict) else None
@@ -401,6 +618,7 @@ def _apply_flat_panel_cuts(component, body, item, offset_x, offset_y):
                 step_w,
                 step_h,
                 offset_x, offset_y,
+                face="bottom" if assembly_mode else "top",
             ))
     for hole in item.get("hingeHoles") or []:
         if not isinstance(hole, dict):
@@ -454,6 +672,125 @@ def _item_size(item):
     return max(xs) - min(xs), max(ys) - min(ys)
 
 
+def _item_placement(item):
+    placement = item.get("placement") if isinstance(item.get("placement"), dict) else {}
+    return placement
+
+
+def _profile_world_point(plane, placement, point2d):
+    a = _num(point2d[0])
+    b = _num(point2d[1])
+    x0 = _num(placement.get("x0"))
+    y0 = _num(placement.get("y0"))
+    z0 = _num(placement.get("z0"))
+    if plane == "XY":
+        return (x0 + a, y0 + b, z0)
+    if plane == "XZ":
+        return (x0 + a, y0, z0 + b)
+    if plane == "YZ":
+        return (x0, y0 + a, z0 + b)
+    return None
+
+
+def _lounge_profile_plane_for_sketch(component, plane, placement, item_id=""):
+    construction = component.constructionPlanes
+    plane_input = construction.createInput()
+    if plane == "YZ":
+        anchor = _num(placement.get("x1")) if item_id in ("main_left_l_piece", "main_right_l_piece") else _num(placement.get("x0"))
+        plane_input.setByOffset(component.yZConstructionPlane, adsk.core.ValueInput.createByReal(mm_to_cm(anchor)))
+    elif plane == "XY":
+        plane_input.setByOffset(component.xYConstructionPlane, adsk.core.ValueInput.createByReal(mm_to_cm(_num(placement.get("z0")))))
+    elif plane == "XZ":
+        plane_input.setByOffset(component.xZConstructionPlane, adsk.core.ValueInput.createByReal(mm_to_cm(_num(placement.get("y0")))))
+    else:
+        return None
+    return construction.add(plane_input)
+
+
+def _placement_thickness_mm(plane, placement, item_id=""):
+    if plane == "YZ":
+        return max(0.1, _num(placement.get("x1")) - _num(placement.get("x0")))
+    if plane == "XZ":
+        return max(0.1, _num(placement.get("y1")) - _num(placement.get("y0")))
+    return max(0.1, _num(placement.get("z1")) - _num(placement.get("z0")))
+
+
+def _draw_loop_oriented(sketch, points, plane, placement):
+    if not isinstance(points, list) or len(points) < 3:
+        return False
+    clean = [p for p in points if isinstance(p, (list, tuple)) and len(p) >= 2]
+    if len(clean) < 3:
+        return False
+    if clean[0] != clean[-1]:
+        clean.append(clean[0])
+    lines = sketch.sketchCurves.sketchLines
+    for idx in range(len(clean) - 1):
+        w0 = _profile_world_point(plane, placement, clean[idx])
+        w1 = _profile_world_point(plane, placement, clean[idx + 1])
+        if w0 is None or w1 is None:
+            return False
+        m0 = adsk.core.Point3D.create(mm_to_cm(w0[0]), mm_to_cm(w0[1]), mm_to_cm(w0[2]))
+        m1 = adsk.core.Point3D.create(mm_to_cm(w1[0]), mm_to_cm(w1[1]), mm_to_cm(w1[2]))
+        s0 = sketch.modelToSketchSpace(m0)
+        s1 = sketch.modelToSketchSpace(m1)
+        lines.addByTwoPoints(s0, s1)
+    return True
+
+
+def _add_oriented_panel_body(component, item, preview_mode="assembly"):
+    """Create panels directly in assembly pose (no flat staging + rotation)."""
+    item_id = str(item.get("id") or "panel")
+    plane = str(item.get("profilePlane") or "XY")
+    if plane not in ("XY", "XZ", "YZ"):
+        return None, "oriented_plane_required"
+    if _outer_is_axis_aligned_rectangle(item):
+        return _add_placement_box_body(component, item, preview_mode=preview_mode)
+    placement = _item_placement(item)
+    sketch_plane = _lounge_profile_plane_for_sketch(component, plane, placement, item_id=item_id)
+    if sketch_plane is None:
+        return None, "unsupported_profile_plane"
+    sketch = component.sketches.add(sketch_plane)
+    sketch.name = "LOUNGE_ORIENT_SK_{}".format(sanitize_token(item_id, limit=60))
+    if not _draw_loop_oriented(sketch, _item_outer_points(item), plane, placement):
+        return None, "invalid_outer"
+    profile = _largest_profile(sketch)
+    if profile is None:
+        return None, "no_profile"
+    thickness = _placement_thickness_mm(plane, placement, item_id=item_id)
+    extrudes = component.features.extrudeFeatures
+    ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    if item_id in ("main_left_l_piece", "main_right_l_piece"):
+        ext_input.setDistanceExtent(True, adsk.core.ValueInput.createByReal(-mm_to_cm(thickness)))
+    else:
+        ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm_to_cm(thickness)))
+    feature = extrudes.add(ext_input)
+    if feature.bodies.count < 1:
+        return None, "no_body"
+    body = feature.bodies.item(0)
+    _tag_lounge_body(body, item_id, preview_mode, "orientedAssemblyProfile")
+    return body, None
+
+
+def _assembly_uses_oriented_body(item):
+    return str(item.get("profilePlane") or "XY") in ("XY", "XZ", "YZ")
+
+
+def _oriented_cut_offsets(item):
+    """Panel-local cut coords need placement offset when the body was built in assembly pose."""
+    placement = _item_placement(item)
+    if str(item.get("profilePlane") or "XY") == "XY":
+        return _num(placement.get("x0")), _num(placement.get("y0"))
+    return 0.0, 0.0
+
+
+def _item_needs_assembly_cuts(item):
+    if item.get("opening") or item.get("kind") == "lid":
+        return True
+    if item.get("fingerHole") or item.get("hingeHoles") or item.get("lockCutouts") or item.get("grooves"):
+        return True
+    return False
+
+
 def _add_flat_panel_body(component, item, offset_x, offset_y, preview_mode="flat_svg"):
     item_id = str(item.get("id") or "panel")
     thickness = max(0.1, _num(item.get("thickness"), 18))
@@ -497,6 +834,21 @@ def _move_body_rigid_transform(component, body, transform, feature_prefix="LOUNG
     return move_feature
 
 
+def _apply_occurrence_transform(occurrence, matrix):
+    """Place a per-panel child occurrence with an exact rigid transform.
+
+    Body-level moveFeatures silently apply no motion inside per-panel child
+    components; the occurrence transform is exact for all planes (incl. YZ).
+    """
+    if matrix is None:
+        return "No target transform."
+    try:
+        occurrence.transform = matrix
+        return None
+    except Exception as ex:
+        return "Occurrence transform failed: {}".format(ex)
+
+
 def _assembly_transform_for_item(item, staging_offset_x=0.0, staging_offset_y=0.0):
     placement = item.get("placement") if isinstance(item.get("placement"), dict) else {}
     x0 = _num(placement.get("x0"))
@@ -508,25 +860,6 @@ def _assembly_transform_for_item(item, staging_offset_x=0.0, staging_offset_y=0.
     item_id = str(item.get("id") or "")
     matrix = adsk.core.Matrix3D.create()
     if plane == "XY":
-        if item.get("kind") == "lid":
-            y1 = _num(placement.get("y1"))
-            z1 = _num(placement.get("z1"))
-            # Flip lids over so the stepped face is on the opposite side after assembly.
-            # Local flat axes: X=width, Y=depth, Z=thickness.
-            # Assembly axes: X=width, Y=-depth, Z=-thickness.
-            matrix.setCell(0, 0, 1)
-            matrix.setCell(0, 1, 0)
-            matrix.setCell(0, 2, 0)
-            matrix.setCell(0, 3, mm_to_cm(x0 - ox))
-            matrix.setCell(1, 0, 0)
-            matrix.setCell(1, 1, -1)
-            matrix.setCell(1, 2, 0)
-            matrix.setCell(1, 3, mm_to_cm(y1 + oy))
-            matrix.setCell(2, 0, 0)
-            matrix.setCell(2, 1, 0)
-            matrix.setCell(2, 2, -1)
-            matrix.setCell(2, 3, mm_to_cm(z1))
-            return matrix
         matrix.translation = adsk.core.Vector3D.create(mm_to_cm(x0 - ox), mm_to_cm(y0 - oy), mm_to_cm(z0))
         return matrix
     if plane == "XZ":
@@ -582,12 +915,18 @@ def _assembly_transform_for_item(item, staging_offset_x=0.0, staging_offset_y=0.
     return None
 
 
+def _assembly_plane_sort_key(item):
+    plane = str(item.get("profilePlane") or "XY")
+    return {"XY": 0, "XZ": 1, "YZ": 2}.get(plane, 9)
+
+
 def _auto_origin(root, origin_x_mm, origin_y_mm):
     """None = auto: use the generation-zone centre from the saved work zones.
 
-    Reads the saved layout attribute directly (no work_zones import) to stay
-    immune to Fusion's stale module cache.
+    Returns (x, y, active). When active is True (explicit origin or work zones),
+    assembly is placed on z=0 instead of legacy MODEL_Z_OFFSET_MM staging.
     """
+    has_work_zones = False
     if origin_x_mm is None and origin_y_mm is None:
         try:
             import json as _json
@@ -597,13 +936,23 @@ def _auto_origin(root, origin_x_mm, origin_y_mm):
                 layout = _json.loads(attr.value)
                 rect = layout.get("generation") if isinstance(layout, dict) else None
                 if isinstance(rect, dict):
+                    has_work_zones = True
                     return (
-                        (float(rect["x0"]) + float(rect["x1"])) / 2.0,
-                        (float(rect["y0"]) + float(rect["y1"])) / 2.0,
+                        float(rect["x0"]),
+                        float(rect["y0"]),
+                        True,
                     )
         except Exception:
             pass
-    return float(origin_x_mm or 0.0), float(origin_y_mm or 0.0)
+    explicit = origin_x_mm is not None or origin_y_mm is not None
+    origin_active = bool(explicit or has_work_zones)
+    return float(origin_x_mm or 0.0), float(origin_y_mm or 0.0), origin_active
+
+
+def _resolve_assembly_origin(root, origin_x_mm, origin_y_mm):
+    origin_x_mm, origin_y_mm, origin_active = _auto_origin(root, origin_x_mm, origin_y_mm)
+    origin_z_mm = 0.0 if origin_active else MODEL_Z_OFFSET_MM
+    return origin_x_mm, origin_y_mm, origin_z_mm, origin_active
 
 
 def _capture_position_snapshot(root_comp):
@@ -638,11 +987,13 @@ def create_lounge_bodies(fusion_adapter, result, run_label=None, component_name=
         summary["errors"].append("No active Fusion root component.")
         return summary
     summary["deletedPrevious"] = _delete_previous_lounge_artifacts(root)
-    origin_x_mm, origin_y_mm = _auto_origin(root, origin_x_mm, origin_y_mm)
+    origin_x_mm, origin_y_mm, origin_z_mm, origin_active = _resolve_assembly_origin(root, origin_x_mm, origin_y_mm)
     component, component_name, component_warning = _new_lounge_component(
         root, summary["runLabel"], "flat",
-        component_name=component_name, origin_x_mm=origin_x_mm, origin_y_mm=origin_y_mm,
+        component_name=component_name, origin_x_mm=origin_x_mm, origin_y_mm=origin_y_mm, origin_z_mm=origin_z_mm,
     )
+    summary["resolvedOrigin"] = [origin_x_mm, origin_y_mm, origin_z_mm]
+    summary["originActive"] = bool(origin_active)
     summary["assemblyComponentName"] = component_name
     if component_warning:
         summary["warnings"].append(component_warning)
@@ -660,7 +1011,7 @@ def create_lounge_bodies(fusion_adapter, result, run_label=None, component_name=
             cursor_x = 0.0
             row_y += row_h + gap
             row_h = 0.0
-        item_component = _item_component_or_fallback(component, root, item.get("id"), summary["warnings"])
+        item_component, item_occurrence = _item_component_or_fallback(component, root, item.get("id"), summary["warnings"])
         body, err = _add_flat_panel_body(item_component, item, cursor_x, row_y)
         if err:
             summary["skipped"].append({"id": item.get("id"), "reason": err})
@@ -670,7 +1021,13 @@ def create_lounge_bodies(fusion_adapter, result, run_label=None, component_name=
         summary["createdIds"].append(item.get("id"))
         cursor_x += width + gap
         row_h = max(row_h, depth)
-    summary["modelZOffset"] = {"offsetMm": MODEL_Z_OFFSET_MM, "movedBodies": 0, "failedBodies": 0, "mode": "componentAtModelZ"}
+    _capture_position_snapshot(root)
+    summary["modelZOffset"] = {
+        "offsetMm": origin_z_mm,
+        "movedBodies": 0,
+        "failedBodies": 0,
+        "mode": "componentAtModelZ" if not origin_active else "generationZoneZ0",
+    }
     return summary
 
 
@@ -685,7 +1042,7 @@ def create_lounge_assembly_bodies(fusion_adapter, result, run_label=None, compon
         "cutAudit": [],
         "transformAudit": [],
         "errors": [],
-        "warnings": ["Phase 1 Lounge assembly: bodies are created from flat profiles, then rigidly transformed by placement/profilePlane."],
+        "warnings": ["Lounge assembly: world-aligned axes via placementBox/orientedAssemblyDirect (v23)."],
         "previewMode": "assembly",
         "adapterRevision": ADAPTER_REVISION,
         "deletedPrevious": {"bodies": 0, "sketches": 0, "failed": 0},
@@ -697,65 +1054,49 @@ def create_lounge_assembly_bodies(fusion_adapter, result, run_label=None, compon
         summary["errors"].append("No active Fusion root component.")
         return summary
     summary["deletedPrevious"] = _delete_previous_lounge_artifacts(root)
-    origin_x_mm, origin_y_mm = _auto_origin(root, origin_x_mm, origin_y_mm)
+    origin_x_mm, origin_y_mm, origin_z_mm, origin_active = _resolve_assembly_origin(root, origin_x_mm, origin_y_mm)
     component, component_name, component_warning = _new_lounge_component(
         root, summary["runLabel"], "assembly",
-        component_name=component_name, origin_x_mm=origin_x_mm, origin_y_mm=origin_y_mm,
+        component_name=component_name, origin_x_mm=origin_x_mm, origin_y_mm=origin_y_mm, origin_z_mm=origin_z_mm,
     )
+    summary["resolvedOrigin"] = [origin_x_mm, origin_y_mm, origin_z_mm]
+    summary["originActive"] = bool(origin_active)
     summary["assemblyComponentName"] = component_name
     if component_warning:
         summary["warnings"].append(component_warning)
     panels = result.get("panels") if isinstance(result.get("panels"), list) else []
     lids = result.get("lids") if isinstance(result.get("lids"), list) else []
-    items = [item for item in panels + lids if isinstance(item, dict)]
-    staged = []
-    cursor_x = 0.0
-    row_y = 0.0
-    row_h = 0.0
-    max_row_w = 3200.0
-    gap = 160.0
+    items = sorted(
+        [item for item in panels + lids if isinstance(item, dict)],
+        key=_assembly_plane_sort_key,
+    )
     for item in items:
         item_id = item.get("id")
-        width, depth = _item_size(item)
-        if cursor_x > 0 and cursor_x + width > max_row_w:
-            cursor_x = 0.0
-            row_y += row_h + gap
-            row_h = 0.0
-        stage_x = cursor_x
-        stage_y = row_y
-        item_component = _item_component_or_fallback(component, root, item_id, summary["warnings"])
-        body, err = _add_flat_panel_body(item_component, item, stage_x, stage_y, preview_mode="assembly")
+        item_component, _item_occurrence = _item_component_for_assembly(component, item_id)
+        body, err = _add_oriented_panel_body(item_component, item, preview_mode="assembly")
         if err:
             summary["skipped"].append({"id": item_id, "reason": err})
-            cursor_x += width + gap
-            row_h = max(row_h, depth)
             continue
-        summary["cutAudit"].extend(_apply_flat_panel_cuts(item_component, body, item, stage_x, stage_y))
-        staged.append({"item": item, "body": body, "offsetX": stage_x, "offsetY": stage_y, "component": item_component})
-        cursor_x += width + gap
-        row_h = max(row_h, depth)
-
-    for staged_item in staged:
-        item = staged_item["item"]
-        body = staged_item["body"]
-        item_id = item.get("id")
-        transform = _assembly_transform_for_item(item, staged_item["offsetX"], staged_item["offsetY"])
-        if transform is None:
-            summary["skipped"].append({"id": item_id, "reason": "unsupported profilePlane {}".format(item.get("profilePlane"))})
-            continue
-        try:
-            _move_body_rigid_transform(staged_item.get("component") or component, body, transform, feature_prefix="LOUNGE_ASM_MOVE_")
-            summary["transformAudit"].append({
-                "id": item_id,
-                "profilePlane": item.get("profilePlane"),
-                "placement": item.get("placement"),
-                "stagingOffset": {"x": staged_item["offsetX"], "y": staged_item["offsetY"]},
-                "status": "moved",
-            })
-        except Exception as ex:
-            summary["errors"].append("Move failed for {}: {}".format(item_id, ex))
-            continue
+        if _item_needs_assembly_cuts(item):
+            cut_ox, cut_oy = _oriented_cut_offsets(item)
+            summary["cutAudit"].extend(_apply_flat_panel_cuts(
+                item_component, body, item, cut_ox, cut_oy, assembly_mode=True,
+            ))
+        summary["transformAudit"].append({
+            "id": item_id,
+            "profilePlane": item.get("profilePlane"),
+            "placement": item.get("placement"),
+            "transformSource": "orientedAssemblyDirect",
+            "componentScope": "assemblyParent",
+            "status": "placed",
+        })
         summary["createdBodies"] += 1
         summary["createdIds"].append(item_id)
-    summary["modelZOffset"] = {"offsetMm": MODEL_Z_OFFSET_MM, "movedBodies": 0, "failedBodies": 0, "mode": "componentAtModelZ"}
+    _capture_position_snapshot(root)
+    summary["modelZOffset"] = {
+        "offsetMm": origin_z_mm,
+        "movedBodies": 0,
+        "failedBodies": 0,
+        "mode": "componentAtModelZ" if not origin_active else "generationZoneZ0",
+    }
     return summary

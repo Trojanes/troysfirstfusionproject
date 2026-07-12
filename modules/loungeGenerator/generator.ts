@@ -465,6 +465,119 @@ function addMiddleCabinet(panels: LoungePanel[], state: LoungeSettings): void {
   });
 }
 
+function iShapeWarnings(state: LoungeSettings): string[] {
+  const warnings: string[] = [];
+  const ppt = Math.max(1, state.partitionPanelThickness);
+  if (!(state.mainWidth > 2 * ppt)) warnings.push("Width must exceed 2 x PPT for the side panels.");
+  if (!(state.mainDepth > 2 * ppt)) warnings.push("Depth must exceed 2 x PPT for the front panel.");
+  if (!(state.height > ppt)) warnings.push("Height must exceed PPT.");
+  if (state.wheelAvoidanceEnabled) {
+    if (!(state.avoidanceDepth < state.mainDepth)) warnings.push("Avoidance Depth must be less than Depth.");
+    if (!(state.avoidanceHeight < state.height - ppt)) warnings.push("Avoidance Height must be less than Height - PPT.");
+  }
+  return warnings;
+}
+
+function generateIShapeGeometry(state: LoungeSettings): LoungeGeometryResult {
+  const ppt = Math.max(1, state.partitionPanelThickness);
+  const panelHeight = Math.max(0, state.height - ppt);
+  const W = state.mainWidth;
+  const D = state.mainDepth;
+  const bounds: LoungeBounds2D = { x0: 0, x1: W, y0: 0, y1: D };
+  const panels: LoungePanel[] = [];
+  const openings: LoungeOpening[] = [];
+  const lids: LoungeLid[] = [];
+  const avoidance = state.wheelAvoidanceEnabled === true;
+  const AD = Math.max(0, state.avoidanceDepth);
+  const AH = Math.max(0, state.avoidanceHeight);
+  const hasCutout = avoidance && AD > 0 && AD < D && AH > 0 && AH < panelHeight;
+
+  // Front covers the full width; side panels tuck behind it (y from ppt), matching the L-shape main conventions.
+  panels.push({
+    id: "i_front",
+    name: "I Front",
+    kind: "front_panel",
+    profilePlane: "XZ",
+    width: W,
+    height: panelHeight,
+    depth: ppt,
+    thickness: ppt,
+    placement: { x0: 0, x1: W, y0: Math.max(0, D - ppt), y1: D, z0: 0, z1: panelHeight },
+    outer: [[0, 0], [W, 0], [W, panelHeight], [0, panelHeight], [0, 0]],
+  });
+
+  // Side panels: full YZ rectangles, depth reduced by the front panel.
+  // Rear-lower wheel avoidance cutout sits at the wall side (local y = 0).
+  const sideDepth = Math.max(0, D - ppt);
+  const sideOuter = hasCutout
+    ? [[AD, 0], [sideDepth, 0], [sideDepth, panelHeight], [0, panelHeight], [0, AH], [AD, AH], [AD, 0]]
+    : [[0, 0], [sideDepth, 0], [sideDepth, panelHeight], [0, panelHeight], [0, 0]];
+  const sideNote = hasCutout ? "Rear-lower wheel avoidance cutout applied." : undefined;
+  panels.push({
+    id: "i_left_side",
+    name: "I Left Side",
+    kind: "side_panel",
+    profilePlane: "YZ",
+    width: sideDepth,
+    height: panelHeight,
+    depth: ppt,
+    thickness: ppt,
+    note: sideNote,
+    placement: { x0: 0, x1: ppt, y0: 0, y1: sideDepth, z0: 0, z1: panelHeight },
+    outer: sideOuter.map((point) => [...point]),
+  });
+  panels.push({
+    id: "i_right_side",
+    name: "I Right Side",
+    kind: "side_panel",
+    profilePlane: "YZ",
+    width: sideDepth,
+    height: panelHeight,
+    depth: ppt,
+    thickness: ppt,
+    note: sideNote,
+    placement: { x0: W - ppt, x1: W, y0: 0, y1: sideDepth, z0: 0, z1: panelHeight },
+    outer: sideOuter.map((point) => [...point]),
+  });
+
+  addTopPanel(panels, openings, lids, "i_top", "I Top", W, D, ppt, bounds, state.height, state.topLidEnabled);
+
+  if (hasCutout && AH > ppt) {
+    panels.push({
+      id: "i_avoidance_top",
+      name: "I Avoidance Top",
+      kind: "avoidance_top",
+      profilePlane: "XY",
+      width: W,
+      depth: AD,
+      thickness: ppt,
+      placement: { x0: 0, x1: W, y0: 0, y1: AD, z0: AH - ppt, z1: AH },
+      outer: [[0, 0], [W, 0], [W, AD], [0, AD], [0, 0]],
+    });
+    panels.push({
+      id: "i_avoidance_front",
+      name: "I Avoidance Front",
+      kind: "avoidance_front",
+      profilePlane: "XZ",
+      width: W,
+      height: AH - ppt,
+      thickness: ppt,
+      placement: { x0: 0, x1: W, y0: AD - ppt, y1: AD, z0: 0, z1: AH - ppt },
+      outer: [[0, 0], [W, 0], [W, AH - ppt], [0, AH - ppt], [0, 0]],
+    });
+  }
+
+  return {
+    meta: { module: "lounge", style: "I_SHAPE", phase: "i_shape_geometry_v1" },
+    state,
+    footprint: { i: bounds },
+    panels,
+    openings,
+    lids,
+    validation: { warnings: iShapeWarnings(state), errors: [] },
+  };
+}
+
 function generateParallelLoungeGeometry(state: LoungeSettings): LoungeGeometryResult {
   const ppt = Math.max(1, state.partitionPanelThickness);
   const panelHeight = Math.max(0, state.height - ppt);
@@ -496,6 +609,7 @@ function generateParallelLoungeGeometry(state: LoungeSettings): LoungeGeometryRe
 export function generateLoungeGeometry(input: Partial<LoungeSettings>): LoungeGeometryResult {
   const state = normalizeSettings(input);
   if (state.style === "PARALLEL") return generateParallelLoungeGeometry(state);
+  if (state.style === "I_SHAPE") return generateIShapeGeometry(state);
   const ppt = Math.max(1, state.partitionPanelThickness);
   const panelHeight = Math.max(0, state.height - ppt);
   const mainBounds = { x0: 0, x1: state.mainWidth, y0: 0, y1: state.mainDepth };

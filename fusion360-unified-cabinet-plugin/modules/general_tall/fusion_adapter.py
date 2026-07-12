@@ -13,7 +13,7 @@ PANEL_ATTRIBUTE_GROUP = "UnifiedCabinet.Panel"
 PANEL_METADATA_ATTR = "metadata"
 PANEL_ID_ATTR = "panelId"
 
-ADAPTER_BUILD = "2026-07-02-placement-debug-1"
+ADAPTER_BUILD = "2026-07-06-v-stile-y-align-1"
 
 
 def _write_placement_debug(payload):
@@ -306,6 +306,11 @@ def _oh_panel_metadata(board, bbox, all_boards, run_label):
     }
     if semantics.get("doorColorSlot") is not None:
         default_attributes["doorColorSlot"] = semantics.get("doorColorSlot")
+    board_type_tag = (
+        "door" if semantics["materialClass"] == "door_board"
+        else "partition" if semantics["materialClass"] == "partition_board"
+        else "carcass"
+    )
     return {
         "schemaVersion": 1,
         "identity": {
@@ -319,6 +324,18 @@ def _oh_panel_metadata(board, bbox, all_boards, run_label):
             "runId": str(run_label or ""),
         },
         "defaultAttributes": default_attributes,
+        "classification": {
+            "boardType": {
+                "value": board_type_tag,
+                "source": "generator",
+                "locked": False,
+            },
+            "color": {
+                "value": "",
+                "source": "default",
+                "locked": False,
+            },
+        },
         "designGeometry": _oh_design_geometry(board, bbox),
         "lifecycle": {
             "state": "generated",
@@ -336,6 +353,181 @@ def _write_oh_panel_metadata(body, board, bbox, all_boards, run_label):
     # Instance lifecycle marker (dual-track zones): generator output is
     # "generated"; nesting layout copies get "nested" and are excluded from
     # scans/write-backs.
+    _set_entity_attribute(body, "UnifiedCabinet", "instanceRole", "generated")
+    return metadata, ok_id and ok_payload
+
+
+def _gt_board_semantics(board):
+    """Canonical material/role for General Tall boards.
+
+    T3/B3 are carcass inserted boards (CPT thick). T1/B1 are front-visible
+    door-colour fascias. Front panels (FP*) are door leaves.
+    """
+    board_id = str(board.get("id") or "")
+    source_type = str(board.get("boardType") or board_id)
+    category = str(board.get("category") or "")
+
+    if board_id in ("T1", "B1"):
+        return {
+            "boardType": "front_door_fascia" if board_id == "T1" else "bottom_front_door_fascia",
+            "role": "front_visible",
+            "category": "front",
+            "materialClass": "door_board",
+            "doorColorSlot": 1,
+            "tags": ["generalTall", "front", "door-color", board_id],
+        }
+    if board_id in ("T2", "B2"):
+        return {
+            "boardType": "top_front_inner_rail" if board_id == "T2" else "bottom_front_inner_rail",
+            "role": "carcass_rail",
+            "category": "structural",
+            "materialClass": "carcass_board",
+            "tags": ["generalTall", "rail", "carcass", board_id],
+        }
+    if board_id in ("T3", "B3"):
+        return {
+            "boardType": "top_inserted_board" if board_id == "T3" else "bottom_inserted_board",
+            "role": "carcass",
+            "category": "structural",
+            "materialClass": "carcass_board",
+            "tags": ["generalTall", "inserted", "carcass", board_id],
+        }
+    if board_id.startswith("V") and board_id[1:].isdigit():
+        return {
+            "boardType": "vertical_stile",
+            "role": "carcass",
+            "category": "structural",
+            "materialClass": "carcass_board",
+            "tags": ["generalTall", "vertical", "carcass", board_id],
+        }
+    if source_type in ("full_zi", "half_zi", "shortened_zi") or category == "boundary_panel":
+        return {
+            "boardType": source_type or "boundary_panel",
+            "role": "carcass",
+            "category": "structural",
+            "materialClass": "carcass_board",
+            "tags": ["generalTall", "zi", "carcass", board_id],
+        }
+    if category == "h_support" or board_id.startswith("H") or board_id == "T5":
+        return {
+            "boardType": source_type or "h_support",
+            "role": "carcass",
+            "category": "structural",
+            "materialClass": "carcass_board",
+            "tags": ["generalTall", "h_support", "carcass", board_id],
+        }
+    if source_type == "style2_fixed_front_panel" or "FixedFrontPanel" in board_id:
+        return {
+            "boardType": "fixed_front_panel",
+            "role": "front_visible",
+            "category": "front",
+            "materialClass": "door_board",
+            "doorColorSlot": 1,
+            "tags": ["generalTall", "front", "fixed-panel", "door-color", board_id],
+        }
+    if board_id.startswith("FP") or category in ("front_panel", "front"):
+        return {
+            "boardType": "cabinet_door",
+            "role": "door",
+            "category": "front",
+            "materialClass": "door_board",
+            "doorColorSlot": 1,
+            "tags": ["generalTall", "front", "door", board_id],
+        }
+    if category in ("shelf", "shelves") or "shelf" in board_id.lower():
+        return {
+            "boardType": "shelf",
+            "role": "carcass",
+            "category": "structural",
+            "materialClass": "carcass_board",
+            "tags": ["generalTall", "shelf", "carcass", board_id],
+        }
+    if "side_panel" in source_type or "SidePanel" in board_id:
+        return {
+            "boardType": "side_panel",
+            "role": "carcass",
+            "category": "structural",
+            "materialClass": "carcass_board",
+            "tags": ["generalTall", "side", "carcass", board_id],
+        }
+    if "divider" in source_type.lower() or "Divider" in board_id:
+        return {
+            "boardType": "vertical_divider",
+            "role": "divider",
+            "category": "divider",
+            "materialClass": "carcass_board",
+            "tags": ["generalTall", "divider", "carcass", board_id],
+        }
+    return {
+        "boardType": source_type or "unknown_board",
+        "role": "carcass",
+        "category": category or "structural",
+        "materialClass": "carcass_board",
+        "tags": ["generalTall", "carcass", board_id or "board"],
+    }
+
+
+def _gt_panel_metadata(board, bbox, run_label):
+    board_id = str(board.get("id") or "")
+    semantics = _gt_board_semantics(board)
+    panel_id = "generalTall.{}".format(sanitize_token(board_id, fallback="board", limit=60))
+    if run_label:
+        panel_id = "generalTall.{}.{}".format(
+            sanitize_token(run_label, fallback="run", limit=40),
+            sanitize_token(board_id, fallback="board", limit=40),
+        )
+    default_attributes = {
+        "role": semantics["role"],
+        "category": semantics["category"],
+        "materialClass": semantics["materialClass"],
+        "tags": semantics["tags"],
+    }
+    if semantics.get("doorColorSlot") is not None:
+        default_attributes["doorColorSlot"] = semantics.get("doorColorSlot")
+    board_type_tag = (
+        "door" if semantics["materialClass"] == "door_board"
+        else "partition" if semantics["materialClass"] == "partition_board"
+        else "carcass"
+    )
+    return {
+        "schemaVersion": 1,
+        "identity": {
+            "panelId": panel_id,
+            "generator": "generalTall",
+            "module": "generalTall",
+            "cabinetType": "generalTall",
+            "sourceBoardId": board_id,
+            "sourceBoardType": str(board.get("boardType") or ""),
+            "boardType": semantics["boardType"],
+            "runId": str(run_label or ""),
+        },
+        "defaultAttributes": default_attributes,
+        "classification": {
+            "boardType": {
+                "value": board_type_tag,
+                "source": "generator",
+                "locked": False,
+            },
+            "color": {
+                "value": "",
+                "source": "default",
+                "locked": False,
+            },
+        },
+        "designGeometry": _oh_design_geometry(board, bbox),
+        "lifecycle": {
+            "state": "generated",
+            "reviewRequired": False,
+        },
+    }
+
+
+def _write_gt_panel_metadata(body, board, bbox, run_label):
+    metadata = _gt_panel_metadata(board, bbox, run_label)
+    payload = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+    panel_id = metadata["identity"]["panelId"]
+    ok_id = _set_entity_attribute(body, PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR, panel_id)
+    ok_payload = _set_entity_attribute(body, PANEL_ATTRIBUTE_GROUP, PANEL_METADATA_ATTR, payload)
     _set_entity_attribute(body, "UnifiedCabinet", "instanceRole", "generated")
     return metadata, ok_id and ok_payload
 
@@ -538,9 +730,9 @@ def _axis_to_world(value, bbox_min, mode):
     return value if mode == "absolute" else bbox_min + value
 
 
-def _profile_axis_modes(board, plane, vector_source):
+def _profile_axis_modes(board, plane, vector_source, module_name="generalTall"):
     # Default contract: profile vectors are local profile coordinates.
-    # Special case: current VD cutProfileVector stores absolute Z values.
+    # General Tall VD cutProfileVector stores absolute Z values.
     board_type = str(board.get("boardType") or "").lower()
     board_category = str(board.get("category") or "").lower()
     if (
@@ -548,6 +740,8 @@ def _profile_axis_modes(board, plane, vector_source):
         and vector_source == "cutProfileVector"
         and (board_type == "vertical_divider" or board_type == "divider" or board_category == "divider")
     ):
+        if module_name == "overhead":
+            return {"a": "local", "b": "local"}
         return {"a": "local", "b": "absolute"}
     return {"a": "local", "b": "local"}
 
@@ -677,7 +871,7 @@ def _add_profile_body(
     if points_error:
         return None, points_error
 
-    axis_modes = _profile_axis_modes(board, plane, vector_source)
+    axis_modes = _profile_axis_modes(board, plane, vector_source, module_name=module_name)
     sketch_plane = _profile_plane_for_sketch(component, plane, bbox)
     if not sketch_plane:
         return None, "Unsupported profile plane mapping: {!r}.".format(plane)
@@ -1181,7 +1375,7 @@ def _oh_placement_formula_summary(result):
             "BP": {"dx": 0.0, "dy": 0.0, "dz": fg, "formula": "dz=FGw"},
             "T1": {"dx": 0.0, "dy": 0.0, "dz": fg, "formula": "dz=FGw"},
             "T2": {"dx": 0.0, "dy": 0.0, "dz": fg, "formula": "dz=FGw"},
-            "Divider": {"dx": 0.0, "dy": 0.0, "dz": 2.0 * fg, "formula": "dz=2*FGw"},
+            "Divider": {"dx": 0.0, "dy": 0.0, "dz": 0.0, "formula": "baked into board z0=2*FGw"},
             "FrontPanel": {"dx": 0.0, "dy": 0.0, "dz": fg, "formula": "dz=FGw"},
             "T3": {"dx": 0.0, "dy": 0.0, "dz": -(tch + fg - 14.0) + fg, "formula": "dy=0, dz=-(TCH+FGw-14)+FGw"},
             "T4": {"dx": 0.0, "dy": cd - (2.0 * fg + clearance), "dz": -clearance, "formula": "dy=Cd-(2*FGw+clearance), dz=-clearance"},
@@ -1255,7 +1449,8 @@ def _oh_postprocess_bodies(component, result, bodies_by_id, boards_by_id, compon
     components_by_id = components_by_id or {}
     oh_params = _oh_result_params(result)
     fg_width = oh_params["fgWidth"]
-    rows["dividerZShifts"] = _oh_shift_dividers_z(component, bodies_by_id, boards_by_id, dz_mm=2.0 * fg_width)
+    # Divider Z is baked into board z0 = 2*FGw in the overhead generator.
+    rows["dividerZShifts"] = []
     bp_board = boards_by_id.get("BP")
     if bp_board:
         rows["bpGrooveCuts"] = _oh_cut_bp_grooves(components_by_id.get("BP") or component, bodies_by_id.get("BP"), bp_board, result)
@@ -1563,6 +1758,12 @@ def create_rough_bodies_from_board_result(
             # Face metadata is initialized after post-processing (groove/hinge
             # cuts) so the surface/edge/milling classification sees the final
             # machined geometry instead of the plain box.
+            if panel_metadata_written:
+                panel_metadata_by_id[board_id] = panel_metadata
+        elif module_name == "generalTall":
+            panel_metadata, panel_metadata_written = _write_gt_panel_metadata(body, board, bbox, summary["runLabel"])
+            if not panel_metadata_written:
+                summary["warnings"].append("Could not write panel metadata for generalTall board {}.".format(board_id))
             if panel_metadata_written:
                 panel_metadata_by_id[board_id] = panel_metadata
 
@@ -1908,6 +2109,25 @@ def _gt_create_front_panel_bodies(component, result, summary):
                     summary["frontPanelCutAudit"].extend(_gt_cut_fp_hinges(target, body, panel, GT_FP_STAGE_OFFSET_X_MM))
                 finally:
                     move_body_by_mm(target, body, -GT_FP_STAGE_OFFSET_X_MM, 0.0, 0.0, feature_prefix="GT_FP_UNSTAGE_")
+            fp_board = {
+                "id": panel_id,
+                "boardType": "cabinet_door",
+                "category": "front_panel",
+                "materialThickness": panel.get("thickness") or abs(bbox["y1"] - bbox["y0"]),
+                "profilePlane": "XZ",
+                "thicknessAxis": "Y",
+                "x0": bbox["x0"],
+                "x1": bbox["x1"],
+                "y0": bbox["y0"],
+                "y1": bbox["y1"],
+                "z0": bbox["z0"],
+                "z1": bbox["z1"],
+            }
+            panel_metadata, panel_metadata_written = _write_gt_panel_metadata(
+                body, fp_board, bbox, summary.get("runLabel")
+            )
+            if not panel_metadata_written:
+                summary["warnings"].append("Could not write panel metadata for front panel {}.".format(panel_id))
             summary["createdBodies"] += 1
             summary["frontPanelsCreated"] += 1
             summary["createdBoardIds"].append(panel_id)
@@ -1920,6 +2140,8 @@ def _gt_create_front_panel_bodies(component, result, summary):
                 "status": "created",
                 "bodyName": body.name,
                 "resolvedType": panel.get("resolvedType"),
+                "panelMetadataWritten": panel_metadata_written,
+                "panelMetadata": panel_metadata,
             })
         except Exception as ex:
             summary["skippedBoards"].append({"boardId": panel_id, "reason": "front_panel_exception: {}".format(ex)})

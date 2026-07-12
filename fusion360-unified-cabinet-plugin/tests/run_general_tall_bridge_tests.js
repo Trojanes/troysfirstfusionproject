@@ -126,6 +126,12 @@ assert.deepStrictEqual(
   },
 );
 assert(sidePanelResult.debug?.sidePanelOverlapAudit, "side panel overlap audit should be present");
+assert(sidePanelResult.debug?.assemblyOverlapAudit, "assembly overlap audit should be present");
+assert.strictEqual(
+  sidePanelResult.debug.assemblyOverlapAudit.unexpectedOverlapCount,
+  0,
+  `unexpected parallel overlaps: ${JSON.stringify(sidePanelResult.debug.assemblyOverlapAudit.unexpectedOverlaps)}`,
+);
 assert(sidePanelIds.has("avoidance_horizontal"), "avoidance_horizontal should be generated when avoidance enabled");
 assert(sidePanelIds.has("Avoidance_Vertical"), "Avoidance_Vertical should be generated when avoidance enabled");
 
@@ -147,4 +153,107 @@ assert(doorPanel.lockCutout, "side door should have a lock cutout");
 const doubleLeft = frontPanels.find((panel) => panel.id === "FP_zone-3_L");
 assert.strictEqual(doubleLeft.lockCutout?.orientation, "vertical", "double door leaf with divider should default to side lock");
 
-console.log(`OK general tall bridge: ${boards.length} boards, ${sidePanelBoards.length} with side panels/avoidance supports, ${frontPanels.length} front panels`);
+// --- Horizontal door shelf (opt-in, kitchen-style) ---
+const shelfResult = runBridge({
+  ...baseParams,
+  zones: [
+    { id: "zone-1", type: "side_door", height: 550, shelfEnabled: true, shelfHeight: 300 },
+    { id: "zone-2", type: "drawer", height: 300 },
+    { id: "zone-3", type: "double_door", height: 995, verticalDivider: true, shelfEnabled: true },
+  ],
+});
+assert.strictEqual((shelfResult.validation?.errors || []).length, 0, "shelf case should have no validation errors");
+const shelfBoards = shelfResult.boards || [];
+const shelfIds = new Set(shelfBoards.map((board) => board.id));
+["DS_zone-1", "DS_zone-3_L", "DS_zone-3_R"].forEach((id) => assert(shelfIds.has(id), `expected shelf board ${id}`));
+assert.strictEqual(shelfBoards.length, boards.length + 3, "shelf case should add exactly three boards");
+
+const zoneItems = (shelfResult.stacking?.items || []).filter((item) => item.type === "functional_zone");
+const zone1Item = zoneItems.find((item) => item.zoneId === "zone-1");
+const shelf1 = shelfBoards.find((board) => board.id === "DS_zone-1");
+assert.strictEqual(shelf1.z1 - shelf1.z0, 16, "shelf thickness should equal panelThickness");
+assert.strictEqual(shelf1.z1 - zone1Item.z0, 300, "shelf top should sit shelfHeight above the zone bottom");
+assert.strictEqual(shelf1.x0, 0, "single shelf should start at x0=0");
+assert.strictEqual(shelf1.x1, 600, "single shelf should span the mid width");
+assert.strictEqual(shelf1.y1, 568, "shelf depth should equal midDepth");
+
+const shelf3L = shelfBoards.find((board) => board.id === "DS_zone-3_L");
+const shelf3R = shelfBoards.find((board) => board.id === "DS_zone-3_R");
+assert.strictEqual(shelf3L.x0, 0, "left shelf segment starts at 0");
+assert.strictEqual(shelf3L.x1, 292.5, "left shelf segment ends at divider x0");
+assert.strictEqual(shelf3R.x0, 307.5, "right shelf segment starts at divider x1");
+assert.strictEqual(shelf3R.x1, 600, "right shelf segment ends at mid width");
+const zone3Item = zoneItems.find((item) => item.zoneId === "zone-3");
+const zone3Height = zone3Item.z1 - zone3Item.z0;
+assert.strictEqual(shelf3L.z1 - zone3Item.z0, Math.round(zone3Height / 2), "default shelf top is half the zone height");
+
+// Shelf boards carry the full-Zi joinery profile (side tongues).
+// Side notch width follows CPT (panelThickness = 16 in baseParams).
+assert(Array.isArray(shelf1.profileVector), "full-width shelf should have a profile vector");
+assert.strictEqual(shelf1.profileVector.length, 13, "full-width rear-connected shelf profile should match full_zi (13 points)");
+assert.deepStrictEqual(shelf1.profileVector[0], { x: 16, y: 0 }, "shelf profile side notch should equal CPT");
+assert(
+  shelf1.profileVector.some((point) => point.x === 0 && point.y === 105),
+  "shelf profile should contain the front notch corner",
+);
+assert(
+  shelf1.profileVector.some((point) => point.x === 0 && point.y === 568 - 105),
+  "shelf profile should contain the rear notch corner",
+);
+assert(Array.isArray(shelf3L.profileVector), "split shelf segments should have profile vectors");
+assert(
+  !shelf3L.profileVector.some((point) => point.x === shelf3L.x1 - shelf3L.x0 - 16),
+  "left segment must not have a tongue on the divider-side edge",
+);
+
+// V1-V4 must receive zi_slot features for every shelf tongue.
+const shelfSlots = (shelfResult.features || []).filter(
+  (feature) => feature.type === "zi_slot" && String(feature.source || "").startsWith("DS_"),
+);
+assert.strictEqual(shelfSlots.length, 8, "expected 8 shelf zi slots (4 full-width + 2 left + 2 right)");
+const slotTargets = (sourceId) => shelfSlots.filter((f) => f.source === sourceId).map((f) => f.targetBoardId).sort();
+assert.deepStrictEqual(slotTargets("DS_zone-1"), ["V1", "V2", "V3", "V4"], "full-width shelf engages all four V boards");
+assert.deepStrictEqual(slotTargets("DS_zone-3_L"), ["V1", "V3"], "left segment engages left stiles only");
+assert.deepStrictEqual(slotTargets("DS_zone-3_R"), ["V2", "V4"], "right segment engages right stiles only");
+const v1ShelfSlot = shelfSlots.find((f) => f.source === "DS_zone-1" && f.targetBoardId === "V1");
+assert.strictEqual(v1ShelfSlot.y0, 100, "V1/V2 shelf slot uses the front-stile Zi slot y range");
+assert.strictEqual(v1ShelfSlot.y1, 150, "V1/V2 shelf slot uses the front-stile Zi slot y range");
+assert.strictEqual(v1ShelfSlot.z1 - v1ShelfSlot.z0, 17, "shelf slot height = shelf thickness (CPT 16) + 1mm clearance");
+assert.strictEqual(v1ShelfSlot.z1 - zone1Item.z0, 300.5, "shelf slot is centred on the shelf board (+0.5 clearance above)");
+
+// Boundary Zi boards also follow CPT for the side notch width.
+const ziBoard = shelfBoards.find((board) => board.boardType === "full_zi");
+assert(ziBoard, "expected a full_zi boundary board");
+assert.deepStrictEqual(ziBoard.profileVector[0], { x: 16, y: 0 }, "full_zi side notch should equal CPT");
+const ziGrooves = (shelfResult.features || []).filter((feature) => feature.type === "zi_groove");
+assert(ziGrooves.length > 0, "double_door divider should produce zi grooves");
+assert(ziGrooves.every((feature) => feature.depth === 8), "zi groove depth should be CPT/2 (16/2)");
+assert(ziGrooves.every((feature) => feature.x1 - feature.x0 === 16), "zi groove width = divider thickness 15 + 1mm clearance");
+const dividerTongues = (shelfResult.features || []).filter((feature) => feature.type === "divider_tongue");
+assert(dividerTongues.length > 0, "double_door divider should produce tongues");
+assert(dividerTongues.every((feature) => feature.insertionDepth === 7.5), "tongue insertion should be CPT/2 - 0.5");
+
+// Slots must reach the V boards' side profiles (cut features on V1-V4).
+const shelfV1 = shelfBoards.find((board) => board.id === "V1");
+assert(
+  (shelfV1.profileFeatures || []).some((feature) => feature.type === "zi_slot" && feature.source === "DS_zone-1"),
+  "V1 side profile should include the shelf zi slot",
+);
+
+// Shelf must be skipped (warning, no error) when the zone is too short.
+const shortShelfResult = runBridge({
+  ...baseParams,
+  zones: [
+    { id: "zone-1", type: "side_door", height: 300, shelfEnabled: true },
+    { id: "zone-2", type: "drawer", height: 550 },
+    { id: "zone-3", type: "double_door", height: 995 },
+  ],
+});
+assert.strictEqual((shortShelfResult.validation?.errors || []).length, 0, "short-zone shelf case should have no errors");
+assert(
+  (shortShelfResult.validation?.warnings || []).some((msg) => String(msg).includes("Door shelf skipped")),
+  "short zone should produce a door-shelf-skipped warning",
+);
+assert(!(shortShelfResult.boards || []).some((board) => board.id.startsWith("DS_")), "short zone should not generate shelf boards");
+
+console.log(`OK general tall bridge: ${boards.length} boards, ${sidePanelBoards.length} with side panels/avoidance supports, ${frontPanels.length} front panels, ${shelfBoards.length - boards.length} shelf boards`);

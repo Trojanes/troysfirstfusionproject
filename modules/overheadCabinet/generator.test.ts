@@ -119,6 +119,41 @@ function testFrontPanelXUsesOuterAndSharedClearance() {
   assert.deepEqual(threeZoneGeometry.front_panels[2]?.x, [1002, 1496]);
 }
 
+function testDividerZBaseSitsOnShiftedBottomPanel() {
+  const result = generateOverheadCabinet({
+    cabinetWidth: 994,
+    cabinetDepth: 250,
+    cabinetHeight: 250,
+    featureWidth: 15,
+    topClearanceHeight: 40,
+    zones: [
+      { id: "zone-1", type: "up_flap", width: 497 },
+      { id: "zone-2", type: "up_flap", width: 497 },
+    ],
+  });
+  const divider = result.boards.find((board) => board.id === "D1");
+  assert.ok(divider, "expected internal divider D1");
+  assert.equal(divider.z0, 30);
+  assert.equal(divider.z1, 265);
+  // Solid board thickness must equal CPT (featureWidth), not groove slot width.
+  assert.equal(divider.materialThickness, 15);
+  assert.equal(divider.x1 - divider.x0, 15);
+}
+
+function testDividerBoardThicknessUsesCptNotGrooveSlot() {
+  const result = generateOverheadCabinet(baseParams);
+  const dividers = result.boards.filter((board) => String(board.category) === "divider");
+  assert.ok(dividers.length >= 2, "expected edge + internal dividers");
+  for (const divider of dividers) {
+    assert.equal(divider.materialThickness, 15, `${divider.id} materialThickness`);
+    assert.equal(divider.x1 - divider.x0, 15, `${divider.id} solid X span must be CPT`);
+  }
+  // Groove features remain CPT + clearance (16 mm) for machining clearance.
+  const geometry = calculateOverheadGeometry(baseParams);
+  assert.equal(geometry.manufacturing.FeatureSlotWidth, 16);
+  assert.deepEqual(geometry.divider_features[1]?.bp_groove.x, [642, 658]);
+}
+
 function testGenerateOverheadCabinetBoardsAndFeatures() {
   const result = generateOverheadCabinet(baseParams);
   assert.equal(result.validation.errors.length, 0);
@@ -168,6 +203,8 @@ const tests = [
   testV7DividerSideProfileStyle2,
   testV7FrontPanelsAndHingeHoles,
   testFrontPanelXUsesOuterAndSharedClearance,
+  testDividerZBaseSitsOnShiftedBottomPanel,
+  testDividerBoardThicknessUsesCptNotGrooveSlot,
   testGenerateOverheadCabinetBoardsAndFeatures,
   testSvgPreviewUsesResolvedGeometry,
   testInvalidWidthReportsError,

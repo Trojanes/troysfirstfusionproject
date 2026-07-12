@@ -19,19 +19,6 @@ FACE_CLASS_SURFACE = "SURFACE"
 FACE_CLASS_EDGE = "EDGE"
 FACE_CLASSES = {FACE_CLASS_SURFACE, FACE_CLASS_EDGE}
 
-NESTING_UP = "UP"
-NESTING_DOWN = "DOWN"
-NESTING_EITHER = "EITHER"
-NESTING_NOT_APPLICABLE = "NOT_APPLICABLE"
-NESTING_UNASSIGNED = "UNASSIGNED"
-NESTING_ORIENTATIONS = {
-    NESTING_UP,
-    NESTING_DOWN,
-    NESTING_EITHER,
-    NESTING_NOT_APPLICABLE,
-    NESTING_UNASSIGNED,
-}
-
 MACHINING_PRIMARY = "PRIMARY"
 MACHINING_SECONDARY = "SECONDARY"
 MACHINING_ALLOWED = "ALLOWED"
@@ -115,13 +102,11 @@ def create_base_face_metadata(panel_id, face_id, face_class, geometry_signature=
         "faceId": str(face_id),
         "faceClass": face_class,
         "finish": unassigned_finish(),
-        "nestingOrientation": NESTING_UNASSIGNED,
         "machiningPermission": MACHINING_ALLOWED,
         "edgeBanding": None,
         "geometrySignature": geometry_signature or empty_geometry_signature(),
     }
     if face_class == FACE_CLASS_EDGE:
-        metadata["nestingOrientation"] = NESTING_NOT_APPLICABLE
         metadata["machiningPermission"] = MACHINING_NOT_ALLOWED
         metadata["finish"] = raw_core_finish()
         metadata["edgeBanding"] = {
@@ -137,7 +122,6 @@ def create_surface_metadata(
     panel_id,
     face_id,
     finish,
-    nesting_orientation,
     machining_permission,
     geometry_signature=None,
 ):
@@ -148,7 +132,6 @@ def create_surface_metadata(
         geometry_signature=geometry_signature,
     )
     metadata["finish"] = dict(finish or unassigned_finish())
-    metadata["nestingOrientation"] = nesting_orientation
     metadata["machiningPermission"] = machining_permission
     metadata["edgeBanding"] = None
     return metadata
@@ -186,7 +169,6 @@ def default_single_sided_door_door_colour_surface(panel_id, face_id, door_finish
         panel_id,
         face_id,
         door_colour_finish(door_finish.get("finishId"), door_finish.get("finishName")),
-        NESTING_DOWN,
         MACHINING_NOT_ALLOWED,
         geometry_signature=geometry_signature,
     )
@@ -197,7 +179,6 @@ def default_single_sided_door_white_stipple_surface(panel_id, face_id, geometry_
         panel_id,
         face_id,
         white_stipple_finish(),
-        NESTING_UP,
         MACHINING_PRIMARY,
         geometry_signature=geometry_signature,
     )
@@ -208,7 +189,6 @@ def default_double_sided_door_surface(panel_id, face_id, door_finish, geometry_s
         panel_id,
         face_id,
         door_colour_finish(door_finish.get("finishId"), door_finish.get("finishName")),
-        NESTING_EITHER,
         MACHINING_ALLOWED,
         geometry_signature=geometry_signature,
     )
@@ -219,7 +199,6 @@ def default_carcass_surface(panel_id, face_id, finish=None, geometry_signature=N
         panel_id,
         face_id,
         finish or unassigned_finish(),
-        NESTING_EITHER,
         MACHINING_ALLOWED,
         geometry_signature=geometry_signature,
     )

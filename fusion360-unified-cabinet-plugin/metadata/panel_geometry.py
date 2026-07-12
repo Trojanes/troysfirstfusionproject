@@ -497,6 +497,95 @@ def _circle_feature_fields(segments, body, thickness_axis):
     return {"isCircle": False, "center": None, "radiusMm": None}
 
 
+def _half_feature_open_surface(
+    floor_face,
+    floor_normal,
+    floor_offset,
+    surface_a,
+    surface_b,
+    offset_a,
+    offset_b,
+    axis_unit,
+    debug=None,
+):
+    """Pick the broad face a blind feature opens onto.
+
+    Prefer topology: a pocket/cup wall shares an edge with the floor and with
+    exactly one broad surface — that surface is the opening. Do not use
+    nearest-surface (deep hinge cups sit closer to the closed face).
+
+    Normal fallback: BRep face normals point out of the solid. On a pocket
+    floor that is into the cavity, toward the open face. If topology cannot
+    decide, use that direction.
+    """
+    # --- Topology (authoritative for hinge cups / blind pockets) ---
+    # Use _face_key (not `is`) for identity: Fusion re-wraps faces in fresh
+    # proxy objects across collection accesses, so `edge.faces` entries may
+    # not be `is`-identical to floor_face/surface_a/surface_b even when they
+    # are the same underlying BRepFace.
+    votes_a = 0
+    votes_b = 0
+    try:
+        floor_key = _face_key(floor_face)
+        key_a = _face_key(surface_a)
+        key_b = _face_key(surface_b)
+        for edge in _iter_collection(floor_face.edges):
+            for neighbour in _iter_collection(edge.faces):
+                neighbour_key = _face_key(neighbour)
+                if neighbour_key == floor_key or neighbour_key in (key_a, key_b):
+                    continue
+                adj_a = _faces_share_edge(neighbour, surface_a)
+                adj_b = _faces_share_edge(neighbour, surface_b)
+                if adj_a and not adj_b:
+                    votes_a += 1
+                elif adj_b and not adj_a:
+                    votes_b += 1
+    except Exception:
+        pass
+    if isinstance(debug, dict):
+        debug["votesA"] = votes_a
+        debug["votesB"] = votes_b
+    if votes_a > votes_b:
+        if isinstance(debug, dict):
+            debug["method"] = "topology"
+        return surface_a
+    if votes_b > votes_a:
+        if isinstance(debug, dict):
+            debug["method"] = "topology"
+        return surface_b
+
+    # --- Which broad face has an inner loop (cup mouth) ---
+    try:
+        _oa, inners_a = _loops_of_face(surface_a)
+        _ob, inners_b = _loops_of_face(surface_b)
+        if inners_a and not inners_b:
+            if isinstance(debug, dict):
+                debug["method"] = "inner_loop"
+            return surface_a
+        if inners_b and not inners_a:
+            if isinstance(debug, dict):
+                debug["method"] = "inner_loop"
+            return surface_b
+    except Exception:
+        pass
+
+    # --- Normal fallback ---
+    axis_component = dot3(floor_normal, axis_unit)
+    if isinstance(debug, dict):
+        debug["normalAxisComponent"] = round(axis_component, 4)
+    if abs(axis_component) < 1e-9:
+        d_a = abs(floor_offset - offset_a)
+        d_b = abs(floor_offset - offset_b)
+        if isinstance(debug, dict):
+            debug["method"] = "nearest_planar"
+        return surface_a if d_a <= d_b else surface_b
+    if isinstance(debug, dict):
+        debug["method"] = "floor_normal"
+    if axis_component > 0:
+        return surface_a if offset_a > floor_offset else surface_b
+    return surface_a if offset_a < floor_offset else surface_b
+
+
 def extract_features(body, surface_a, surface_b, thickness_axis, offset_a, offset_b, thickness_mm):
     """Detect internal features and classify each as HALF (blind) or FULL (through).
 
@@ -522,10 +611,15 @@ def extract_features(body, surface_a, surface_b, thickness_axis, offset_a, offse
         points, segments, has_arc = _face_outer_loop_2d(face, body, thickness_axis)
         if len(points) < 2:
             continue
-        d_a = abs(offset - offset_a)
-        d_b = abs(offset - offset_b)
-        depth = round(min(d_a, d_b), 3)
-        open_surface = surface_a if d_a <= d_b else surface_b
+        # Prefer wall-adjacency / inner-loop topology over nearest-surface:
+        # hinge cups are often deeper than half the panel.
+        open_debug = {}
+        open_surface = _half_feature_open_surface(
+            face, normal, offset, surface_a, surface_b, offset_a, offset_b, axis_unit,
+            debug=open_debug,
+        )
+        open_offset = offset_a if open_surface is surface_a else offset_b
+        depth = round(abs(offset - open_offset), 3)
         feature = {
             "featureId": "",
             "cutType": CUT_TYPE_HALF,
@@ -533,6 +627,9 @@ def extract_features(body, surface_a, surface_b, thickness_axis, offset_a, offse
             "depthMm": depth,
             "points": points,
             "openSurfaceToken": _entity_token(open_surface),
+            "openSurfaceIs": "A" if open_surface is surface_a else "B",
+            "openDecision": open_debug,
+            "floorOffsetMm": round(float(offset), 3),
         }
         feature.update(_circle_feature_fields(segments, body, thickness_axis))
         if not _is_duplicate_feature(feature, features):

@@ -214,7 +214,6 @@ class FaceMetadataService:
             "classificationStatus": str(values.get("classificationStatus") or "") or None,
             "logicalEdgeMemberIndex": values.get("logicalEdgeMemberIndex"),
             "finish": dict(values.get("finish") or {}),
-            "nestingOrientation": values.get("nestingOrientation"),
             "machiningPermission": values.get("machiningPermission"),
             "edgeBanding": values.get("edgeBanding"),
             "geometrySignature": dict(geometry_signature or {}),

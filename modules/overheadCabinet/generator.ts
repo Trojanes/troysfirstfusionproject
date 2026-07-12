@@ -1,7 +1,9 @@
 import {
   DIVIDER_THICKNESS_MM,
   DEFAULT_ROUTER_DIAMETER_MM,
+  boardXRange,
   calculateOverheadGeometry,
+  clampRange,
   type OverheadCabinetInputs,
   type OverheadLegacyGeometry,
 } from "./geometry.ts";
@@ -140,7 +142,14 @@ function legacyToBoards(geometry: OverheadLegacyGeometry, inputs: OverheadCabine
   }
 
   for (const feature of geometry.divider_features) {
-    const [x0, x1] = feature.bp_groove.x;
+    // Board solid thickness must be featureWidth (CPT), not the BP groove
+    // slot width (CPT + clearance). Groove/notch features keep the wider
+    // slot range; only the divider body uses boardXRange.
+    const [x0, x1] = clampRange(boardXRange(feature.XDi, featureWidth), 0, cabinetWidth);
+    // Dividers sit on the shifted bottom panel top at z = 2 * FGw. Fusion
+    // postprocess used to apply this as a +2*FGw move; bake it into board Z.
+    const dividerZ0 = featureWidth * 2;
+    const dividerTopZ = (cabinetHeight ?? bottomThickness + 1) + featureWidth;
     boards.push({
       id: feature.id,
       name: `Divider ${feature.id}`,
@@ -153,8 +162,8 @@ function legacyToBoards(geometry: OverheadLegacyGeometry, inputs: OverheadCabine
       x1,
       y0: 0,
       y1: cabinetDepth,
-      z0: featureWidth,
-      z1: cabinetHeight ?? bottomThickness + 1,
+      z0: dividerZ0,
+      z1: dividerTopZ,
       source: "overhead_geometry",
       cutProfileVector:
         geometry.trimmed_vectors.DividerSide.length > 0
