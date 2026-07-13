@@ -93,6 +93,30 @@ def main() -> int:
         return _fail("skip reminder", reminders)
     print("[PASS] batch cut reminders")
 
+    from batch_hardware_from_relationships import repair_hint_for_skip_reason
+
+    hint_cut = repair_hint_for_skip_reason("cut_failed")
+    if "预览" not in hint_cut or "创建" not in hint_cut:
+        return _fail("cut_failed hint", hint_cut)
+    hint_face = repair_hint_for_skip_reason("no_opposing_faces")
+    if "面验证" not in hint_face:
+        return _fail("face skip hint", hint_face)
+    print("[PASS] repair hints for skip reasons")
+
+    palette_path = os.path.join(ROOT, "palette.html")
+    with open(palette_path, "r", encoding="utf-8") as handle:
+        palette = handle.read()
+    for token in (
+        "connectUiRepairFromSkip",
+        "connectUiRepairHint",
+        "connect-skip-repair-btn",
+        "relationships.inspectPair",
+        "跳过 / 手修列表",
+    ):
+        if token not in palette:
+            return _fail("palette repair missing", token)
+    print("[PASS] palette skip→repair wiring")
+
     print("")
     print("Batch hardware cut offline: ALL PASS")
     return 0

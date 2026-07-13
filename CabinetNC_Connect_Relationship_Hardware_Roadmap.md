@@ -159,6 +159,12 @@ One-click pipeline (2026-07-13):
   ✅ Connect「一键验证并创建五金」
   ✅ offline: run_connect_pipeline_offline.py
   📄 docs/connect-one-click-pipeline-checklist.md
+
+Skip → manual repair (2026-07-13):
+  ✅ clickable skip list loads pair via relationships.inspectPair
+  ✅ reason-based next-step hints; declare/face-verify/create path
+  ✅ offline: repair_hint_for_skip_reason + palette tokens
+  📄 docs/connect-skip-repair-checklist.md
 ```
 
 Current relationship layer is **not production-truth**. It is currently:

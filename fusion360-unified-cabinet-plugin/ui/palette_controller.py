@@ -6,12 +6,26 @@ import adsk.core
 
 
 class PaletteController:
-    def __init__(self, fusion_adapter, handlers_store, palette_id, palette_name, routes):
+    def __init__(
+        self,
+        fusion_adapter,
+        handlers_store,
+        palette_id,
+        palette_name,
+        routes,
+        *,
+        html_file="palette.html",
+        width=1500,
+        height=950,
+    ):
         self.fusion = fusion_adapter
         self.handlers_store = handlers_store
         self.palette_id = palette_id
         self.palette_name = palette_name
         self.routes = routes
+        self.html_file = html_file
+        self.width = int(width)
+        self.height = int(height)
         self.palette = None
 
     def show(self):
@@ -21,7 +35,7 @@ class PaletteController:
         palettes = ui.palettes
         self.palette = palettes.itemById(self.palette_id)
         if not self.palette:
-            html_path = os.path.join(os.path.dirname(__file__), "..", "palette.html")
+            html_path = os.path.join(os.path.dirname(__file__), "..", self.html_file)
             self.palette = palettes.add(
                 self.palette_id,
                 self.palette_name,
@@ -29,8 +43,8 @@ class PaletteController:
                 True,
                 True,
                 True,
-                1500,
-                950,
+                self.width,
+                self.height,
                 False,
             )
             incoming = _PaletteIncomingHandler(self)

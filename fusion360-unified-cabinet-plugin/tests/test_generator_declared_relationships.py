@@ -185,6 +185,35 @@ class GeneratorDeclaredRelationshipTests(unittest.TestCase):
         ids = {item["declarationId"] for item in declarations}
         self.assertIn("gt_b1_b3_bottom_rail_to_deck", ids)
 
+    def test_general_tall_fridge_panel_ids_filter_declarations(self):
+        skeleton = {"B1", "B2", "B3", "T1", "T2", "T3", "V1", "V2"}
+        base_ids = {
+            item["declarationId"]
+            for item in list_general_tall_declarations_for_panel_ids(skeleton)
+        }
+        self.assertIn("gt_b1_b3_bottom_rail_to_deck", base_ids)
+        self.assertNotIn("gt_sidepanel_l_v1", base_ids)
+        self.assertNotIn("gt_v5_v1", base_ids)
+
+        left = skeleton | {"SidePanel_L", "V5"}
+        left_ids = {
+            item["declarationId"]
+            for item in list_general_tall_declarations_for_panel_ids(left)
+        }
+        self.assertIn("gt_sidepanel_l_v1", left_ids)
+        self.assertIn("gt_v5_v2", left_ids)
+        self.assertNotIn("gt_v5_v1", left_ids)
+        self.assertNotIn("gt_sidepanel_r_v2", left_ids)
+
+        none = skeleton | {"V5"}
+        none_ids = {
+            item["declarationId"]
+            for item in list_general_tall_declarations_for_panel_ids(none)
+        }
+        self.assertIn("gt_v5_v1", none_ids)
+        self.assertNotIn("gt_v5_v2", none_ids)
+        self.assertNotIn("gt_sidepanel_l_v1", none_ids)
+
     def test_reconcile_general_tall_declarations(self):
         snapshots = self._general_tall_snapshots()
         report = reconcile_generator_declarations(snapshots, generator="general_tall")

@@ -8,6 +8,7 @@ export type ZoneType =
   | "drawer"
   | "open_space"
   | "open_appliance"
+  | "fridge"
   | "top_flap"
   | "bottom_flap"
   | "blank_panel";
@@ -42,6 +43,10 @@ export interface FunctionalZone {
   lockHeight?: number;
   hingeEnabled?: boolean;
   hingeSettings?: Partial<GtHingeSettings>;
+  /** Fridge cavity: appliance envelope (mm). Height overrides zone.height when set. */
+  applianceWidthMm?: number;
+  applianceDepthMm?: number;
+  applianceHeightMm?: number;
 }
 
 export interface SystemZone {
@@ -302,6 +307,13 @@ export interface GeneralTallCabinetParams {
   topSystem: TopBottomSystemConfig;
   bottomSystem: TopBottomSystemConfig;
   zones: FunctionalZone[];
+  /**
+   * Fridge stacks only: decorative exterior side panel.
+   * Maps to SidePanel_L / SidePanel_R (16mm) and cabinetWidth = applianceWidth + 45|61.
+   */
+  exteriorSide?: "none" | "left" | "right";
+  /** Default true when fridge zones exist: rewrite cabinetWidth from appliance width. */
+  syncCabinetWidthFromFridge?: boolean;
 }
 
 export interface GeneralTallCabinetDebug {
@@ -315,6 +327,12 @@ export interface GeneralTallCabinetDebug {
   hThickness: number;
   sideClearance: number;
   doorPanelThickness: number;
+  fridgeAvoidance?: {
+    finalMode: "none" | "normal" | "raised";
+    fridgeGap: number;
+    fridgeBaseBottomZ: number;
+    inputHeight: number;
+  };
   mergeAndConflict?: {
     topMergeCandidate: boolean;
     bottomMergeCandidate: boolean;

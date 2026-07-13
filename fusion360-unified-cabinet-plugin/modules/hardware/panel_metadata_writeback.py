@@ -99,18 +99,28 @@ def append_hardware_feature(
     feature_record: Dict[str, Any],
     *,
     allow_duplicate: bool = False,
+    replace_existing: bool = False,
 ) -> Tuple[Dict[str, Any], bool, Optional[str]]:
-    """Return updated metadata, whether a row was appended, and optional skip reason."""
+    """Return updated metadata, whether a row was written, and optional skip reason.
+
+    replace_existing: overwrite matching featureId/operation identity (update replay).
+    """
     metadata = copy.deepcopy(panel_metadata or {})
     features = _ensure_list(metadata, "features")
     identity = _feature_identity_key(feature_record)
-    if identity and not allow_duplicate:
-        for existing in features:
+    if identity:
+        for index, existing in enumerate(features):
             if not isinstance(existing, dict):
                 continue
-            if _feature_identity_key(existing) == identity:
+            if _feature_identity_key(existing) != identity:
+                continue
+            if replace_existing:
+                features[index] = copy.deepcopy(feature_record)
+                metadata["features"] = features
+                return metadata, True, None
+            if not allow_duplicate:
                 return metadata, False, "duplicate_feature"
-    features.append(feature_record)
+    features.append(copy.deepcopy(feature_record))
     metadata["features"] = features
     return metadata, True, None
 
@@ -296,11 +306,42 @@ def build_lock_cutout_panel_feature_record(
     return record
 
 
+def _stamp_operation_fields(
+    record: Dict[str, Any],
+    *,
+    hardware_type: Optional[str] = None,
+    rule: Optional[Dict[str, Any]] = None,
+    relationship: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Attach ConnectHardwareOperation fields onto a features[] row."""
+    try:
+        from connect_hardware_operations import enrich_feature_as_operation
+
+        return enrich_feature_as_operation(
+            record,
+            hardware_type=hardware_type,
+            rule=rule,
+            relationship=relationship,
+        )
+    except Exception:
+        stamped = copy.deepcopy(record or {})
+        if hardware_type:
+            stamped["hardwareType"] = hardware_type
+        stamped["status"] = stamped.get("status") or "applied"
+        stamped["operationId"] = str(stamped.get("operationId") or stamped.get("featureId") or "")
+        if isinstance(rule, dict) and rule:
+            stamped["rule"] = dict(rule)
+        if isinstance(relationship, dict) and relationship:
+            stamped["relationship"] = relationship
+        return stamped
+
+
 def _writeback_feature_record(
     host_body,
     record: Dict[str, Any],
     *,
     allow_duplicate: bool = False,
+    replace_existing: bool = False,
 ) -> Dict[str, Any]:
     existing, read_error = read_panel_metadata_from_body(host_body)
     if read_error and existing is None and read_error not in (None, "Empty metadata attribute"):
@@ -316,6 +357,7 @@ def _writeback_feature_record(
         base_metadata,
         record,
         allow_duplicate=allow_duplicate,
+        replace_existing=replace_existing,
     )
     if not appended:
         return {
@@ -332,6 +374,7 @@ def _writeback_feature_record(
         "ok": written,
         "panelWriteback": written,
         "skipped": False,
+        "replaced": bool(replace_existing),
         "featureRecord": record,
         "featureCount": len(updated.get("features") or []),
         "errors": [] if written else ["Failed to write panel metadata to host body."],
@@ -345,14 +388,41 @@ def writeback_screw_hole_feature(
     *,
     cut_feature_name: Optional[str] = None,
     allow_duplicate: bool = False,
+    replace_existing: bool = False,
+    rule: Optional[Dict[str, Any]] = None,
+    relationship: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """After a successful cut, append the hardware feature to host body metadata."""
+    """After a successful cut, append/upsert the hardware feature on host body metadata."""
     record = build_panel_feature_record(
         feature_intent,
         cut_metadata=cut_metadata,
         cut_feature_name=cut_feature_name,
     )
-    return _writeback_feature_record(host_body, record, allow_duplicate=allow_duplicate)
+    rule_payload = rule if isinstance(rule, dict) else (
+        cut_metadata.get("rule") if isinstance(cut_metadata.get("rule"), dict) else None
+    )
+    if not rule_payload:
+        rule_payload = {
+            "type": "screw_hole",
+            "diameterMm": record.get("diameterMm"),
+            "depthMm": record.get("depthMm"),
+            "holeCount": record.get("holeCount"),
+        }
+    rel_payload = relationship if isinstance(relationship, dict) else (
+        cut_metadata.get("relationship") if isinstance(cut_metadata.get("relationship"), dict) else None
+    )
+    record = _stamp_operation_fields(
+        record,
+        hardware_type="screw_hole",
+        rule=rule_payload,
+        relationship=rel_payload,
+    )
+    return _writeback_feature_record(
+        host_body,
+        record,
+        allow_duplicate=allow_duplicate,
+        replace_existing=replace_existing,
+    )
 
 
 def writeback_hinge_hole_feature(
@@ -362,8 +432,11 @@ def writeback_hinge_hole_feature(
     *,
     cut_feature_name: Optional[str] = None,
     allow_duplicate: bool = False,
+    replace_existing: bool = False,
+    rule: Optional[Dict[str, Any]] = None,
+    relationship: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """After a successful hinge cup cut, append the feature to host body metadata."""
+    """After a successful hinge cup cut, append/upsert the feature on host body metadata."""
     record = build_panel_feature_record(
         feature_intent,
         cut_metadata=cut_metadata,
@@ -372,7 +445,18 @@ def writeback_hinge_hole_feature(
     record["hostRole"] = str(feature_intent.get("hostRole") or "hinge_cup")
     record["hardwareType"] = "hinge_hole"
     record["operationType"] = str(cut_metadata.get("operationType") or "HINGE_HOLE_FROM_RELATIONSHIP")
-    return _writeback_feature_record(host_body, record, allow_duplicate=allow_duplicate)
+    record = _stamp_operation_fields(
+        record,
+        hardware_type="hinge_hole",
+        rule=rule if isinstance(rule, dict) else {"type": "hinge_hole"},
+        relationship=relationship if isinstance(relationship, dict) else None,
+    )
+    return _writeback_feature_record(
+        host_body,
+        record,
+        allow_duplicate=allow_duplicate,
+        replace_existing=replace_existing,
+    )
 
 
 def writeback_drawer_runner_hole_feature(
@@ -382,8 +466,11 @@ def writeback_drawer_runner_hole_feature(
     *,
     cut_feature_name: Optional[str] = None,
     allow_duplicate: bool = False,
+    replace_existing: bool = False,
+    rule: Optional[Dict[str, Any]] = None,
+    relationship: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """After a successful runner hole cut, append the feature to host body metadata."""
+    """After a successful runner hole cut, append/upsert the feature on host body metadata."""
     record = build_panel_feature_record(
         feature_intent,
         cut_metadata=cut_metadata,
@@ -392,7 +479,18 @@ def writeback_drawer_runner_hole_feature(
     record["hostRole"] = str(feature_intent.get("hostRole") or "runner_mount")
     record["hardwareType"] = "drawer_runner_hole"
     record["operationType"] = str(cut_metadata.get("operationType") or "DRAWER_RUNNER_HOLE_FROM_RELATIONSHIP")
-    return _writeback_feature_record(host_body, record, allow_duplicate=allow_duplicate)
+    record = _stamp_operation_fields(
+        record,
+        hardware_type="drawer_runner_hole",
+        rule=rule if isinstance(rule, dict) else {"type": "drawer_runner_hole"},
+        relationship=relationship if isinstance(relationship, dict) else None,
+    )
+    return _writeback_feature_record(
+        host_body,
+        record,
+        allow_duplicate=allow_duplicate,
+        replace_existing=replace_existing,
+    )
 
 
 def writeback_lock_cutout_feature(
@@ -402,14 +500,28 @@ def writeback_lock_cutout_feature(
     *,
     cut_feature_name: Optional[str] = None,
     allow_duplicate: bool = False,
+    replace_existing: bool = False,
+    rule: Optional[Dict[str, Any]] = None,
+    relationship: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """After a successful lock pocket cut, append a rectangular pocket feature record."""
+    """After a successful lock pocket cut, append/upsert a rectangular pocket feature record."""
     record = build_lock_cutout_panel_feature_record(
         feature_intent,
         cut_metadata=cut_metadata,
         cut_feature_name=cut_feature_name,
     )
-    return _writeback_feature_record(host_body, record, allow_duplicate=allow_duplicate)
+    record = _stamp_operation_fields(
+        record,
+        hardware_type="lock_cutout",
+        rule=rule if isinstance(rule, dict) else {"type": "lock_cutout"},
+        relationship=relationship if isinstance(relationship, dict) else None,
+    )
+    return _writeback_feature_record(
+        host_body,
+        record,
+        allow_duplicate=allow_duplicate,
+        replace_existing=replace_existing,
+    )
 
 
 def writeback_tongue_groove_feature(
@@ -418,14 +530,42 @@ def writeback_tongue_groove_feature(
     cut_metadata: Dict[str, Any],
     *,
     cut_feature_name: Optional[str] = None,
+    tongue_feature_name: Optional[str] = None,
+    tongue_feature_names: Optional[List[str]] = None,
     allow_duplicate: bool = False,
+    replace_existing: bool = False,
+    rule: Optional[Dict[str, Any]] = None,
+    relationship: Optional[Dict[str, Any]] = None,
     role: str = "groove",
 ) -> Dict[str, Any]:
-    """After a successful cut, append groove or tongue feature to the panel body metadata."""
+    """After a successful cut, append/upsert groove or tongue feature on panel body metadata."""
     record = build_tongue_groove_panel_feature_record(
         feature_intent,
         cut_metadata=cut_metadata,
         cut_feature_name=cut_feature_name,
         role=role,
     )
-    return _writeback_feature_record(body, record, allow_duplicate=allow_duplicate)
+    names = [
+        str(item or "").strip()
+        for item in (tongue_feature_names or [])
+        if str(item or "").strip()
+    ]
+    primary_tongue = str(tongue_feature_name or (names[0] if names else "") or "").strip()
+    if primary_tongue and primary_tongue not in names:
+        names.insert(0, primary_tongue)
+    if primary_tongue:
+        record["tongueFeatureName"] = primary_tongue
+    if names:
+        record["tongueFeatureNames"] = names
+    record = _stamp_operation_fields(
+        record,
+        hardware_type="tongue_groove",
+        rule=rule if isinstance(rule, dict) else {"type": "tongue_groove"},
+        relationship=relationship if isinstance(relationship, dict) else None,
+    )
+    return _writeback_feature_record(
+        body,
+        record,
+        allow_duplicate=allow_duplicate,
+        replace_existing=replace_existing,
+    )

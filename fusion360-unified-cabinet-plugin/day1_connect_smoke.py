@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
 """Day 1 Connect smoke — optional standalone Fusion Script entry point.
 
-Prefer running from the loaded CabinetNC add-in:
-  Hardware / Installation → 板件连接 Connect → 开发工具 → 运行 Day 1 自动验证
-
-If you still want a separate Script, switch to the **Scripts** tab (not Add-Ins),
-click green +, and add this file:
-  d:\\project\\troysfirstfusionproject-main\\fusion360-unified-cabinet-plugin\\day1_connect_smoke.py
+Run from Fusion: Scripts and Add-Ins → Scripts → run this file.
+(The Connect palette no longer hosts a Day 1 Dev Tools button.)
 """
 
 from __future__ import annotations

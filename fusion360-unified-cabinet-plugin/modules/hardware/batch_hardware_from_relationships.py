@@ -66,3 +66,17 @@ def summarize_cut_skip(relationship: Dict[str, Any], reason: str, errors: Option
         "reason": reason,
         "errors": list(errors or []),
     }
+
+
+def repair_hint_for_skip_reason(reason: Optional[str]) -> str:
+    """Next manual step after clicking a batch/pipeline skip row."""
+    key = str(reason or "").strip()
+    if key in ("cut_failed", "cut_exception"):
+        return "已加载该板对。可先预览再创建；若门控关闭，先同步声明或面验证。"
+    if key == "cap_reached":
+        return "已加载该板对（本批上限跳过）。确认关系后可单独创建，或缩小批量重试。"
+    if key in ("no_opposing_faces", "face_extract_failed", "class_mismatch", "geometry_not_supported"):
+        return "已加载该板对。建议：同步声明（OH/GT/Kitchen）→ 面验证 → 预览 → 创建。"
+    if key in ("panel_missing", "body_not_found"):
+        return "跳过项指向的板可能已丢失。请在 Fusion 中确认两块板仍在，再点检查。"
+    return "已加载该板对。请检查 → 同步声明或面验证 → 预览 → 创建。"

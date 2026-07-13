@@ -61,6 +61,71 @@ GENERAL_TALL_DECLARED_JOINTS: List[Dict[str, Any]] = [
     },
 ]
 
+# Fridge stack extras (SidePanel / V5). V5 mate follows SidePanel presence:
+# SidePanel_L → V5↔V2; else → V5↔V1 (exterior none or right).
+GENERAL_TALL_FRIDGE_DECLARED_JOINTS: List[Dict[str, Any]] = [
+    {
+        "declarationId": "gt_sidepanel_l_v1",
+        "generator": GENERATOR_NAME,
+        "panelAId": "SidePanel_L",
+        "panelBId": "V1",
+        "relationshipType": "face_contact",
+        "geometryType": "surface_to_surface",
+        "hostPanelId": "SidePanel_L",
+        "targetPanelId": "V1",
+        "ruleId": "general_tall_fridge_sidepanel_l_v1",
+        "allowedHardware": ["screw_hole"],
+    },
+    {
+        "declarationId": "gt_sidepanel_r_v2",
+        "generator": GENERATOR_NAME,
+        "panelAId": "SidePanel_R",
+        "panelBId": "V2",
+        "relationshipType": "face_contact",
+        "geometryType": "surface_to_surface",
+        "hostPanelId": "SidePanel_R",
+        "targetPanelId": "V2",
+        "ruleId": "general_tall_fridge_sidepanel_r_v2",
+        "allowedHardware": ["screw_hole"],
+    },
+    {
+        "declarationId": "gt_v5_v1",
+        "generator": GENERATOR_NAME,
+        "panelAId": "V5",
+        "panelBId": "V1",
+        "relationshipType": "face_contact",
+        "geometryType": "surface_to_surface",
+        "hostPanelId": "V5",
+        "targetPanelId": "V1",
+        "ruleId": "general_tall_fridge_v5_v1",
+        "allowedHardware": ["screw_hole"],
+    },
+    {
+        "declarationId": "gt_v5_v2",
+        "generator": GENERATOR_NAME,
+        "panelAId": "V5",
+        "panelBId": "V2",
+        "relationshipType": "face_contact",
+        "geometryType": "surface_to_surface",
+        "hostPanelId": "V5",
+        "targetPanelId": "V2",
+        "ruleId": "general_tall_fridge_v5_v2",
+        "allowedHardware": ["screw_hole"],
+    },
+]
+
+
+def _fridge_joint_allowed(item: Dict[str, Any], panel_ids: Set[str]) -> bool:
+    """Drop the V5 mate that does not match exterior SidePanel encoding."""
+    decl_id = str(item.get("declarationId") or "")
+    suffixes = {extract_board_suffix(panel_id) for panel_id in panel_ids}
+    if decl_id == "gt_v5_v1":
+        # SidePanel_L → V5 mates V2 only
+        return "V5" in suffixes and "V1" in suffixes and "SidePanel_L" not in suffixes
+    if decl_id == "gt_v5_v2":
+        return "V5" in suffixes and "V2" in suffixes and "SidePanel_L" in suffixes
+    return True
+
 
 def _resolve_declaration_for_panels(
     item: Dict[str, Any],
@@ -98,9 +163,14 @@ def list_general_tall_declarations_for_panel_ids(
     preferred_run_token: Optional[str] = None,
     embedded_declarations: Optional[List[Dict[str, Any]]] = None,
 ) -> List[Dict[str, Any]]:
-    source = embedded_declarations if embedded_declarations is not None else GENERAL_TALL_DECLARED_JOINTS
+    if embedded_declarations is not None:
+        source = embedded_declarations
+    else:
+        source = GENERAL_TALL_DECLARED_JOINTS + GENERAL_TALL_FRIDGE_DECLARED_JOINTS
     declarations: List[Dict[str, Any]] = []
     for item in source:
+        if embedded_declarations is None and not _fridge_joint_allowed(item, panel_ids):
+            continue
         resolved = _resolve_declaration_for_panels(item, panel_ids, preferred_run_token=preferred_run_token)
         if resolved:
             declarations.append(resolved)

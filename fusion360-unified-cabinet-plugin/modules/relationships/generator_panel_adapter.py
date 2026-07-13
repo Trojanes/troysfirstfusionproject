@@ -112,6 +112,47 @@ def snapshot_dict_from_lounge_panel(panel: Dict[str, Any]) -> Optional[Dict[str,
     }
 
 
+def apply_overhead_physical_bbox_shifts(
+    snapshots: List[Dict[str, Any]],
+    *,
+    feature_width_mm: float = 15.0,
+) -> List[Dict[str, Any]]:
+    """Mirror Fusion OH postprocess Z moves onto design-space snapshots.
+
+    Overhead generator bakes divider z0 = 2*FGw, then Fusion shifts BP/T1/T2
+    (+FGw via OH_SUPPORT_Z) and front panels (+FGw via OH_FP_Z). Offline declare
+    / scan must use the same physical bboxes or BP↔D0 looks like a 15mm gap.
+    """
+    fg = float(feature_width_mm or 15.0)
+    if fg == 0:
+        return snapshots
+    support_ids = {"BP", "T1", "T2"}
+    shifted: List[Dict[str, Any]] = []
+    for item in snapshots or []:
+        if not isinstance(item, dict):
+            continue
+        row = dict(item)
+        bbox = dict(row.get("bbox") or {})
+        panel_id = str(row.get("panelId") or "")
+        suffix = panel_id.rsplit(".", 1)[-1] if panel_id else ""
+        role = str(row.get("role") or row.get("boardType") or "").lower()
+        dz = 0.0
+        if suffix in support_ids:
+            dz = fg
+        elif role == "front_panel" or suffix.startswith("FP"):
+            dz = fg
+        if dz:
+            try:
+                bbox["z0"] = float(bbox.get("z0") or 0.0) + dz
+                bbox["z1"] = float(bbox.get("z1") or 0.0) + dz
+            except Exception:
+                pass
+            row["bbox"] = bbox
+            row["bboxSource"] = "overhead_physical_z"
+        shifted.append(row)
+    return shifted
+
+
 def snapshots_from_generator_result(generator: str, result: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Extract normalized snapshot dicts from a generator bridge result."""
     snapshots: List[Dict[str, Any]] = []
@@ -136,4 +177,13 @@ def snapshots_from_generator_result(generator: str, result: Dict[str, Any]) -> L
         payload = snapshot_dict_from_bbox_board(board)
         if payload:
             snapshots.append(payload)
+
+    if generator_key == "overhead":
+        params = result.get("params") if isinstance(result.get("params"), dict) else {}
+        fg = params.get("featureWidth")
+        if fg is None:
+            fg = 15.0
+        snapshots = apply_overhead_physical_bbox_shifts(
+            snapshots, feature_width_mm=float(fg or 15.0)
+        )
     return snapshots

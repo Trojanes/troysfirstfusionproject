@@ -586,6 +586,14 @@ class RelationshipsController:
             else:
                 panels = self.service.collect_panels_from_design(bbox_source=bbox_source)
             if not panels:
+                root = self.service._root_component()
+                if not root:
+                    return "relationshipDeclaredResult", {
+                        "ok": False,
+                        "action": "relationships.reconcileGeneratorDeclarations",
+                        "generator": generator,
+                        "errors": ["No active Fusion design."],
+                    }
                 return "relationshipDeclaredResult", {
                     "ok": False,
                     "action": "relationships.reconcileGeneratorDeclarations",

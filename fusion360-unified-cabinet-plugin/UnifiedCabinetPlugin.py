@@ -64,19 +64,28 @@ class UnifiedCabinetPluginApp:
     CMD_NAME = "CabinetNC"
     CMD_DESC = "Open the unified cabinet generator plugin."
     CONTROL_ID = "unifiedCabinetPluginControl"
+    OPS_CMD_ID = "unifiedCabinetPluginOpsCommand"
+    OPS_CMD_NAME = "Connect 已创建操作"
+    OPS_CMD_DESC = "Open the Connect hardware operations editor palette."
+    OPS_CONTROL_ID = "unifiedCabinetPluginOpsControl"
     PANEL_ID = "unifiedCabinetPluginPanel"
     PANEL_NAME = "CabinetNC"
     FALLBACK_PANEL_ID = "SolidScriptsAddinsPanel"
     PALETTE_ID = "unifiedCabinetPluginPalette"
     PALETTE_NAME = "CabinetNC"
+    OPS_PALETTE_ID = "unifiedCabinetPluginOpsPalette"
+    OPS_PALETTE_NAME = "Connect 已创建操作"
 
     def __init__(self, plugin_dir):
         self.plugin_dir = plugin_dir
         self.handlers = []
         self.command_definition = None
+        self.ops_command_definition = None
         self.control = None
+        self.ops_control = None
         self.panel = None
         self.palette_controller = None
+        self.ops_palette_controller = None
         self.fusion = None
 
     def start(self):
@@ -125,9 +134,6 @@ class UnifiedCabinetPluginApp:
             "lounge.createFlatBodies": lounge.create_flat_bodies,
             "lounge.createAssemblyBodies": lounge.create_assembly_bodies,
             "tools.status": tools.status,
-            "hardware.createSideContactTestBoards": hardware.create_side_contact_test_boards,
-            "hardware.calculateSideContactPreview": hardware.calculate_side_contact_preview,
-            "hardware.createSideContactHoles": hardware.create_side_contact_holes,
             "hardware.previewScrewHolesFromRelationship": hardware.preview_screw_holes_from_relationship,
             "hardware.createScrewHolesFromRelationship": hardware.create_screw_holes_from_relationship,
             "hardware.listHardwareTypes": hardware.list_hardware_types,
@@ -135,6 +141,8 @@ class UnifiedCabinetPluginApp:
             "hardware.createHardwareFromRelationship": hardware.create_hardware_from_relationship,
             "hardware.createHardwareForCutSafeRelationships": hardware.create_hardware_for_cut_safe_relationships,
             "hardware.runConnectPipeline": hardware.run_connect_pipeline,
+            "hardware.listHardwareOperations": hardware.list_hardware_operations,
+            "hardware.updateHardwareOperation": hardware.update_hardware_operation,
             "hardware.previewHingeHolesFromRelationship": hardware.preview_hinge_holes_from_relationship,
             "hardware.createHingeHolesFromRelationship": hardware.create_hinge_holes_from_relationship,
             "hardware.previewDrawerRunnerHolesFromRelationship": hardware.preview_drawer_runner_holes_from_relationship,
@@ -193,6 +201,7 @@ class UnifiedCabinetPluginApp:
             "panelAttributes.setThicknessRulesAsDefault": panel_attributes.set_thickness_rules_as_default,
             "panelAttributes.applyThicknessClassification": panel_attributes.apply_thickness_classification,
             "pingPython": self._ping,
+            "ui.showConnectOperationsPalette": self._show_ops_palette,
         }
         self.palette_controller = PaletteController(
             self.fusion,
@@ -200,6 +209,19 @@ class UnifiedCabinetPluginApp:
             self.PALETTE_ID,
             self.PALETTE_NAME,
             routes,
+            html_file="palette.html",
+            width=1500,
+            height=950,
+        )
+        self.ops_palette_controller = PaletteController(
+            self.fusion,
+            self.handlers,
+            self.OPS_PALETTE_ID,
+            self.OPS_PALETTE_NAME,
+            routes,
+            html_file="connect_operations_palette.html",
+            width=440,
+            height=680,
         )
 
         _app, ui = self.fusion.get_app_ui()
@@ -214,10 +236,25 @@ class UnifiedCabinetPluginApp:
                 self.CMD_DESC,
                 "",
             )
+        self.ops_command_definition = cmd_defs.itemById(self.OPS_CMD_ID)
+        if not self.ops_command_definition:
+            self.ops_command_definition = cmd_defs.addButtonDefinition(
+                self.OPS_CMD_ID,
+                self.OPS_CMD_NAME,
+                self.OPS_CMD_DESC,
+                "",
+            )
+        # Purge retired side-contact trial command if a previous install left it behind.
+        old_side_cmd = cmd_defs.itemById("unifiedCabinetPluginSideContactCommand")
+        if old_side_cmd:
+            old_side_cmd.deleteMe()
 
         on_created = _CommandCreatedHandler(self)
         self.command_definition.commandCreated.add(on_created)
         self.handlers.append(on_created)
+        on_ops_created = _OpsCommandCreatedHandler(self)
+        self.ops_command_definition.commandCreated.add(on_ops_created)
+        self.handlers.append(on_ops_created)
 
         workspace = ui.workspaces.itemById("FusionSolidEnvironment")
         self.panel = workspace.toolbarPanels.itemById(self.PANEL_ID) if workspace else None
@@ -231,21 +268,42 @@ class UnifiedCabinetPluginApp:
             self.control.isVisible = True
             self.control.isPromoted = True
             self.control.isPromotedByDefault = True
+            old_ops = self.panel.controls.itemById(self.OPS_CONTROL_ID)
+            if old_ops:
+                old_ops.deleteMe()
+            self.ops_control = self.panel.controls.addCommand(
+                self.ops_command_definition, self.OPS_CONTROL_ID
+            )
+            self.ops_control.isVisible = True
+            self.ops_control.isPromoted = False
+            self.ops_control.isPromotedByDefault = False
+            old_side = self.panel.controls.itemById("unifiedCabinetPluginSideContactControl")
+            if old_side:
+                old_side.deleteMe()
 
         self.show_palette()
 
     def stop(self):
         _app, ui = self.fusion.get_app_ui() if self.fusion else (None, None)
         try:
+            if self.ops_control:
+                self.ops_control.deleteMe()
+                self.ops_control = None
             if self.control:
                 self.control.deleteMe()
                 self.control = None
             if self.panel:
                 self.panel.deleteMe()
                 self.panel = None
+            if self.ops_palette_controller:
+                self.ops_palette_controller.hide()
+                self.ops_palette_controller = None
             if self.palette_controller:
                 self.palette_controller.hide()
                 self.palette_controller = None
+            if self.ops_command_definition:
+                self.ops_command_definition.deleteMe()
+                self.ops_command_definition = None
             if self.command_definition:
                 self.command_definition.deleteMe()
                 self.command_definition = None
@@ -257,6 +315,18 @@ class UnifiedCabinetPluginApp:
     def show_palette(self):
         if self.palette_controller:
             self.palette_controller.show()
+
+    def show_ops_palette(self):
+        if self.ops_palette_controller:
+            self.ops_palette_controller.show()
+
+    def _show_ops_palette(self, _payload, _palette):
+        self.show_ops_palette()
+        return "connectOperationsPaletteResult", {
+            "ok": True,
+            "action": "ui.showConnectOperationsPalette",
+            "visible": True,
+        }
 
     def _ping(self, payload, _palette):
         return (
@@ -288,6 +358,24 @@ class _CommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
                 ui.messageBox("CabinetNC command failed:\n{}".format(traceback.format_exc()))
 
 
+class _OpsCommandCreatedHandler(adsk.core.CommandCreatedEventHandler):
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+
+    def notify(self, args):
+        try:
+            command = args.command
+            on_execute = _ShowOpsPaletteExecuteHandler(self.app)
+            command.execute.add(on_execute)
+            self.app.handlers.append(on_execute)
+        except Exception:
+            app = adsk.core.Application.get()
+            ui = app.userInterface if app else None
+            if ui:
+                ui.messageBox("CabinetNC ops command failed:\n{}".format(traceback.format_exc()))
+
+
 class _ShowPaletteExecuteHandler(adsk.core.CommandEventHandler):
     def __init__(self, app):
         super().__init__()
@@ -295,6 +383,15 @@ class _ShowPaletteExecuteHandler(adsk.core.CommandEventHandler):
 
     def notify(self, _args):
         self.app.show_palette()
+
+
+class _ShowOpsPaletteExecuteHandler(adsk.core.CommandEventHandler):
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+
+    def notify(self, _args):
+        self.app.show_ops_palette()
 
 
 def run(_context):

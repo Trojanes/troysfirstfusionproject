@@ -233,6 +233,49 @@
     .connect-card {
       margin-bottom: 12px;
     }
+    .connect-mode-tabs {
+      display: flex;
+      gap: 8px;
+      margin: 0 0 10px;
+      padding: 0 4px;
+    }
+    .connect-mode-tab {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--muted);
+      padding: 6px 12px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    .connect-mode-tab.active {
+      border-color: #85b5ff;
+      background: var(--blue-soft);
+      color: #0b57d0;
+    }
+    .connect-view[hidden] { display: none !important; }
+    .connect-ops-list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 240px;
+      overflow: auto;
+      margin-bottom: 10px;
+    }
+    .connect-ops-list button {
+      text-align: left;
+      width: 100%;
+    }
+    .connect-ops-list button.selected {
+      outline: 2px solid #2f5bff;
+    }
+    .connect-ops-edit {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+    .connect-ops-edit[hidden] { display: none !important; }
+
     .connect-section {
       margin-bottom: 14px;
       padding-bottom: 12px;
@@ -2372,60 +2415,120 @@
     </aside>
   </div>
 
-      <div class="hardware-page page" id="page-hardware" hidden>
+            <div class="hardware-page page" id="page-hardware" hidden>
     <div class="hardware-shell hardware-shell-simple">
       <main class="attributes-main">
         <div class="card connect-card">
           <h3>板件连接</h3>
+          <div class="connect-mode-tabs" role="tablist" aria-label="Connect 作业模式">
+            <button type="button" class="connect-mode-tab active" data-connect-view="pair" role="tab" aria-selected="true">当前板对</button>
+            <button type="button" class="connect-mode-tab" data-connect-view="cabinet" role="tab" aria-selected="false">整柜</button>
+            <button type="button" class="connect-mode-tab" data-connect-view="ops" role="tab" aria-selected="false">已创建</button>
+          </div>
           <div class="card-body">
-            <div class="hardware-section-note">选中两块板 → 检查 →（自动同步声明或面验证）→ 选五金 → 预览 → 创建。bbox 候选不可直接切削。</div>
 
-            <div class="connect-section">
-              <h4 class="connect-section-title">选中板件</h4>
-              <p class="connect-selection-hint" id="connectSelectionHint">在 Fusion 中选中 2 块板件，点击「刷新选中」。</p>
-              <div class="connect-detail-grid">
-                <div class="connect-detail-item"><strong>板件 A</strong><span id="connectPanelA">-</span></div>
-                <div class="connect-detail-item"><strong>板件 B</strong><span id="connectPanelB">-</span></div>
+            <div class="connect-view" id="connectViewPair" data-connect-panel="pair" role="tabpanel">
+              <div class="hardware-section-note">选中两块板 → 检查 → 选五金 → 预览 → 创建。需整柜批量请切到「整柜」。</div>
+
+              <div class="connect-section">
+                <h4 class="connect-section-title">选中板件</h4>
+                <p class="connect-selection-hint" id="connectSelectionHint">在 Fusion 中选中 2 块板件，点击「刷新选中」。</p>
+                <div class="connect-detail-grid">
+                  <div class="connect-detail-item"><strong>板件 A</strong><span id="connectPanelA">-</span></div>
+                  <div class="connect-detail-item"><strong>板件 B</strong><span id="connectPanelB">-</span></div>
+                </div>
+                <div class="connect-toolbar">
+                  <button type="button" class="ghost" id="connectProbeSelectionBtn">刷新选中</button>
+                  <button type="button" class="primary" id="connectInspectBtn">检查</button>
+                </div>
               </div>
-              <div class="connect-toolbar">
-                <button type="button" class="ghost" id="connectProbeSelectionBtn">刷新选中</button>
-                <button type="button" class="primary" id="connectInspectBtn">检查</button>
+
+              <div class="connect-section">
+                <h4 class="connect-section-title">检查结果</h4>
+                <div class="connect-inspect-summary" id="connectInspectSummary">尚未检查。</div>
+                <details class="connect-more" id="connectInspectDetails">
+                  <summary>详细信息</summary>
+                  <div class="connect-detail-grid" style="margin-top:8px;">
+                    <div class="connect-detail-item"><strong>关系类型</strong><span id="connectRelType">-</span></div>
+                    <div class="connect-detail-item"><strong>几何类型</strong><span id="connectGeometryType">-</span></div>
+                    <div class="connect-detail-item"><strong>验证状态</strong><span id="connectVerification">-</span></div>
+                    <div class="connect-detail-item"><strong>可预览</strong><span id="connectSafePreview">-</span></div>
+                    <div class="connect-detail-item"><strong>可加工</strong><span id="connectSafeCut">-</span></div>
+                    <div class="connect-detail-item"><strong>接触轴</strong><span id="connectContactAxis">-</span></div>
+                    <div class="connect-detail-item"><strong>间距</strong><span id="connectContactDistance">-</span></div>
+                    <div class="connect-detail-item"><strong>接触面积</strong><span id="connectContactArea">-</span></div>
+                    <div class="connect-detail-item"><strong>宿主板</strong><span id="connectHostPanel">-</span></div>
+                    <div class="connect-detail-item"><strong>目标板</strong><span id="connectTargetPanel">-</span></div>
+                    <div class="connect-detail-item"><strong>警告</strong><span id="connectWarnings">-</span></div>
+                    <div class="connect-detail-item"><strong>错误</strong><span id="connectErrors">-</span></div>
+                  </div>
+                </details>
+              </div>
+
+              <div class="connect-section">
+                <h4 class="connect-section-title">五金</h4>
+                <div class="connect-detail-grid" style="margin-bottom: 10px;">
+                  <div class="connect-detail-item">
+                    <strong>类型</strong>
+                    <select id="connectHardwareType" style="width: 100%; margin-top: 4px;">
+                      <option value="screw_hole">螺丝孔</option>
+                      <option value="tongue_groove">榫槽</option>
+                      <option value="hinge_hole">铰链杯孔</option>
+                      <option value="drawer_runner_hole">抽屉滑轨孔</option>
+                      <option value="lock_cutout">锁孔口袋</option>
+                    </select>
+                  </div>
+                  <div class="connect-detail-item"><strong>状态</strong><span id="connectHardwareCutReady">可切削</span></div>
+                </div>
+                <div class="connect-detail-grid" id="connectHardwareParams" style="margin-bottom: 10px;"></div>
+                <div class="connect-actions">
+                  <button type="button" class="ghost" id="connectPreviewBtn" disabled>预览</button>
+                  <button type="button" class="ghost" id="connectReconcileBtn" disabled>同步声明</button>
+                  <button type="button" class="ghost" id="connectFaceVerifyBtn" disabled>面验证</button>
+                  <button type="button" class="primary" id="connectCutBtn" disabled>创建</button>
+                </div>
+                <div class="connect-detail-grid" id="connectPreviewResultGrid" style="margin-top: 10px;" hidden>
+                  <div class="connect-detail-item"><strong>预览摘要</strong><span id="connectPreviewHoleCount">-</span></div>
+                  <div class="connect-detail-item"><strong>尺寸</strong><span id="connectPreviewDiameter">-</span></div>
+                  <div class="connect-detail-item"><strong>边距/位姿</strong><span id="connectPreviewEdgeOffset">-</span></div>
+                  <div class="connect-detail-item"><strong>深度</strong><span id="connectPreviewDepth">-</span></div>
+                </div>
+                <div class="connect-detail-grid" id="connectCutResultGrid" style="margin-top: 8px;" hidden>
+                  <div class="connect-detail-item"><strong>切削特征</strong><span id="connectCutFeature">-</span></div>
+                  <div class="connect-detail-item"><strong>结果</strong><span id="connectCutHoleCount">-</span></div>
+                  <div class="connect-detail-item"><strong>加工尺寸</strong><span id="connectCutDiameter">-</span></div>
+                  <div class="connect-detail-item"><strong>宿主板</strong><span id="connectCutHost">-</span></div>
+                </div>
               </div>
             </div>
 
-            <div class="connect-section">
-              <h4 class="connect-section-title">检查结果</h4>
-              <div class="connect-inspect-summary" id="connectInspectSummary">尚未检查。</div>
-              <details class="connect-more" id="connectInspectDetails">
-                <summary>详细信息</summary>
-                <div class="connect-detail-grid" style="margin-top:8px;">
-                  <div class="connect-detail-item"><strong>关系类型</strong><span id="connectRelType">-</span></div>
-                  <div class="connect-detail-item"><strong>几何类型</strong><span id="connectGeometryType">-</span></div>
-                  <div class="connect-detail-item"><strong>验证状态</strong><span id="connectVerification">-</span></div>
-                  <div class="connect-detail-item"><strong>可预览</strong><span id="connectSafePreview">-</span></div>
-                  <div class="connect-detail-item"><strong>可加工</strong><span id="connectSafeCut">-</span></div>
-                  <div class="connect-detail-item"><strong>接触轴</strong><span id="connectContactAxis">-</span></div>
-                  <div class="connect-detail-item"><strong>间距</strong><span id="connectContactDistance">-</span></div>
-                  <div class="connect-detail-item"><strong>接触面积</strong><span id="connectContactArea">-</span></div>
-                  <div class="connect-detail-item"><strong>宿主板</strong><span id="connectHostPanel">-</span></div>
-                  <div class="connect-detail-item"><strong>目标板</strong><span id="connectTargetPanel">-</span></div>
-                  <div class="connect-detail-item"><strong>警告</strong><span id="connectWarnings">-</span></div>
-                  <div class="connect-detail-item"><strong>错误</strong><span id="connectErrors">-</span></div>
-                </div>
-                <div class="connect-actions" style="margin-top:8px;">
+            <div class="connect-view" id="connectViewCabinet" data-connect-panel="cabinet" role="tabpanel" hidden>
+              <div class="hardware-section-note">整柜：验证候选 → 批量创建。默认不自动全切；「一键流水线」= 声明 → 面验证 → 批量五金。</div>
+
+              <div class="connect-section">
+                <h4 class="connect-section-title">候选与验证</h4>
+                <div class="connect-actions">
                   <button type="button" class="ghost" id="connectScanBtn">扫描全部关系</button>
                   <button type="button" class="ghost" id="connectVerifyAllBtn">验证全部候选</button>
                   <button type="button" class="ghost" id="connectShowContactPatchBtn" disabled>显示接触面</button>
                   <button type="button" class="ghost" id="connectClearContactPatchBtn">清除接触面</button>
                 </div>
-                <div class="connect-detail-grid" style="margin-top:10px;" id="connectGapJointsBlock">
+                <details class="connect-more" id="connectBatchSkipDetails" hidden>
+                  <summary>跳过 / 手修列表（点击一行加载板对）</summary>
+                  <div id="connectBatchSkipList" class="connect-batch-skip-list" style="margin:8px 0 0;font-size:12px;display:flex;flex-direction:column;gap:4px;"></div>
+                </details>
+              </div>
+
+              <div class="connect-section">
+                <h4 class="connect-section-title">缝隙接头</h4>
+                <div class="connect-detail-grid" id="connectGapJointsBlock">
                   <div class="connect-detail-item" style="grid-column:1/-1;">
                     <label style="display:flex;align-items:center;gap:8px;margin:0;">
                       <input id="connectGapJointsEnabled" type="checkbox" style="width:auto;">
                       <strong>启用缝隙接头</strong>
                     </label>
                     <div class="hardware-section-note" style="margin-top:4px;">
-                      默认关闭。开启后，平行缝隙（如门缝）可进入面验证与批量五金；不特殊化「门」。
+                      默认关闭。开启后平行缝隙可进入面验证与批量五金。
                     </div>
                   </div>
                   <div class="connect-detail-item">
@@ -2439,167 +2542,49 @@
                   <div class="connect-detail-item" style="grid-column:1/-1;">
                     <label style="display:flex;align-items:center;gap:8px;margin:0;">
                       <input id="connectGapIncludeBatch" type="checkbox" checked disabled style="width:auto;">
-                      进入「验证全部 / 批量创建五金 / 一键流水线」
+                      进入「验证全部 / 批量创建 / 一键流水线」
                     </label>
                   </div>
                 </div>
-                <details class="connect-more" id="connectBatchSkipDetails" hidden>
-                  <summary>批量验证跳过列表</summary>
-                  <pre id="connectBatchSkipList" class="connect-batch-skip-list" style="white-space:pre-wrap;margin:8px 0 0;font-size:12px;"></pre>
-                </details>
-              </details>
+              </div>
+
+              <div class="connect-section">
+                <h4 class="connect-section-title">批量五金</h4>
+                <div class="connect-detail-grid" style="margin-bottom: 10px;">
+                  <div class="connect-detail-item" style="grid-column:1/-1;">
+                    <label style="display:flex;align-items:center;gap:8px;margin:0;">
+                      <input id="connectAutoHardwareEnabled" type="checkbox" style="width:auto;">
+                      <strong>自动选型</strong>
+                    </label>
+                    <div class="hardware-section-note" style="margin-top:4px;">
+                      按关系建议类型：声明 allowedHardware → 缝隙铰链 → 接触螺丝；批量可混类型。
+                    </div>
+                    <div class="hardware-section-note" id="connectAutoHardwareHint" style="margin-top:4px;">建议：-</div>
+                  </div>
+                </div>
+                <div class="connect-actions">
+                  <button type="button" class="ghost" id="connectBatchCutBtn">批量创建五金</button>
+                  <button type="button" class="primary" id="connectPipelineBtn">一键验证并创建五金</button>
+                </div>
+              </div>
             </div>
 
-            <div class="connect-section">
-              <h4 class="connect-section-title">五金</h4>
-              <div class="connect-detail-grid" style="margin-bottom: 10px;">
-                <div class="connect-detail-item">
-                  <strong>类型</strong>
-                  <select id="connectHardwareType" style="width: 100%; margin-top: 4px;">
-                    <option value="screw_hole">螺丝孔（可切削）</option>
-                    <option value="tongue_groove">榫槽（可切削）</option>
-                    <option value="hinge_hole">铰链杯孔（可切削）</option>
-                    <option value="drawer_runner_hole">抽屉滑轨孔（可切削）</option>
-                    <option value="lock_cutout">锁孔口袋（可切削）</option>
-                  </select>
-                </div>
-                <div class="connect-detail-item"><strong>状态</strong><span id="connectHardwareCutReady">可切削</span></div>
+            <div class="connect-view" id="connectViewOps" data-connect-panel="ops" role="tabpanel" hidden>
+              <div class="hardware-section-note">选中一条 → 改参数 → 更新（删旧特征后按新参重切，同一 operationId）。工具栏「Connect 已创建操作」仍可打开浮动面板。</div>
+              <div id="connectOpsList" class="connect-ops-list"></div>
+              <div id="connectOpsEditBlock" class="connect-ops-edit" hidden>
+                <div class="hardware-section-note" style="margin-bottom:6px;"><strong>修改此操作参数</strong></div>
+                <div id="connectOpsEditParams" class="connect-detail-grid"></div>
               </div>
-              <div class="connect-detail-grid" style="margin-bottom: 10px;">
-                <div class="connect-detail-item" style="grid-column:1/-1;">
-                  <label style="display:flex;align-items:center;gap:8px;margin:0;">
-                    <input id="connectAutoHardwareEnabled" type="checkbox" style="width:auto;">
-                    <strong>自动选型</strong>
-                  </label>
-                  <div class="hardware-section-note" style="margin-top:4px;">
-                    默认关闭。开启后按关系建议类型：声明 allowedHardware → 缝隙用铰链 → 接触用螺丝；批量可混类型。
-                  </div>
-                  <div class="hardware-section-note" id="connectAutoHardwareHint" style="margin-top:4px;">建议：-</div>
-                </div>
+              <div class="connect-actions" style="margin-top:10px;">
+                <button type="button" class="ghost" id="connectOpsRefreshBtn">刷新列表</button>
+                <button type="button" class="primary" id="connectOpsUpdateBtn" disabled>更新操作</button>
               </div>
-              <div class="connect-detail-grid" id="connectHardwareParams" style="margin-bottom: 10px;"></div>
-              <div class="hardware-section-note" id="connectVerifyHint" style="margin-bottom:8px;">
-                验证优先：生成器声明（检查后自动同步）→ 面验证 /「验证全部候选」。一键流水线 = 声明 → 面验证 → 批量五金。≤1mm 近接触视为可切接触。面验证通过后会写入板件元数据，重新扫描可恢复可切状态。
-              </div>
-              <div class="connect-actions">
-                <button type="button" class="ghost" id="connectPreviewBtn" disabled>预览</button>
-                <button type="button" class="ghost" id="connectReconcileBtn" disabled>同步声明</button>
-                <button type="button" class="ghost" id="connectFaceVerifyBtn" disabled>面验证</button>
-                <button type="button" class="primary" id="connectCutBtn" disabled>创建</button>
-                <button type="button" class="ghost" id="connectBatchCutBtn">批量创建五金</button>
-                <button type="button" class="primary" id="connectPipelineBtn">一键验证并创建五金</button>
-              </div>
-              <div class="connect-detail-grid" style="margin-top: 10px;">
-                <div class="connect-detail-item"><strong>预览摘要</strong><span id="connectPreviewHoleCount">-</span></div>
-                <div class="connect-detail-item"><strong>尺寸</strong><span id="connectPreviewDiameter">-</span></div>
-                <div class="connect-detail-item"><strong>边距/位姿</strong><span id="connectPreviewEdgeOffset">-</span></div>
-                <div class="connect-detail-item"><strong>深度</strong><span id="connectPreviewDepth">-</span></div>
-              </div>
-              <div class="connect-detail-grid" style="margin-top: 8px;">
-                <div class="connect-detail-item"><strong>切削特征</strong><span id="connectCutFeature">-</span></div>
-                <div class="connect-detail-item"><strong>结果</strong><span id="connectCutHoleCount">-</span></div>
-                <div class="connect-detail-item"><strong>加工尺寸</strong><span id="connectCutDiameter">-</span></div>
-                <div class="connect-detail-item"><strong>宿主板</strong><span id="connectCutHost">-</span></div>
-              </div>
+              <div class="hardware-section-note" id="connectOpsHint" style="margin-top:8px;">切换到此页时自动刷新。</div>
             </div>
 
             <div class="hardware-message" id="connectMessage">在 Fusion 中选中两块板件，然后点击「刷新选中」或「检查」。</div>
             <div class="connect-op-result" id="connectOperationResult" hidden aria-hidden="true"></div>
-
-            <details class="connect-dev-tools" id="connectSideDrillTools">
-              <summary>侧向接触钻孔（试验）</summary>
-              <div class="hardware-section-note">早期试验 UI。正式流程请用上方「板件连接」。</div>
-              <div class="connect-detail-grid">
-                <div class="connect-detail-item">
-                  <strong>预设</strong>
-                  <select id="hwPreset" style="width:100%;margin-top:4px;">
-                    <option value="default">默认：3mm 通孔（穿宿主板）</option>
-                  </select>
-                </div>
-                <div class="connect-detail-item">
-                  <strong>孔径 (mm)</strong>
-                  <input id="hwHoleDiameter" type="number" value="3.0" min="0.1" step="0.1" style="width:100%;margin-top:4px;">
-                </div>
-                <div class="connect-detail-item">
-                  <strong>通孔</strong>
-                  <label style="display:block;margin-top:6px;"><input id="hwThroughHost" type="checkbox" checked style="width:auto"> 穿宿主板</label>
-                </div>
-                <div class="connect-detail-item">
-                  <strong>孔深 (mm)</strong>
-                  <input id="hwHoleDepth" type="number" value="16.0" min="0.1" step="0.1" disabled style="width:100%;margin-top:4px;">
-                </div>
-              </div>
-              <div class="attr-radio-row" style="margin:10px 0;">
-                <label class="attr-radio"><input type="radio" name="hwPatternMode" value="EVEN_DISTRIBUTION" checked> 均分</label>
-                <label class="attr-radio"><input type="radio" name="hwPatternMode" value="SIDE_DISTANCE_HOLE_DISTANCE"> 定距</label>
-              </div>
-              <div class="hardware-pattern-fields" id="hwEvenFields">
-                <div class="grid2">
-                  <label>孔数 <input id="hwHoleNumber" type="number" value="2" min="1" step="1"></label>
-                  <label>边距 (mm) <input id="hwEvenSideDistance" type="number" value="50" min="0" step="1"></label>
-                </div>
-              </div>
-              <div class="hardware-pattern-fields" id="hwSpacingFields" hidden>
-                <div class="grid2">
-                  <label>边距 (mm) <input id="hwSpacingSideDistance" type="number" value="50" min="0" step="1"></label>
-                  <label>孔间距 (mm) <input id="hwHoleDistance" type="number" value="200" min="1" step="1"></label>
-                </div>
-                <div class="attr-radio-row">
-                  <label class="attr-radio"><input type="radio" name="hwStartSide" value="A" checked> 起点 A</label>
-                  <label class="attr-radio"><input type="radio" name="hwStartSide" value="B"> 起点 B</label>
-                </div>
-              </div>
-              <div class="hardware-body-pick" style="margin-top:10px;">
-                <label>板件 1 <div class="hardware-body-label" id="hwBody1Label">未选择</div></label>
-                <button type="button" class="ghost" id="hwSelectBody1Btn">选择</button>
-              </div>
-              <div class="hardware-body-pick" style="margin-top:8px;">
-                <label>板件 2 <div class="hardware-body-label" id="hwBody2Label">未选择</div></label>
-                <button type="button" class="ghost" id="hwSelectBody2Btn">选择</button>
-              </div>
-              <div class="actions" style="margin-top:10px;">
-                <button type="button" class="ghost" id="hwCreateTestBoardsBtn">创建测试板</button>
-                <button type="button" class="ghost" id="hwSavePresetBtn">保存预设</button>
-                <button type="button" class="ghost" id="hwUpdatePresetBtn">更新预设</button>
-                <button type="button" class="ghost" id="hwDeletePresetBtn">删除预设</button>
-                <button type="button" class="primary" id="hwCalculateBtn">计算预览</button>
-                <button type="button" class="ghost" id="hwCreateHolesBtn" disabled>创建孔</button>
-              </div>
-              <div class="hardware-preview" id="hwPreview" style="margin-top:10px;min-height:60px;">
-                <div class="muted">试验区预览。</div>
-              </div>
-              <div class="hardware-summary-grid" style="margin-top:8px;">
-                <div class="hardware-summary-item">接触类型<strong id="hwSummaryContactType">-</strong></div>
-                <div class="hardware-summary-item">宿主板<strong id="hwSummaryHost">-</strong></div>
-                <div class="hardware-summary-item">目标板<strong id="hwSummaryTarget">-</strong></div>
-                <div class="hardware-summary-item">孔数<strong id="hwSummaryHoleCount">-</strong></div>
-              </div>
-              <div class="hardware-message" id="hwActionMessage">侧向钻孔试验区。</div>
-              <div class="hardware-message warn" id="hwMetadataMessage">需要面元数据。</div>
-              <div class="hardware-message warn" id="hwWarningMessage">正式流程请用上方「板件连接」。</div>
-            </details>
-
-            <details class="connect-dev-tools" id="connectDevTools">
-              <summary>开发工具</summary>
-              <div class="hardware-section-note">测试、演示、回归与关系线。默认折叠。</div>
-              <div class="hardware-debug-actions">
-                <button type="button" class="primary" id="hwRelRunDay1SmokeBtn">运行 Day 1 自动验证</button>
-                <button type="button" class="ghost" id="hwRelCreateFixtureBtn">创建关系测试板</button>
-                <button type="button" class="ghost" id="hwRelReconcileOverheadDeclarationsBtn">同步声明关系</button>
-                <button type="button" class="ghost" id="hwRelVerifySelectedFacesBtn">面验证</button>
-                <button type="button" class="ghost" id="connectConfirmBtn" disabled>手动确认（调试）</button>
-                <button type="button" class="primary" id="hwRelRunDemoFixtureFlowBtn">运行演示流程</button>
-                <button type="button" class="ghost" id="hwRelRunDemoNegativeBtn">运行负面案例检查</button>
-                <button type="button" class="ghost" id="hwRelRunDemoPackOfflineBtn">运行离线演示包</button>
-                <button type="button" class="ghost" id="hwRelRunOverlaySelfCheckBtn">运行叠加层自检</button>
-                <button type="button" class="ghost" id="hwRelShowOverlayForSelectedBtn">显示关系线</button>
-                <button type="button" class="ghost" id="hwRelClearRelationshipOverlaysBtn">清除关系线</button>
-                <button type="button" class="ghost" id="hwRelCopyLastJsonBtn">复制 JSON</button>
-                <button type="button" class="ghost" id="hwRelClearResultBtn">清空结果</button>
-              </div>
-              <div class="hardware-message" id="hwRelDebugMessage">开发工具就绪。</div>
-              <pre class="hardware-debug-result" id="hwRelDebugResult">{}</pre>
-            </details>
           </div>
         </div>
       </main>
@@ -3428,6 +3413,7 @@
       selectedFeatureId: null,
       selectedSideProfileBoardId: "V1",
       showFeatureOverlays: true,
+      exteriorSide: "none",
       zones: [
         { id: "zone-1", type: "left_side_door", height: 600 },
         { id: "zone-2", type: "drawer", height: 500 },
@@ -3801,6 +3787,7 @@
         drawer: "#dcedff",
         open_space: "#fbfcff",
         open_appliance: "#fff2c7",
+        fridge: "#e8f0ff",
         top_flap: "#ffe6c7",
         bottom_flap: "#ffe6c7",
         blank_panel: "#e6e9ef",
@@ -5551,6 +5538,7 @@
       };
       const avoidH = optionalNumberValue("gtAvoidanceHeight");
       if (avoidH !== undefined) avoidance.height = avoidH;
+      generalTallApplyFridgeExteriorToForm();
       return {
         cabinetHeight: generalTallNumberValue("gtCabinetHeight"),
         cabinetWidth: generalTallNumberValue("gtCabinetWidth"),
@@ -5561,6 +5549,10 @@
         rightSidePanelThickness: generalTallNumberValue("gtRightSidePanelThickness"),
         leftSidePanelAdaptAvoidance: document.getElementById("gtLeftSidePanelAdaptAvoidance").checked,
         rightSidePanelAdaptAvoidance: document.getElementById("gtRightSidePanelAdaptAvoidance").checked,
+        exteriorSide: generalTallState.exteriorSide === "left" || generalTallState.exteriorSide === "right"
+          ? generalTallState.exteriorSide
+          : "none",
+        syncCabinetWidthFromFridge: true,
         frontPanelThickness,
         frontFaceAllowance: frontPanelThickness,
         doorPanelThickness: frontPanelThickness,
@@ -5588,6 +5580,17 @@
             next.verticalDivider = true;
             if (zone.dividerCenterX !== undefined && zone.dividerCenterX !== "") {
               next.dividerCenterX = Number(zone.dividerCenterX);
+            }
+          }
+          if (zone.type === "fridge") {
+            const heightMm = Number(zone.applianceHeightMm);
+            const widthMm = Number(zone.applianceWidthMm);
+            const depthMm = Number(zone.applianceDepthMm);
+            if (Number.isFinite(widthMm) && widthMm > 0) next.applianceWidthMm = widthMm;
+            if (Number.isFinite(depthMm) && depthMm > 0) next.applianceDepthMm = depthMm;
+            if (Number.isFinite(heightMm) && heightMm > 0) {
+              next.applianceHeightMm = heightMm;
+              next.height = heightMm;
             }
           }
           if (generalTallIsDoorType(zone.type) && zone.shelfEnabled === true) {
@@ -5714,6 +5717,31 @@
       return single != null ? String(single) : "";
     }
 
+    function generalTallHasFridgeZone() {
+      return (generalTallState.zones || []).some((zone) => zone.type === "fridge");
+    }
+
+    function generalTallFridgeWidthAllowance(exteriorSide) {
+      return exteriorSide === "left" || exteriorSide === "right" ? 61 : 45;
+    }
+
+    function generalTallApplyFridgeExteriorToForm() {
+      if (!generalTallHasFridgeZone()) return;
+      const exterior = generalTallState.exteriorSide === "left" || generalTallState.exteriorSide === "right"
+        ? generalTallState.exteriorSide
+        : "none";
+      const fridge = generalTallState.zones.find((zone) => zone.type === "fridge");
+      const applianceWidth = Number(fridge?.applianceWidthMm);
+      if (Number.isFinite(applianceWidth) && applianceWidth > 0) {
+        const cw = document.getElementById("gtCabinetWidth");
+        if (cw) cw.value = String(applianceWidth + generalTallFridgeWidthAllowance(exterior));
+      }
+      const left = document.getElementById("gtLeftSidePanelThickness");
+      const right = document.getElementById("gtRightSidePanelThickness");
+      if (exterior === "left" && left) left.value = "16";
+      if (exterior === "right" && right) right.value = "16";
+    }
+
     function generalTallSystemHeight(system, position) {
       if (!system) return 0;
       if (system.style === "style_2") return Number(system.height) || 0;
@@ -5740,7 +5768,7 @@
         boundaryType = "half_zi";
       } else if (lowerType === "top_flap") {
         boundaryType = "full_zi";
-      } else if (["side_door", "double_door", "drawer", "open_space", "open_appliance", "bottom_flap"].includes(lowerType)) {
+      } else if (["side_door", "double_door", "drawer", "open_space", "open_appliance", "fridge", "bottom_flap"].includes(lowerType)) {
         boundaryType = "full_zi";
       }
       if (
@@ -5816,12 +5844,25 @@
         <label>Zone ID <input id="gtPropZoneId" value="${escapeHtml(zone.id)}"></label>
         <label>Zone Type
           <select id="gtPropZoneType">
-            ${["left_side_door", "right_side_door", "double_door", "drawer", "open_space", "open_appliance", "top_flap", "bottom_flap", "blank_panel"].map((type) => `<option value="${type}" ${type === zone.type ? "selected" : ""}>${type}</option>`).join("")}
+            ${["left_side_door", "right_side_door", "double_door", "drawer", "open_space", "open_appliance", "fridge", "top_flap", "bottom_flap", "blank_panel"].map((type) => `<option value="${type}" ${type === zone.type ? "selected" : ""}>${type}</option>`).join("")}
           </select>
         </label>
         <label>Height <input id="gtPropZoneHeight" type="number" value="${escapeHtml(zone.height)}"></label>
         <label>Z0 <input class="oh-readonly" readonly value="${escapeHtml(Math.round(range.z0))}"></label>
         <label>Z1 <input class="oh-readonly" readonly value="${escapeHtml(Math.round(range.z1))}"></label>
+        ${zone.type === "fridge" ? `
+          <div class="message" style="grid-column:1 / -1;">Fridge cavity: height from appliance; CW = W+45/61; exterior → SidePanel; V5 opposite side; avoidance gap &lt;105 → raised HSet.</div>
+          <label>Exterior Side
+            <select id="gtPropExteriorSide">
+              <option value="none" ${generalTallState.exteriorSide === "none" || !generalTallState.exteriorSide ? "selected" : ""}>none</option>
+              <option value="left" ${generalTallState.exteriorSide === "left" ? "selected" : ""}>left</option>
+              <option value="right" ${generalTallState.exteriorSide === "right" ? "selected" : ""}>right</option>
+            </select>
+          </label>
+          <label>Appliance Width <input id="gtPropApplianceWidth" type="number" min="1" value="${escapeHtml(zone.applianceWidthMm ?? 550)}"></label>
+          <label>Appliance Depth <input id="gtPropApplianceDepth" type="number" min="1" value="${escapeHtml(zone.applianceDepthMm ?? 580)}"></label>
+          <label>Appliance Height <input id="gtPropApplianceHeight" type="number" min="1" value="${escapeHtml(zone.applianceHeightMm ?? zone.height ?? 1470)}"></label>
+        ` : ""}
         <label><span><input id="gtPropZoneDivider" type="checkbox" style="width:auto" ${isDouble && zone.verticalDivider ? "checked" : ""} ${isDouble ? "" : "disabled"}> Vertical Divider</span></label>
         <label>Divider Center X <input id="gtPropZoneDividerX" type="number" value="${escapeHtml(zone.dividerCenterX ?? "")}" ${isDouble && zone.verticalDivider ? "" : "disabled"}></label>
         <label><span><input id="gtPropZoneShelf" type="checkbox" style="width:auto" ${isDoor && zone.shelfEnabled === true ? "checked" : ""} ${isDoor ? "" : "disabled"}> Horizontal Shelf</span></label>
@@ -5900,12 +5941,49 @@
           zone.shelfEnabled = false;
           delete zone.shelfHeight;
         }
+        if (zone.type === "fridge") {
+          if (!Number.isFinite(Number(zone.applianceWidthMm))) zone.applianceWidthMm = 550;
+          if (!Number.isFinite(Number(zone.applianceDepthMm))) zone.applianceDepthMm = 580;
+          if (!Number.isFinite(Number(zone.applianceHeightMm))) {
+            zone.applianceHeightMm = Number(zone.height) > 0 ? Number(zone.height) : 1470;
+          }
+          zone.height = Number(zone.applianceHeightMm);
+          if (!generalTallState.exteriorSide) generalTallState.exteriorSide = "none";
+          generalTallApplyFridgeExteriorToForm();
+        } else {
+          delete zone.applianceWidthMm;
+          delete zone.applianceDepthMm;
+          delete zone.applianceHeightMm;
+        }
         renderGeneralTallZones();
       });
       const height = document.getElementById("gtPropZoneHeight");
       if (height) height.addEventListener("change", () => {
         zone.height = Math.max(1, Number(height.value || 0));
+        if (zone.type === "fridge") zone.applianceHeightMm = zone.height;
         normalizeGeneralTallZoneHeights(generalTallState.selectedZoneIndex);
+        renderGeneralTallZones();
+      });
+      const applianceWidth = document.getElementById("gtPropApplianceWidth");
+      if (applianceWidth) applianceWidth.addEventListener("change", () => {
+        zone.applianceWidthMm = Math.max(1, Number(applianceWidth.value || 0));
+        generalTallApplyFridgeExteriorToForm();
+      });
+      const applianceDepth = document.getElementById("gtPropApplianceDepth");
+      if (applianceDepth) applianceDepth.addEventListener("change", () => {
+        zone.applianceDepthMm = Math.max(1, Number(applianceDepth.value || 0));
+      });
+      const applianceHeight = document.getElementById("gtPropApplianceHeight");
+      if (applianceHeight) applianceHeight.addEventListener("change", () => {
+        zone.applianceHeightMm = Math.max(1, Number(applianceHeight.value || 0));
+        zone.height = zone.applianceHeightMm;
+        normalizeGeneralTallZoneHeights(generalTallState.selectedZoneIndex);
+        renderGeneralTallZones();
+      });
+      const exteriorSide = document.getElementById("gtPropExteriorSide");
+      if (exteriorSide) exteriorSide.addEventListener("change", () => {
+        generalTallState.exteriorSide = exteriorSide.value || "none";
+        generalTallApplyFridgeExteriorToForm();
         renderGeneralTallZones();
       });
       const divider = document.getElementById("gtPropZoneDivider");
@@ -6106,7 +6184,7 @@
             <label>Zone id <input data-gt-zone-id="${index}" value="${escapeHtml(zone.id)}"></label>
             <label>Type
               <select data-gt-zone-type="${index}">
-                ${["left_side_door", "right_side_door", "double_door", "drawer", "open_space", "open_appliance", "top_flap", "bottom_flap", "blank_panel"].map((type) => `<option value="${type}" ${type === zone.type ? "selected" : ""}>${type}</option>`).join("")}
+                ${["left_side_door", "right_side_door", "double_door", "drawer", "open_space", "open_appliance", "fridge", "top_flap", "bottom_flap", "blank_panel"].map((type) => `<option value="${type}" ${type === zone.type ? "selected" : ""}>${type}</option>`).join("")}
               </select>
             </label>
             <label>Height <input type="number" data-gt-zone-height="${index}" value="${escapeHtml(zone.height)}"></label>
@@ -6141,13 +6219,29 @@
             zone.shelfEnabled = false;
             delete zone.shelfHeight;
           }
+          if (zone.type === "fridge") {
+            if (!Number.isFinite(Number(zone.applianceWidthMm))) zone.applianceWidthMm = 550;
+            if (!Number.isFinite(Number(zone.applianceDepthMm))) zone.applianceDepthMm = 580;
+            if (!Number.isFinite(Number(zone.applianceHeightMm))) {
+              zone.applianceHeightMm = Number(zone.height) > 0 ? Number(zone.height) : 1470;
+            }
+            zone.height = Number(zone.applianceHeightMm);
+            if (!generalTallState.exteriorSide) generalTallState.exteriorSide = "none";
+            generalTallApplyFridgeExteriorToForm();
+          } else {
+            delete zone.applianceWidthMm;
+            delete zone.applianceDepthMm;
+            delete zone.applianceHeightMm;
+          }
           renderGeneralTallZones();
         });
       });
       host.querySelectorAll("[data-gt-zone-height]").forEach((input) => {
         input.addEventListener("change", () => {
           generalTallState.selectedZoneIndex = Number(input.dataset.gtZoneHeight);
-          generalTallState.zones[generalTallState.selectedZoneIndex].height = Math.max(1, Number(input.value || 0));
+          const zone = generalTallState.zones[generalTallState.selectedZoneIndex];
+          zone.height = Math.max(1, Number(input.value || 0));
+          if (zone.type === "fridge") zone.applianceHeightMm = zone.height;
           renderGeneralTallZones();
         });
       });
@@ -9920,27 +10014,15 @@
             document.getElementById("statusText").textContent = parsed?.ok
               ? `Lounge assembly bodies: ${parsed.createdBodies || 0} bodies (deleted ${deleted.bodies || 0} old)`
               : "Lounge assembly body creation failed";
-          } else if (action === "hardwareResult") {
-            hardwareHandleFusionResult(parsed);
-          } else if (action === "hardwarePreviewResult") {
-            hardwareHandlePreviewResult(parsed);
-          } else if (action === "hardwareCreateHolesResult") {
-            hardwareHandleCreateHolesResult(parsed);
-          } else if (action === "relationshipFixtureResult") {
-            hwRelDebugHandleFixtureResult(parsed);
           } else if (action === "relationshipScanResult") {
-            hwRelDebugHandleScanResult(parsed);
             connectUiHandleScanResult(parsed);
           } else if (action === "relationshipInspectResult") {
-            hwRelDebugHandleInspectResult(parsed);
             connectUiHandleInspectResult(parsed);
           } else if (action === "relationshipSelectionResult") {
             connectUiHandleSelectionResult(parsed);
           } else if (action === "hardwareRelationshipPreviewResult") {
-            hwRelDebugHandlePreviewResult(parsed);
             connectUiHandlePreviewResult(parsed);
           } else if (action === "hardwareRelationshipCutResult") {
-            hwRelDebugHandleCutResult(parsed);
             connectUiHandleCutResult(parsed);
           } else if (action === "hardwareBatchCutResult") {
             connectUiHandleBatchCutResult(parsed);
@@ -9948,15 +10030,16 @@
             connectUiHandlePipelineResult(parsed);
           } else if (action === "hardwareTypesResult") {
             connectUiHandleHardwareTypesResult(parsed);
-          } else if (action === "connectDemoResult") {
-            hwRelDebugHandleDemoResult(parsed);
-          } else if (action === "day1SmokeResult") {
-            hwRelDebugHandleDay1SmokeResult(parsed);
-            connectUiHandleDay1SmokeResult(parsed);
+          } else if (action === "connectOperationsPaletteResult") {
+            if (parsed?.ok) {
+              connectUiSetMessage("已打开「已创建操作」浮动面板。", "ok");
+            }
+          } else if (action === "hardwareOperationsResult") {
+            connectOpsHandleListResult(parsed);
+          } else if (action === "hardwareOperationUpdateResult") {
+            connectOpsHandleUpdateResult(parsed);
           } else if (action === "contactPatchOverlayResult") {
             connectUiHandleContactPatchOverlayResult(parsed);
-          } else if (action === "relationshipOverlayResult") {
-            hwRelDebugHandleOverlayResult(parsed);
           } else if (action === "relationshipFaceVerifyResult") {
             connectUiHandleFaceVerifyResult(parsed);
           } else if (action === "relationshipFaceVerifyBatchResult") {
@@ -9991,15 +10074,6 @@
             document.getElementById("loungeResultBox").textContent = String(data || "");
           } else if (action === "loungeAssemblyBodyResult") {
             document.getElementById("loungeResultBox").textContent = String(data || "");
-          } else if (action === "hardwareResult") {
-            hardwareSetMessage("hwActionMessage", String(data || ""), "error");
-          } else if (action === "hardwarePreviewResult") {
-            hardwareSetMessage("hwActionMessage", String(data || ""), "error");
-          } else if (action === "hardwareCreateHolesResult") {
-            hardwareSetMessage("hwActionMessage", String(data || ""), "error");
-          } else if (action === "relationshipFixtureResult" || action === "relationshipScanResult" || action === "relationshipInspectResult" || action === "hardwareRelationshipPreviewResult" || action === "connectDemoResult" || action === "relationshipOverlayResult") {
-            hwRelDebugSetMessage(String(data || ""), "error");
-            hwRelDebugShowResult({ ok: false, action, error: String(data || "") });
           } else if (action === "fridgeCabinetResult") {
             document.getElementById("resultBox").textContent = String(data || "");
             document.getElementById("statusText").textContent = "Fridge generate response parse failed";
@@ -13919,12 +13993,6 @@
       });
     }
 
-    const hardwareState = {
-      body1Selected: false,
-      body2Selected: false,
-      previewValid: false,
-    };
-
     const connectContactState = {
       lastInspect: null,
       lastRelationship: null,
@@ -13937,6 +14005,8 @@
       selectedPanelIds: [],
       lastBatchVerify: null,
       verifiedRelationships: [],
+      lastSkipped: [],
+      repairSkip: null,
     };
 
     const CONNECT_BATCH_SKIP_LABELS = {
@@ -14211,6 +14281,8 @@
       connectUiEl("connectPreviewDiameter") && (connectUiEl("connectPreviewDiameter").textContent = "-");
       connectUiEl("connectPreviewEdgeOffset") && (connectUiEl("connectPreviewEdgeOffset").textContent = "-");
       connectUiEl("connectPreviewDepth") && (connectUiEl("connectPreviewDepth").textContent = "-");
+      const grid = connectUiEl("connectPreviewResultGrid");
+      if (grid) grid.hidden = true;
     }
 
     function connectUiClearCutResult() {
@@ -14218,6 +14290,8 @@
       connectUiEl("connectCutHoleCount") && (connectUiEl("connectCutHoleCount").textContent = "-");
       connectUiEl("connectCutDiameter") && (connectUiEl("connectCutDiameter").textContent = "-");
       connectUiEl("connectCutHost") && (connectUiEl("connectCutHost").textContent = "-");
+      const grid = connectUiEl("connectCutResultGrid");
+      if (grid) grid.hidden = true;
     }
 
     function connectUiRenderPreviewResult(parsed) {
@@ -14265,6 +14339,8 @@
       connectUiEl("connectPreviewDepth") && (connectUiEl("connectPreviewDepth").textContent =
         depth != null ? `${depth} mm` : (hwType === "screw_hole" ? "宿主板厚" : "-"));
       connectUiEl("connectCutHost") && (connectUiEl("connectCutHost").textContent = parsed?.hostPanelId || "-");
+      const previewGrid = connectUiEl("connectPreviewResultGrid");
+      if (previewGrid) previewGrid.hidden = false;
     }
 
     function connectUiRenderCutResult(audit) {
@@ -14295,6 +14371,8 @@
       }
       connectUiEl("connectCutDiameter") && (connectUiEl("connectCutDiameter").textContent = sizeText);
       connectUiEl("connectCutHost") && (connectUiEl("connectCutHost").textContent = data.hostPanelId || "-");
+      const cutGrid = connectUiEl("connectCutResultGrid");
+      if (cutGrid) cutGrid.hidden = false;
     }
 
     function connectUiBadge(tone, text) {
@@ -14361,7 +14439,6 @@
         connectUiEl("connectWarnings") && (connectUiEl("connectWarnings").textContent = "-");
         connectUiEl("connectErrors") && (connectUiEl("connectErrors").textContent = (parsed?.errors || parsed?.contactPatchErrors || ["检查失败"]).join(" "));
         connectUiEl("connectShowContactPatchBtn") && (connectUiEl("connectShowContactPatchBtn").disabled = true);
-        connectUiEl("connectConfirmBtn") && (connectUiEl("connectConfirmBtn").disabled = true);
         connectUiEl("connectReconcileBtn") && (connectUiEl("connectReconcileBtn").disabled = true);
         connectUiEl("connectFaceVerifyBtn") && (connectUiEl("connectFaceVerifyBtn").disabled = true);
         connectUiEl("connectPreviewBtn") && (connectUiEl("connectPreviewBtn").disabled = true);
@@ -14404,7 +14481,6 @@
         && rel.relationshipType === "structural_butt_joint"
         && rel.roles?.hostPanelId
         && rel.roles?.targetPanelId;
-      connectUiEl("connectConfirmBtn") && (connectUiEl("connectConfirmBtn").disabled = !confirmAllowed);
       connectUiEl("connectReconcileBtn") && (connectUiEl("connectReconcileBtn").disabled = !confirmAllowed);
 
       const previewAllowed = confirmAllowed && Boolean(verification.safeForPreview !== false);
@@ -14528,7 +14604,6 @@
     }
 
     function connectUiHandleDeclaredResult(parsed) {
-      hwRelDebugHandleDeclaredResult(parsed);
       const wasAuto = Boolean(connectContactState.pendingAutoReconcile);
       connectContactState.pendingAutoReconcile = false;
       if (!parsed?.ok) {
@@ -14732,22 +14807,111 @@
       });
     }
 
+    function connectUiRepairHint(reason) {
+      const key = String(reason || "").trim();
+      if (key === "cut_failed" || key === "cut_exception") {
+        return "已加载该板对。可先预览再创建；若门控关闭，先同步声明或面验证。";
+      }
+      if (key === "cap_reached") {
+        return "已加载该板对（本批上限跳过）。确认关系后可单独创建，或缩小批量重试。";
+      }
+      if (
+        key === "no_opposing_faces"
+        || key === "face_extract_failed"
+        || key === "class_mismatch"
+        || key === "geometry_not_supported"
+      ) {
+        return "已加载该板对。建议：同步声明（OH/GT/Kitchen）→ 面验证 → 预览 → 创建。";
+      }
+      if (key === "panel_missing" || key === "body_not_found") {
+        return "跳过项指向的板可能已丢失。请在 Fusion 中确认两块板仍在，再点检查。";
+      }
+      return "已加载该板对。请检查 → 同步声明或面验证 → 预览 → 创建。";
+    }
+
+    function connectUiFindRelationshipForSkip(item) {
+      if (!item) return null;
+      const pools = []
+        .concat(connectContactState.verifiedRelationships || [])
+        .concat(connectContactState.lastRelationship ? [connectContactState.lastRelationship] : [])
+        .concat(connectContactState.confirmedRelationship ? [connectContactState.confirmedRelationship] : [])
+        .concat((connectContactState.lastBatchVerify && connectContactState.lastBatchVerify.verifiedRelationships) || []);
+      const rid = String(item.relationshipId || "").trim();
+      if (rid) {
+        const byId = pools.find((rel) => rel && String(rel.relationshipId || "") === rid);
+        if (byId) return byId;
+      }
+      const panelA = String(item.panelA || "").trim();
+      const panelB = String(item.panelB || "").trim();
+      if (!panelA || !panelB) return null;
+      return pools.find((rel) => {
+        const a = String(rel?.panelA?.panelId || "").trim();
+        const b = String(rel?.panelB?.panelId || "").trim();
+        return (a === panelA && b === panelB) || (a === panelB && b === panelA);
+      }) || null;
+    }
+
+    function connectUiRepairFromSkip(item) {
+      const panelA = String(item?.panelA || "").trim();
+      const panelB = String(item?.panelB || "").trim();
+      if (!panelA || !panelB) {
+        connectUiSetMessage("跳过项缺少板件 ID，无法手修。", "error");
+        return;
+      }
+      connectUiShowView("pair");
+      connectContactState.repairSkip = item;
+      connectContactState.selectedPanelIds = [panelA, panelB];
+      connectContactState.confirmedRelationship = null;
+      const hint = connectUiRepairHint(item.reason);
+      connectUiSetOperation(`手修：${panelA} ↔ ${panelB}`, "warn");
+      connectUiSetMessage(hint, "warn");
+      connectUiRenderSelectionIds([panelA, panelB], 2);
+
+      const cached = connectUiFindRelationshipForSkip(item);
+      if (cached) {
+        connectContactState.lastRelationship = cached;
+        connectUiRenderInspect({
+          ok: true,
+          relationship: cached,
+          panels: connectContactState.lastPanels,
+          selectedPanelIds: [panelA, panelB],
+          contactPatch: connectContactState.lastContactPatch,
+        });
+      }
+
+      fusionSend("relationships.inspectPair", {
+        panelAId: panelA,
+        panelBId: panelB,
+        toleranceMm: 1.0,
+        gapJoints: connectUiReadGapJoints(),
+      });
+    }
+
     function connectUiRenderBatchSkipList(skipped) {
       const skipDetails = connectUiEl("connectBatchSkipDetails");
       const skipList = connectUiEl("connectBatchSkipList");
       if (!skipDetails || !skipList) return;
       const rows = Array.isArray(skipped) ? skipped : [];
+      connectContactState.lastSkipped = rows;
+      skipList.innerHTML = "";
       if (!rows.length) {
         skipDetails.hidden = true;
-        skipList.textContent = "";
         return;
       }
       skipDetails.hidden = false;
-      skipList.textContent = rows.map((item) => {
+      skipDetails.open = true;
+      rows.forEach((item) => {
         const reason = CONNECT_BATCH_SKIP_LABELS[item.reason] || item.reason || "跳过";
         const detail = (item.errors && item.errors[0]) ? ` — ${item.errors[0]}` : "";
-        return `${item.panelA || "?"} ↔ ${item.panelB || "?"}: ${reason}${detail}`;
-      }).join("\n");
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "ghost connect-skip-repair-btn";
+        btn.style.cssText = "display:block;width:100%;text-align:left;white-space:normal;padding:6px 8px;line-height:1.35;";
+        btn.textContent = `手修 · ${item.panelA || "?"} ↔ ${item.panelB || "?"}：${reason}${detail}`;
+        btn.title = "点击加载该板对并检查，便于手动修复";
+        btn.addEventListener("click", () => connectUiRepairFromSkip(item));
+        skipList.appendChild(btn);
+      });
     }
 
     function connectUiCut() {
@@ -14882,18 +15046,36 @@
         const cutSafe = Boolean(rel?.verification?.safeForCut)
           && rel?.verification?.level !== "bbox_candidate"
           && rel?.verification?.level !== "bbox_contact_patch";
-        connectUiSetMessage(
-          patch
-            ? `已识别关系；接触面积 ${patch.contactAreaMm2} mm²。`
-            : "已识别关系，但未能生成接触面。",
-          patch ? "ok" : "warn",
-        );
+        const repairing = Boolean(connectContactState.repairSkip);
         if (cutSafe) {
           connectContactState.confirmedRelationship = rel;
-          connectUiSetOperation("检查完成。关系已可切：选五金 → 预览 → 创建。", "ok");
+          connectUiSetOperation(
+            repairing ? "手修检查完成。关系已可切：预览 → 创建。" : "检查完成。关系已可切：选五金 → 预览 → 创建。",
+            "ok",
+          );
+          connectUiSetMessage(
+            repairing
+              ? "手修板对已可切。请预览后创建；完成后可继续点跳过列表中的下一行。"
+              : (patch
+                ? `已识别关系；接触面积 ${patch.contactAreaMm2} mm²。`
+                : "已识别关系，但未能生成接触面。"),
+            patch || repairing ? "ok" : "warn",
+          );
+          if (repairing) connectContactState.repairSkip = null;
         } else {
           connectContactState.pendingAutoReconcile = true;
-          connectUiSetOperation("检查完成。正在尝试同步生成器声明…", "warn");
+          connectUiSetOperation(
+            repairing ? "手修：检查完成，正在同步生成器声明…" : "检查完成。正在尝试同步生成器声明…",
+            "warn",
+          );
+          connectUiSetMessage(
+            repairing
+              ? connectUiRepairHint(connectContactState.repairSkip?.reason)
+              : (patch
+                ? `已识别关系；接触面积 ${patch.contactAreaMm2} mm²。`
+                : "已识别关系，但未能生成接触面。"),
+            "warn",
+          );
           fusionSend("relationships.reconcileGeneratorDeclarations", { toleranceMm: 1.0 });
         }
       } else {
@@ -14931,8 +15113,28 @@
 
     function connectUiHandleScanResult(parsed) {
       if (parsed?.ok) {
-        connectContactState.lastScanCount = parsed.relationshipCount || 0;
-        connectUiSetMessage(`扫描完成：发现 ${parsed.relationshipCount || 0} 条关系。`, "ok");
+        const relCount = parsed.relationshipCount || 0;
+        const panelCount = parsed.panelCount != null
+          ? parsed.panelCount
+          : (Array.isArray(parsed.panels) ? parsed.panels.length : 0);
+        connectContactState.lastScanCount = relCount;
+        connectContactState.lastPanels = Array.isArray(parsed.panels) ? parsed.panels : connectContactState.lastPanels;
+        if (panelCount === 0) {
+          connectUiSetMessage(
+            "扫描完成：发现 0 块面板、0 条关系。当前设计里没有带 panelId 的实体。请先用 Overhead / General Tall / Kitchen 生成柜体（生成成功后板件会写入元数据）。",
+            "error",
+          );
+          connectUiSetOperation("无面板元数据", "error");
+        } else if (relCount === 0) {
+          connectUiSetMessage(
+            `扫描完成：发现 ${panelCount} 块面板，但 0 条接触关系。板件间距可能大于 1mm，或未形成边/面接触；可开缝隙接头后再扫，或选两块近板点「检查」。`,
+            "warn",
+          );
+          connectUiSetOperation(`面板 ${panelCount} · 关系 0`, "warn");
+        } else {
+          connectUiSetMessage(`扫描完成：发现 ${panelCount} 块面板、${relCount} 条关系。`, "ok");
+          connectUiSetOperation(`面板 ${panelCount} · 关系 ${relCount}`, "ok");
+        }
       } else {
         connectUiSetMessage((parsed?.errors || ["关系扫描失败"]).join(" "), "error");
       }
@@ -14953,7 +15155,6 @@
     }
 
     function connectUiHandleFaceVerifyResult(parsed) {
-      hwRelDebugHandleFaceVerifyResult(parsed);
       const rel = parsed?.relationship;
       if (parsed?.panels?.length) {
         connectContactState.lastPanels = parsed.panels;
@@ -15110,7 +15311,7 @@
           "ok",
         );
         connectUiSetMessage(
-          `已创建 ${meta.label}（${featureName}）。请在 Fusion 时间轴与 3D 视口核对。`,
+          `已创建 ${meta.label}（${featureName}）。可用工具栏「Connect 已创建操作」或下方按钮改参。`,
           "ok",
         );
         const cutBtn = connectUiEl("connectCutBtn");
@@ -15123,6 +15324,191 @@
         connectUiSetOperation((parsed?.errors || ["切割失败"]).join(" "), "error");
         connectUiSetMessage((parsed?.errors || ["切割失败"]).join(" "), "error");
       }
+    }
+
+
+    const connectOpsState = {
+      selectedOp: null,
+      lastOps: [],
+    };
+
+    function connectUiShowView(view) {
+      const allowed = ["pair", "cabinet", "ops"];
+      const target = allowed.includes(view) ? view : "pair";
+      document.querySelectorAll(".connect-mode-tab").forEach((tab) => {
+        const on = tab.dataset.connectView === target;
+        tab.classList.toggle("active", on);
+        tab.setAttribute("aria-selected", on ? "true" : "false");
+      });
+      document.querySelectorAll(".connect-view").forEach((panel) => {
+        panel.hidden = panel.dataset.connectPanel !== target;
+      });
+      if (target === "ops") {
+        connectOpsRefresh();
+      }
+    }
+
+    function connectOpsSetHint(text) {
+      const el = connectUiEl("connectOpsHint");
+      if (el) el.textContent = text || "";
+    }
+
+    function connectOpsRenderEdit(rule) {
+      const block = connectUiEl("connectOpsEditBlock");
+      const host = connectUiEl("connectOpsEditParams");
+      if (!block || !host) return;
+      if (!rule || typeof rule !== "object") {
+        block.hidden = true;
+        host.innerHTML = "";
+        return;
+      }
+      const hwType = String(rule.type || connectOpsState.selectedOp?.hardwareType || "screw_hole");
+      const defaults = Object.assign({}, CONNECT_HW_RULES[hwType] || CONNECT_HW_RULES.screw_hole, rule, { type: hwType });
+      const fields = CONNECT_HW_PARAM_FIELDS[hwType] || [];
+      if (!fields.length) {
+        block.hidden = true;
+        host.innerHTML = "";
+        return;
+      }
+      block.hidden = false;
+      host.innerHTML = fields.map((field) => (
+        `<div class="connect-detail-item"><strong>${field.label}</strong>` +
+        `<input id="connectOpsEdit_${field.key}" data-op-edit="${field.key}" type="number" ` +
+        `value="${defaults[field.key]}" min="${field.min}" step="${field.step}" style="width:100%;margin-top:4px;">` +
+        `</div>`
+      )).join("");
+    }
+
+    function connectOpsReadRule() {
+      const hwType = String(
+        connectOpsState.selectedOp?.hardwareType
+        || connectOpsState.selectedOp?.rule?.type
+        || "screw_hole"
+      );
+      const rule = Object.assign({}, CONNECT_HW_RULES[hwType] || CONNECT_HW_RULES.screw_hole, { type: hwType });
+      if (connectOpsState.selectedOp?.rule && typeof connectOpsState.selectedOp.rule === "object") {
+        Object.assign(rule, connectOpsState.selectedOp.rule, { type: hwType });
+      }
+      (CONNECT_HW_PARAM_FIELDS[hwType] || []).forEach((field) => {
+        const input = connectUiEl(`connectOpsEdit_${field.key}`);
+        if (!input) return;
+        const raw = Number(input.value);
+        if (!Number.isFinite(raw)) return;
+        rule[field.key] = field.key === "holeCount"
+          ? Math.max(1, Math.round(raw))
+          : Math.max(field.min, raw);
+      });
+      return rule;
+    }
+
+    function connectOpsRenderList(operations) {
+      const host = connectUiEl("connectOpsList");
+      const updateBtn = connectUiEl("connectOpsUpdateBtn");
+      connectOpsState.lastOps = Array.isArray(operations) ? operations : [];
+      if (!host) return;
+      if (!connectOpsState.lastOps.length) {
+        host.innerHTML = "";
+        connectOpsState.selectedOp = null;
+        connectOpsRenderEdit(null);
+        if (updateBtn) updateBtn.disabled = true;
+        connectOpsSetHint("当前设计无已创建五金操作。");
+        return;
+      }
+      host.innerHTML = connectOpsState.lastOps.map((op, index) => {
+        const id = String(op.operationId || "");
+        const selected = connectOpsState.selectedOp && connectOpsState.selectedOp.operationId === id;
+        const label = op.label || `${op.hardwareType || "?"} · ${op.hostPanelId || "?"} → ${op.targetPanelId || "?"}`;
+        return (
+          `<button type="button" data-idx="${index}" class="${selected ? "selected" : ""}">` +
+          `${label} · ${op.status || "applied"}` +
+          `</button>`
+        );
+      }).join("");
+      host.querySelectorAll("button[data-idx]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const op = connectOpsState.lastOps[Number(btn.getAttribute("data-idx"))];
+          if (!op) return;
+          connectOpsState.selectedOp = op;
+          connectOpsRenderEdit(op.rule || { type: op.hardwareType || "screw_hole" });
+          if (updateBtn) updateBtn.disabled = false;
+          connectOpsSetHint(`已选：${op.operationId}`);
+          connectOpsRenderList(connectOpsState.lastOps);
+        });
+      });
+      if (connectOpsState.selectedOp) {
+        const still = connectOpsState.lastOps.find(
+          (op) => op.operationId === connectOpsState.selectedOp.operationId
+        );
+        connectOpsState.selectedOp = still || null;
+        if (connectOpsState.selectedOp) {
+          connectOpsRenderEdit(
+            connectOpsState.selectedOp.rule || { type: connectOpsState.selectedOp.hardwareType || "screw_hole" }
+          );
+          if (updateBtn) updateBtn.disabled = false;
+        } else {
+          connectOpsRenderEdit(null);
+          if (updateBtn) updateBtn.disabled = true;
+        }
+      } else {
+        connectOpsSetHint(`共 ${connectOpsState.lastOps.length} 条。点击一行后改参数。`);
+      }
+    }
+
+    function connectOpsRefresh() {
+      connectOpsSetHint("正在加载…");
+      fusionSend("hardware.listHardwareOperations", {});
+    }
+
+    function connectOpsUpdateSelected() {
+      const selectedOp = connectOpsState.selectedOp;
+      if (!selectedOp) {
+        connectUiSetMessage("请先选中一条操作。", "warn");
+        return;
+      }
+      connectUiSetMessage("正在更新操作（删旧特征 → 重切）…", "");
+      fusionSend("hardware.updateHardwareOperation", {
+        operationId: selectedOp.operationId,
+        hostPanelId: selectedOp.hostPanelId,
+        targetPanelId: selectedOp.targetPanelId,
+        cutFeatureName: selectedOp.cutFeatureName,
+        tongueFeatureName: selectedOp.tongueFeatureName,
+        tongueFeatureNames: selectedOp.tongueFeatureNames || undefined,
+        relationship: selectedOp.relationship || undefined,
+        rule: connectOpsReadRule(),
+        autoHardware: { enabled: false },
+      });
+    }
+
+    function connectOpsHandleListResult(parsed) {
+      if (!parsed?.ok) {
+        connectOpsRenderList([]);
+        connectUiSetMessage((parsed?.errors || ["加载操作失败"]).join(" "), "error");
+        return;
+      }
+      connectOpsRenderList(parsed.operations || []);
+      connectUiSetMessage(
+        `已加载 ${Array.isArray(parsed.operations) ? parsed.operations.length : 0} 条操作。`,
+        "ok",
+      );
+    }
+
+    function connectOpsHandleUpdateResult(parsed) {
+      if (parsed?.ok) {
+        connectUiSetMessage(
+          `已更新：${parsed.operationId || ""}` +
+            (parsed.previousCutDeleted ? "（旧特征已删）" : "（未找到旧特征，已重切）"),
+          "ok",
+        );
+        connectOpsRefresh();
+      } else {
+        connectUiSetMessage((parsed?.errors || ["更新失败"]).join(" "), "error");
+      }
+    }
+
+
+    function connectUiOpenOperationsPalette() {
+      connectUiSetMessage("正在打开「已创建操作」子面板…", "");
+      fusionSend("ui.showConnectOperationsPalette", {});
     }
 
     function connectUiHandleHardwareTypesResult(parsed) {
@@ -15150,24 +15536,6 @@
       connectUiRefreshHardwareTypeUi();
     }
 
-    function connectUiHandleDay1SmokeResult(parsed) {
-      const overall = parsed?.overall || (parsed?.ok ? "PASS" : "FAIL");
-      const summary = parsed?.summaryText || "";
-      const cutAudit = parsed?.cutAudit || {};
-      if (parsed?.ok) {
-        connectUiRenderCutResult(cutAudit);
-        connectUiSetOperation(summary || `Day 1 自动验证 ${overall}`, "ok");
-        connectUiSetMessage(
-          `Day 1 自动验证 ${overall}：${cutAudit.holeCount || 0} 孔 · ${cutAudit.cutFeatureName || "feature"}`,
-          "ok",
-        );
-      } else {
-        connectUiClearCutResult();
-        connectUiSetOperation(summary || `Day 1 自动验证 ${overall}`, "error");
-        connectUiSetMessage((parsed?.errors || [summary || "Day 1 自动验证失败"]).join(" "), "error");
-      }
-    }
-
     function connectUiInit() {
       connectUiApplyGapJointsToForm(connectUiLoadGapJointsFromStorage());
       ["connectGapJointsEnabled", "connectGapMinMm", "connectGapMaxMm", "connectGapIncludeBatch"].forEach((id) => {
@@ -15179,783 +15547,30 @@
         autoEl.addEventListener("change", connectUiPersistAutoHardware);
       }
       connectUiRefreshAutoHardwareHint();
+      document.querySelectorAll(".connect-mode-tab").forEach((tab) => {
+        tab.addEventListener("click", () => connectUiShowView(tab.dataset.connectView));
+      });
       connectUiEl("connectProbeSelectionBtn")?.addEventListener("click", connectUiProbeSelection);
       connectUiEl("connectScanBtn")?.addEventListener("click", connectUiScan);
       connectUiEl("connectVerifyAllBtn")?.addEventListener("click", connectUiVerifyAllBboxCandidates);
       connectUiEl("connectInspectBtn")?.addEventListener("click", connectUiInspectSelected);
       connectUiEl("connectShowContactPatchBtn")?.addEventListener("click", connectUiShowContactPatch);
       connectUiEl("connectClearContactPatchBtn")?.addEventListener("click", connectUiClearContactPatch);
-      connectUiEl("connectConfirmBtn")?.addEventListener("click", connectUiConfirm);
       connectUiEl("connectReconcileBtn")?.addEventListener("click", connectUiReconcileDeclarations);
       connectUiEl("connectFaceVerifyBtn")?.addEventListener("click", connectUiFaceVerify);
       connectUiEl("connectPreviewBtn")?.addEventListener("click", connectUiPreview);
       connectUiEl("connectCutBtn")?.addEventListener("click", connectUiCut);
       connectUiEl("connectBatchCutBtn")?.addEventListener("click", connectUiBatchCutHardware);
       connectUiEl("connectPipelineBtn")?.addEventListener("click", connectUiRunConnectPipeline);
+      connectUiEl("connectOpsRefreshBtn")?.addEventListener("click", connectOpsRefresh);
+      connectUiEl("connectOpsUpdateBtn")?.addEventListener("click", connectOpsUpdateSelected);
       connectUiEl("connectHardwareType")?.addEventListener("change", connectUiRefreshHardwareTypeUi);
       connectUiRefreshHardwareTypeUi();
+      connectUiShowView("pair");
       fusionSend("hardware.listHardwareTypes", {});
     }
 
-    const hwRelDebugState = {
-      lastScanResult: null,
-      selectedRelationship: null,
-      confirmedRelationship: null,
-      lastDemoReport: null,
-      lastOverlayReport: null,
-    };
-
-    const HW_REL_MANUAL_CONFIRMED_VERIFICATION = {
-      level: "manual_confirmed",
-      safeForPreview: true,
-      safeForCut: true,
-      requiresManualConfirmation: false,
-    };
-
-    const HW_REL_NO_MANUAL_CONFIRMED_MSG =
-      "无可切割关系。请先手动确认或面验证后再切割。/ No cut-safe relationship available. Confirm manually or verify faces before creating cut.";
-
-    const HW_REL_CUT_SAFE_LEVELS = new Set(["manual_confirmed", "face_verified", "generator_declared"]);
-
-    const HW_REL_DEBUG_RULE = {
-      type: "screw_hole",
-      diameterMm: 4,
-      edgeOffsetMm: 30,
-      minSpacingMm: 80,
-      depthMode: "host_thickness",
-    };
-
-    function hwRelDebugEl(id) {
-      return document.getElementById(id);
-    }
-
-    function hwRelDebugShowResult(value) {
-      const el = hwRelDebugEl("hwRelDebugResult");
-      if (!el) return;
-      if (typeof value === "string") {
-        el.textContent = value;
-        return;
-      }
-      el.textContent = JSON.stringify(value, null, 2);
-    }
-
-    function hwRelDebugSetMessage(message, tone = "") {
-      const el = hwRelDebugEl("hwRelDebugMessage");
-      if (!el) return;
-      el.textContent = message;
-      el.className = `hardware-message ${tone}`.trim();
-    }
-
-    function hwRelDebugStoreScanResult(parsed) {
-      if (!parsed || typeof parsed !== "object") return;
-      if (Array.isArray(parsed.relationships) || Array.isArray(parsed.panels)) {
-        hwRelDebugState.lastScanResult = parsed;
-        return;
-      }
-      if (parsed.scan && typeof parsed.scan === "object") {
-        hwRelDebugState.lastScanResult = parsed.scan;
-      }
-    }
-
-    function hwRelDebugPanelsMap(scanResult) {
-      const map = {};
-      (scanResult?.panels || []).forEach((panel) => {
-        if (panel?.panelId) map[panel.panelId] = panel;
-      });
-      return map;
-    }
-
-    function hwRelDebugFindPreviewRelationship(scanResult) {
-      return (scanResult?.relationships || []).find((relationship) => {
-        if (relationship?.geometryType !== "edge_to_surface") return false;
-        if (relationship?.relationshipType !== "structural_butt_joint") return false;
-        const roles = relationship.roles || {};
-        return Boolean(roles.hostPanelId) && Boolean(roles.targetPanelId);
-      }) || null;
-    }
-
-    function hwRelDebugConfirmRelationshipForCut(relationship) {
-      const notes = Array.isArray(relationship?.auditNotes) ? relationship.auditNotes.slice() : [];
-      notes.push("Manual cut confirmation applied (debug session only).");
-      return {
-        ...relationship,
-        verification: { ...HW_REL_MANUAL_CONFIRMED_VERIFICATION },
-        auditNotes: notes,
-      };
-    }
-
-    function hwRelDebugResolveRelationshipForConfirm(scanResult) {
-      if (hwRelDebugState.selectedRelationship) {
-        return hwRelDebugState.selectedRelationship;
-      }
-      return hwRelDebugFindPreviewRelationship(scanResult);
-    }
-
-    function hwRelDebugIsManualConfirmedForCut(relationship) {
-      const verification = relationship?.verification || {};
-      return HW_REL_CUT_SAFE_LEVELS.has(verification.level) && verification.safeForCut === true;
-    }
-
-    function hwRelDebugBuildCutPayload(confirmedRelationship) {
-      const scanResult = hwRelDebugState.lastScanResult;
-      const panels = scanResult ? hwRelDebugPanelsMap(scanResult) : {};
-      const hostId = confirmedRelationship?.roles?.hostPanelId;
-      const targetId = confirmedRelationship?.roles?.targetPanelId;
-      const payload = {
-        relationship: confirmedRelationship,
-        rule: HW_REL_DEBUG_RULE,
-      };
-      if (hostId && targetId && panels[hostId] && panels[targetId]) {
-        payload.panels = {
-          [hostId]: panels[hostId],
-          [targetId]: panels[targetId],
-        };
-      }
-      return payload;
-    }
-
-    function hwRelDebugUpdateConfirmButtonLabel() {
-      const btn = hwRelDebugEl("hwRelConfirmForCutBtn");
-      if (!btn) return;
-      btn.textContent = hwRelDebugState.selectedRelationship
-        ? "确认选中关系可切割 / Confirm Selected For Cut"
-        : "确认首个有效关系可切割 / Confirm First Valid For Cut";
-    }
-
-    function hwRelDebugHandleFixtureResult(parsed) {
-      hwRelDebugStoreScanResult(parsed);
-      hwRelDebugShowResult(parsed);
-      if (parsed?.ok) {
-        const count = Number(parsed.createdBodies || 0);
-        const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
-        const origin = parsed.fixtureOrigin || {};
-        const originHint =
-          origin.baseZMm !== undefined
-            ? ` Origin Z=${origin.baseZMm} mm${origin.baseXMm ? `, X+${origin.baseXMm} mm` : ""}.`
-            : "";
-        const suffix = parsed.flatMode ? " (part design flat mode)" : "";
-        hwRelDebugSetMessage(
-          warnings.length
-            ? `${warnings.join(" ")} 已创建 ${count} 个实体${suffix}。/ Created ${count} bodies${suffix}.${originHint}`
-            : `关系夹具已创建（${count} 个实体${suffix}）。/ Relationship fixture created.${originHint} 扫描数据已保存 / Scan data stored.`,
-          warnings.length ? "warn" : "ok",
-        );
-      } else {
-        hwRelDebugSetMessage((parsed?.errors || ["夹具创建失败 / Fixture creation failed."]).join(" "), "error");
-      }
-    }
-
-    function hwRelDebugHandleScanResult(parsed) {
-      hwRelDebugStoreScanResult(parsed);
-      hwRelDebugState.selectedRelationship = null;
-      hwRelDebugUpdateConfirmButtonLabel();
-      hwRelDebugShowResult(parsed);
-      if (parsed?.ok) {
-        hwRelDebugSetMessage(`扫描完成：发现 ${parsed.relationshipCount || 0} 条关系。/ Scan complete: ${parsed.relationshipCount || 0} relationship(s) found.`, "ok");
-      } else {
-        hwRelDebugSetMessage((parsed?.errors || ["关系扫描失败 / Relationship scan failed."]).join(" "), "error");
-      }
-    }
-
-    function hwRelDebugHandleInspectResult(parsed) {
-      hwRelDebugShowResult(parsed);
-      if (parsed?.ok) {
-        const rel = parsed.relationship || {};
-        if (rel.relationshipId) {
-          hwRelDebugState.selectedRelationship = rel;
-          hwRelDebugState.lastScanResult = {
-            ok: true,
-            action: parsed.action || "relationships.inspectSelected",
-            relationships: [rel],
-            panels: parsed.panels || [],
-            relationshipCount: 1,
-          };
-        }
-        hwRelDebugUpdateConfirmButtonLabel();
-        hwRelDebugSetMessage(`检查板对：${rel.geometryType || "unknown"} / ${rel.relationshipType || "unknown"}.`, "ok");
-      } else {
-        hwRelDebugSetMessage((parsed?.errors || ["检查选中对失败 / Inspect selected pair failed."]).join(" "), "error");
-      }
-    }
-
-    function hwRelDebugHandlePreviewResult(parsed) {
-      hwRelDebugShowResult(parsed);
-      if (parsed?.ok) {
-        hwRelDebugSetMessage(`预览生成 ${parsed.holeCount || 0} 个螺丝孔（${parsed.relationshipId || "relationship"}）。/ Preview generated screw hole(s).`, "ok");
-      } else {
-        hwRelDebugSetMessage((parsed?.errors || ["螺丝孔预览失败 / Screw-hole preview failed."]).join(" "), "error");
-      }
-    }
-
-    function hwRelDebugHandleCutResult(parsed) {
-      const audit = parsed?.audit && typeof parsed.audit === "object" ? parsed.audit : parsed;
-      hwRelDebugShowResult(audit || parsed);
-      if (parsed?.ok) {
-        hwRelDebugSetMessage(
-          `切割已创建：${parsed.holeCount || 0} 孔，特征 ${parsed.cutFeatureName || "unknown"}，metadataWritten=${parsed.metadataWritten === true}. / Cut created.`,
-          "ok",
-        );
-      } else {
-        hwRelDebugSetMessage((parsed?.errors || ["关系切割失败 / Relationship cut failed."]).join(" "), "error");
-      }
-    }
-
-    function hwRelDebugHandleDemoResult(parsed) {
-      hwRelDebugState.lastDemoReport = parsed;
-      if (parsed?.audit?.scan) {
-        hwRelDebugStoreScanResult(parsed.audit.scan);
-      } else if (parsed?.demos) {
-        const firstScan = parsed.demos.find((item) => item?.audit?.scan)?.audit?.scan;
-        if (firstScan) {
-          hwRelDebugStoreScanResult(firstScan);
-        }
-      }
-      hwRelDebugShowResult(parsed);
-      const summary = parsed?.summary || (Array.isArray(parsed?.summaries) ? parsed.summaries[0] : null);
-      if (parsed?.ok) {
-        const demoId = parsed?.demoId || summary?.demoId || parsed?.action || "demo";
-        hwRelDebugSetMessage(`Demo ${demoId}：通过 / PASS`, "ok");
-      } else {
-        hwRelDebugSetMessage((parsed?.errors || [`Demo ${parsed?.demoId || ""} 失败 / failed.`]).join(" "), "error");
-      }
-    }
-
-    function hwRelDebugRunDay1Smoke() {
-      hwRelDebugSetMessage("正在运行 Day 1 自动验证（夹具 → 检查 → 接触面 → 确认 → 打孔）…");
-      connectUiSetMessage("正在运行 Day 1 自动验证…");
-      connectUiSetOperation("自动验证进行中…", "warn");
-      fusionSend("relationships.runDay1Smoke", {});
-    }
-
-    function hwRelDebugHandleDay1SmokeResult(parsed) {
-      hwRelDebugState.lastDemoReport = parsed;
-      hwRelDebugShowResult(parsed);
-      const overall = parsed?.overall || (parsed?.ok ? "PASS" : "FAIL");
-      const lines = (parsed?.steps || []).map((step) => `[${step.status}] ${step.step}`);
-      hwRelDebugSetMessage(
-        `Day 1 自动验证 ${overall}${lines.length ? " · " + lines.join(" · ") : ""}`,
-        parsed?.ok ? "ok" : "error",
-      );
-    }
-
-    function hwRelDebugRunDemoFixtureFlow() {
-      hwRelDebugSetMessage("正在运行 M4.5A Demo 1 夹具流程（夹具 → 扫描 → 预览 → 确认 → 切割）… / Running Demo 1 fixture flow...");
-      fusionSend("relationships.runDemoFixtureFlow", { rule: HW_REL_DEBUG_RULE });
-    }
-
-    function hwRelDebugRunDemoPackOffline() {
-      hwRelDebugSetMessage("正在运行 M4.5A Demo Pack 离线（夹具 + Overhead + 负例）… / Running demo pack offline...");
-      fusionSend("relationships.runDemoPackOffline", {});
-    }
-
-    function hwRelDebugRunDemoNegativeReport() {
-      hwRelDebugSetMessage("正在运行 M4.5A Demo 3 负例过滤报告… / Running negative filtering report...");
-      fusionSend("relationships.runDemoNegativeReport", { useFixtureScan: true });
-    }
-
-    async function hwRelDebugCopyLastJsonReport() {
-      const payload = hwRelDebugState.lastDemoReport || hwRelDebugEl("hwRelDebugResult")?.textContent || "{}";
-      const text = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
-      try {
-        await navigator.clipboard.writeText(text);
-        hwRelDebugSetMessage("已复制 JSON 报告到剪贴板。/ Copied last JSON report to clipboard.", "ok");
-      } catch (error) {
-        hwRelDebugSetMessage(`剪贴板复制失败 / Clipboard copy failed: ${error}`, "error");
-      }
-    }
-
-    function hwRelDebugShowDemoSummary() {
-      const report = hwRelDebugState.lastDemoReport;
-      if (!report) {
-        hwRelDebugSetMessage("尚无 Demo 报告。请先运行 Demo 夹具流程或 Demo Pack 离线。/ No demo report yet.", "error");
-        return;
-      }
-      const summaries = Array.isArray(report.summaries)
-        ? report.summaries
-        : report.summary
-          ? [report.summary]
-          : [];
-      if (!summaries.length) {
-        hwRelDebugSetMessage("上次 Demo 报告无 summary 块。/ Last demo report has no summary block.", "error");
-        hwRelDebugShowResult(report);
-        return;
-      }
-      const lines = summaries.map((item) => {
-        const status = item.ok ? "PASS" : "FAIL";
-        return `${item.demoId || "demo"}: ${status} | panels=${item.panelCount} rels=${item.relationshipCount} screwEligible=${item.screwEligibleCount} cutOk=${item.cutOk}`;
-      });
-      hwRelDebugSetMessage(lines.join(" · "), report.ok ? "ok" : "error");
-      hwRelDebugShowResult({ summaries, ok: report.ok, milestone: report.milestone, demoId: report.demoId });
-    }
-
-    function hwRelDebugHandleOverlayResult(parsed) {
-      hwRelDebugState.lastOverlayReport = parsed;
-      const rel = parsed?.relationship || parsed?.inspect?.relationship;
-      if (rel?.relationshipId) {
-        hwRelDebugState.selectedRelationship = rel;
-      }
-      if (parsed?.scan) {
-        hwRelDebugStoreScanResult(parsed.scan);
-      } else if (rel) {
-        hwRelDebugState.lastScanResult = {
-          ok: true,
-          action: parsed.action || "relationships.showRelationshipOverlayForSelected",
-          relationships: [rel],
-          panels: parsed.panels || [],
-          relationshipCount: 1,
-        };
-      }
-      hwRelDebugUpdateConfirmButtonLabel();
-      hwRelDebugShowResult(parsed);
-      if (parsed?.ok) {
-        const relId = parsed?.relationshipId || rel?.relationshipId || "relationship";
-        if (parsed?.action === "relationships.clearRelationshipOverlays") {
-          hwRelDebugSetMessage(`已清除 ${parsed.removedCount || 0} 个关系叠加对象。/ Cleared overlay artifact(s).`, "ok");
-        } else if (parsed?.action === "relationships.runOverlaySelfCheck") {
-          hwRelDebugSetMessage(`叠加自检通过 / Overlay self-check PASS (${parsed.implVersion || parsed.expectedFusionBuild || "unknown build"}).`, "ok");
-        } else {
-          const ids = (parsed.selectedPanelIds || []).join(" ↔ ");
-          const pairHint = ids ? ` (${ids})` : "";
-          hwRelDebugSetMessage(
-            `叠加${pairHint}：${rel?.geometryType || "unknown"} / ${rel?.relationshipType || "unknown"} (${relId}, ${parsed.implVersion || "unknown build"}). / Overlay shown.`,
-            "ok",
-          );
-        }
-      } else {
-        const hint = parsed?.hint ? ` ${parsed.hint}` : "";
-        hwRelDebugSetMessage((parsed?.errors || ["关系叠加操作失败 / Relationship overlay action failed."]).join(" ") + hint, "error");
-      }
-    }
-
-    function hwRelDebugReconcileOverheadDeclarations() {
-      hwRelDebugSetMessage("正在 Reconcile 生成器声明… / Reconciling generator-declared relationships...");
-      fusionSend("relationships.reconcileGeneratorDeclarations", { toleranceMm: 1.0 });
-    }
-
-    function hwRelDebugHandleDeclaredResult(parsed) {
-      hwRelDebugShowResult(parsed);
-      const rels = parsed?.declaredRelationships || [];
-      const first = rels.find((rel) => rel?.verification?.level === "generator_declared" && rel?.geometryValidation?.ok);
-      if (first) {
-        hwRelDebugState.selectedRelationship = first;
-        hwRelDebugState.confirmedRelationship = first;
-        hwRelDebugState.lastScanResult = {
-          ok: true,
-          action: parsed.action || "relationships.reconcileGeneratorDeclarations",
-          relationships: rels,
-          panels: [],
-          relationshipCount: rels.length,
-        };
-      }
-      hwRelDebugUpdateConfirmButtonLabel();
-      if (parsed?.ok) {
-        hwRelDebugSetMessage(
-          `已 Reconcile ${parsed.declarationCount || 0} 条声明（${parsed.geometryOkCount || 0} 条几何 OK）。/ Reconciled declarations.`,
-          "ok",
-        );
-      } else {
-        hwRelDebugSetMessage((parsed?.errors || ["生成器声明 Reconcile 失败 / Generator declaration reconcile failed."]).join(" "), "error");
-      }
-    }
-
-    function hwRelDebugVerifySelectedPairFaces() {
-      hwRelDebugSetMessage("正在验证选中板对的面接触… / Verifying face contact for selected pair...");
-      fusionSend("relationships.verifySelectedPairFaces", { toleranceMm: 1.0 });
-    }
-
-    function hwRelDebugHandleFaceVerifyResult(parsed) {
-      hwRelDebugShowResult(parsed);
-      const rel = parsed?.relationship;
-      if (rel?.relationshipId) {
-        hwRelDebugState.selectedRelationship = rel;
-        if (parsed?.ok && rel?.verification?.level === "face_verified") {
-          hwRelDebugState.confirmedRelationship = rel;
-        }
-      }
-      if (parsed?.panels?.length) {
-        hwRelDebugState.lastScanResult = {
-          ok: true,
-          action: parsed.action || "relationships.verifySelectedPairFaces",
-          relationships: rel ? [rel] : [],
-          panels: parsed.panels,
-          relationshipCount: rel ? 1 : 0,
-        };
-      }
-      hwRelDebugUpdateConfirmButtonLabel();
-      if (parsed?.ok) {
-        const ids = (parsed.selectedPanelIds || []).join(" ↔ ");
-        const match = parsed.faceMatch || {};
-        hwRelDebugSetMessage(
-          `面验证通过 ${ids}：${match.matchedFaceAId} ↔ ${match.matchedFaceBId}（距离 distance=${match.planeDistanceMm ?? "?"} mm）。/ Face verified.`,
-          "ok",
-        );
-      } else {
-        hwRelDebugSetMessage((parsed?.errors || ["面验证失败 / Face verification failed."]).join(" "), "error");
-      }
-    }
-
-    function hwRelDebugShowOverlayForSelectedPair() {
-      hwRelDebugSetMessage("正在检查选中对并显示关系叠加… / Inspecting selected pair and showing overlay...");
-      fusionSend("relationships.showRelationshipOverlayForSelected", { toleranceMm: 1.0 });
-    }
-
-    function hwRelDebugClearRelationshipOverlays() {
-      hwRelDebugSetMessage("正在清除关系叠加对象… / Clearing relationship overlay artifacts...");
-      fusionSend("relationships.clearRelationshipOverlays", {});
-    }
-
-    function hwRelDebugRunOverlaySelfCheck() {
-      hwRelDebugSetMessage("正在运行关系叠加自检… / Running relationship overlay self-check...");
-      fusionSend("relationships.runOverlaySelfCheck", {});
-    }
-
-    function hwRelDebugCreateCutFromConfirmed() {
-      const confirmed = hwRelDebugState.confirmedRelationship;
-      if (!confirmed || !hwRelDebugIsManualConfirmedForCut(confirmed)) {
-        hwRelDebugSetMessage(HW_REL_NO_MANUAL_CONFIRMED_MSG, "error");
-        hwRelDebugShowResult({
-          ok: false,
-          action: "hardware.createScrewHolesFromRelationship",
-          errors: [HW_REL_NO_MANUAL_CONFIRMED_MSG],
-        });
-        return;
-      }
-
-      hwRelDebugSetMessage(`正在从已确认关系 ${confirmed.relationshipId || ""} 创建螺丝孔… / Creating screw holes from confirmed relationship...`);
-      fusionSend("hardware.createScrewHolesFromRelationship", hwRelDebugBuildCutPayload(confirmed));
-    }
-
-    function hwRelDebugCreateFixture() {
-      hwRelDebugSetMessage("正在创建关系测试夹具… / Creating relationship test fixture...");
-      fusionSend("relationships.createTestFixture", { toleranceMm: 1.0 });
-    }
-
-    function hwRelDebugScan() {
-      hwRelDebugSetMessage("正在扫描全部板件关系… / Scanning all panel relationships...");
-      fusionSend("relationships.scan", { scope: "all", toleranceMm: 1.0 });
-    }
-
-    function hwRelDebugInspectSelected() {
-      hwRelDebugSetMessage("正在检查选中的板件实体… / Inspecting selected panel bodies...");
-      fusionSend("relationships.inspectSelected", { toleranceMm: 1.0 });
-    }
-
-    function hwRelDebugPreviewScrewHoles() {
-      const scanResult = hwRelDebugState.lastScanResult;
-      if (!scanResult) {
-        hwRelDebugSetMessage("尚无扫描结果。请先扫描关系或创建关系夹具。/ No scan result yet.", "error");
-        hwRelDebugShowResult({
-          ok: false,
-          action: "hardware.previewScrewHolesFromRelationship",
-          errors: ["缺少最新关系扫描结果 / Missing latest relationship scan result."],
-        });
-        return;
-      }
-
-      const relationship = hwRelDebugFindPreviewRelationship(scanResult);
-      if (!relationship) {
-        hwRelDebugSetMessage("最新扫描中无 edge_to_surface + structural_butt_joint 且含 host/target 角色的关系。/ No valid relationship in latest scan.", "error");
-        hwRelDebugShowResult({
-          ok: false,
-          action: "hardware.previewScrewHolesFromRelationship",
-          errors: ["最新扫描中未找到有效关系 / No valid relationship found in latest scan result."],
-          relationshipCount: scanResult.relationshipCount || 0,
-        });
-        return;
-      }
-
-      const panels = hwRelDebugPanelsMap(scanResult);
-      const hostId = relationship.roles?.hostPanelId;
-      const targetId = relationship.roles?.targetPanelId;
-      const payload = {
-        relationship,
-        rule: HW_REL_DEBUG_RULE,
-      };
-      if (hostId && targetId && panels[hostId] && panels[targetId]) {
-        payload.panels = {
-          [hostId]: panels[hostId],
-          [targetId]: panels[targetId],
-        };
-      }
-
-      hwRelDebugSetMessage(`正在预览 ${relationship.relationshipId || "relationship"} 的螺丝孔… / Previewing screw holes...`);
-      fusionSend("hardware.previewScrewHolesFromRelationship", payload);
-    }
-
-    function hwRelDebugConfirmForCut() {
-      const scanResult = hwRelDebugState.lastScanResult;
-      if (!scanResult) {
-        hwRelDebugSetMessage("尚无扫描结果。请先扫描关系或创建关系夹具。/ No scan result yet.", "error");
-        hwRelDebugShowResult({
-          ok: false,
-          action: "manualConfirmForCut",
-          errors: ["缺少最新关系扫描结果 / Missing latest relationship scan result."],
-        });
-        return;
-      }
-
-      const relationship = hwRelDebugResolveRelationshipForConfirm(scanResult);
-      if (!relationship) {
-        hwRelDebugSetMessage("无可用 edge_to_surface + structural_butt_joint 关系可确认。/ No valid relationship available to confirm.", "error");
-        hwRelDebugShowResult({
-          ok: false,
-          action: "manualConfirmForCut",
-          errors: ["未找到可手动确认切割的关系 / No valid relationship found for manual cut confirmation."],
-          relationshipCount: scanResult.relationshipCount || 0,
-        });
-        return;
-      }
-
-      const confirmed = hwRelDebugConfirmRelationshipForCut(relationship);
-      hwRelDebugState.confirmedRelationship = confirmed;
-      const sourceLabel = hwRelDebugState.selectedRelationship ? "选中关系 / selected relationship" : "首个有效关系 / first valid relationship";
-      hwRelDebugSetMessage(`已确认 ${sourceLabel} ${confirmed.relationshipId || ""} 可切割（仅测试会话）/ Confirmed for cut testing (session only).`, "ok");
-      hwRelDebugShowResult({
-        ok: true,
-        action: "manualConfirmForCut",
-        source: hwRelDebugState.selectedRelationship ? "selected" : "first_valid",
-        relationship: confirmed,
-        verification: confirmed.verification,
-        safeForCut: confirmed.verification?.safeForCut === true,
-        persisted: false,
-      });
-    }
-
-    function hwRelDebugClearResult() {
-      hwRelDebugShowResult({});
-      hwRelDebugSetMessage("结果已清空。本会话仍保留最新扫描与已确认关系状态。/ Result cleared. Scan and confirmed state retained for this session.");
-    }
-
-    function hwRelDebugInitUi() {
-      hwRelDebugEl("hwRelRunDay1SmokeBtn")?.addEventListener("click", hwRelDebugRunDay1Smoke);
-      hwRelDebugEl("hwRelCreateFixtureBtn")?.addEventListener("click", hwRelDebugCreateFixture);
-      hwRelDebugEl("hwRelVerifySelectedFacesBtn")?.addEventListener("click", hwRelDebugVerifySelectedPairFaces);
-      hwRelDebugEl("hwRelReconcileOverheadDeclarationsBtn")?.addEventListener("click", hwRelDebugReconcileOverheadDeclarations);
-      hwRelDebugEl("hwRelRunDemoFixtureFlowBtn")?.addEventListener("click", hwRelDebugRunDemoFixtureFlow);
-      hwRelDebugEl("hwRelRunDemoPackOfflineBtn")?.addEventListener("click", hwRelDebugRunDemoPackOffline);
-      hwRelDebugEl("hwRelRunDemoNegativeBtn")?.addEventListener("click", hwRelDebugRunDemoNegativeReport);
-      hwRelDebugEl("hwRelCopyLastJsonBtn")?.addEventListener("click", hwRelDebugCopyLastJsonReport);
-      hwRelDebugEl("hwRelShowOverlayForSelectedBtn")?.addEventListener("click", hwRelDebugShowOverlayForSelectedPair);
-      hwRelDebugEl("hwRelRunOverlaySelfCheckBtn")?.addEventListener("click", hwRelDebugRunOverlaySelfCheck);
-      hwRelDebugEl("hwRelClearRelationshipOverlaysBtn")?.addEventListener("click", hwRelDebugClearRelationshipOverlays);
-      hwRelDebugEl("hwRelClearResultBtn")?.addEventListener("click", hwRelDebugClearResult);
-      connectUiInit();
-    }
-
-    function hwEl(id) {
-      return document.getElementById(id);
-    }
-
-    function hardwarePatternMode() {
-      return document.querySelector('input[name="hwPatternMode"]:checked')?.value || "EVEN_DISTRIBUTION";
-    }
-
-    function hardwareNumber(id, fallback = 0) {
-      const value = Number(hwEl(id)?.value);
-      return Number.isFinite(value) ? value : fallback;
-    }
-
-    function hardwareSetMessage(id, message, tone = "") {
-      const el = hwEl(id);
-      if (!el) return;
-      el.textContent = message;
-      el.className = `hardware-message ${tone}`.trim();
-    }
-
-    function hardwareSetSummary(result) {
-      hwEl("hwSummaryStatus").textContent = result.status || "未计算 / Not calculated";
-      hwEl("hwSummaryType").textContent = result.type || "-";
-      hwEl("hwSummaryHost").textContent = result.host || "-";
-      hwEl("hwSummaryTarget").textContent = result.target || "-";
-      hwEl("hwSummaryWidth").textContent = result.width || "-";
-      hwEl("hwSummaryHoleCount").textContent = result.holeCount || "-";
-    }
-
-    function hardwareRenderPreview(result) {
-      const preview = hwEl("hwPreview");
-      if (!preview) return;
-      preview.innerHTML = `<div class="muted">${escapeHtml(result?.message || "Fusion 真实预览尚未实现。/ Real Fusion preview is not implemented yet.")}</div>`;
-    }
-
-    function hardwareUpdatePatternFields() {
-      const mode = hardwarePatternMode();
-      hwEl("hwEvenFields").hidden = mode !== "EVEN_DISTRIBUTION";
-      hwEl("hwSpacingFields").hidden = mode !== "SIDE_DISTANCE_HOLE_DISTANCE";
-      hardwareState.previewValid = false;
-      hwEl("hwCreateHolesBtn").disabled = true;
-      hardwareSetMessage("hwActionMessage", "排孔方式已变更，请重新计算预览后再创建孔。");
-    }
-
-    function hardwareSelectBody(slot) {
-      const label = hwEl(slot === 1 ? "hwBody1Label" : "hwBody2Label");
-      if (!label) return;
-      label.textContent = slot === 1 ? "已选板件 1（UI 占位）/ Body 1 selected (UI placeholder)" : "已选板件 2（UI 占位）/ Body 2 selected (UI placeholder)";
-      label.classList.add("selected");
-      if (slot === 1) hardwareState.body1Selected = true;
-      if (slot === 2) hardwareState.body2Selected = true;
-      hardwareState.previewValid = false;
-      hwEl("hwCreateHolesBtn").disabled = true;
-      hardwareSetMessage("hwMetadataMessage", "下一步：将按钮绑定到 Fusion 中选中的 BRepBody 并校验面元数据。/ Next step: resolve to actual Fusion BRepBodies and validate face metadata.", "warn");
-      hardwareSetMessage("hwActionMessage", "板件选择已更新，两块板件都选好后请计算预览。/ Body selection updated. Calculate preview when both bodies are selected.");
-    }
-
-    function hardwareCreateTestBoards() {
-      hardwareState.previewValid = false;
-      hwEl("hwCreateHolesBtn").disabled = true;
-      hardwareSetMessage("hwActionMessage", "正在 Fusion 中创建两块 300×300×15 mm 侧向接触测试板… / Creating side-contact test boards...");
-      fusionSend("hardware.createSideContactTestBoards", {});
-    }
-
-    function hardwarePreviewPayload() {
-      const mode = hardwarePatternMode();
-      const payload = {
-        holeDiameter: hardwareNumber("hwHoleDiameter", 3.0),
-        throughHost: Boolean(hwEl("hwThroughHost")?.checked),
-        customHoleDepth: hwEl("hwThroughHost")?.checked ? null : hardwareNumber("hwHoleDepth", 16.0),
-        patternMode: mode,
-      };
-      if (mode === "SIDE_DISTANCE_HOLE_DISTANCE") {
-        payload.sideDistance = hardwareNumber("hwSpacingSideDistance", 50.0);
-        payload.holeDistance = hardwareNumber("hwHoleDistance", 200.0);
-        payload.startSideReversed = (document.querySelector('input[name="hwStartSide"]:checked')?.value || "A") === "B";
-      } else {
-        payload.holeNumber = Math.max(1, Math.round(hardwareNumber("hwHoleNumber", 2)));
-        payload.sideDistance = hardwareNumber("hwEvenSideDistance", 50.0);
-      }
-      return payload;
-    }
-
-    function hardwareHandleFusionResult(parsed) {
-      if (!parsed?.ok) {
-        hardwareState.previewValid = false;
-        hwEl("hwCreateHolesBtn").disabled = true;
-        hardwareSetSummary({ status: "错误", type: "TEST_BOARD_CREATE_FAILED" });
-        hardwareRenderPreview({ ok: false, message: (parsed?.errors || ["无法创建测试板 / Could not create test boards."]).join(" ") });
-        hardwareSetMessage("hwActionMessage", (parsed?.errors || ["无法创建测试板 / Could not create test boards."]).join(" "), "error");
-        return;
-      }
-      const boards = Array.isArray(parsed.boards) ? parsed.boards : [];
-      const host = boards.find((board) => board.role === "HOST") || boards[0] || {};
-      const target = boards.find((board) => board.role === "TARGET") || boards[1] || {};
-      if (host.bodyName) {
-        hwEl("hwBody1Label").textContent = `${host.bodyName} / ${host.panelId || "defined"}`;
-        hwEl("hwBody1Label").classList.add("selected");
-        hardwareState.body1Selected = true;
-      }
-      if (target.bodyName) {
-        hwEl("hwBody2Label").textContent = `${target.bodyName} / ${target.panelId || "defined"}`;
-        hwEl("hwBody2Label").classList.add("selected");
-        hardwareState.body2Selected = true;
-      }
-      hardwareSetSummary({
-        status: "测试板就绪 / Test Boards Ready",
-        type: "DIRECT_SIDE_CONTACT fixture",
-        host: host.bodyName || "-",
-        target: target.bodyName || "-",
-        width: "15.0 mm",
-        holeCount: "-",
-      });
-      hardwareSetMessage("hwMetadataMessage", "生成的测试板已包含板件元数据与全部面的 face metadata。/ Generated test boards include panel and face metadata.", "ok");
-      const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
-      hardwareSetMessage(
-        "hwActionMessage",
-        warnings.length ? `${parsed.message || "测试板已创建 / Test boards created."} ${warnings.join(" ")}` : (parsed.message || "测试板已创建并选中 / Test boards created and selected."),
-        warnings.length ? "warn" : "ok",
-      );
-      hardwareSetMessage("hwWarningMessage", `已创建于 ${parsed.assemblyComponentName || "五金测试装配"}。请点击「计算预览」在 Fusion 中绘制草图。`, "ok");
-      hardwareRenderPreview({ message: "测试板已在 Fusion 中就绪。点击「计算预览」在模型上绘制标记。" });
-    }
-
-    function hardwareHandlePreviewResult(parsed) {
-      if (!parsed?.ok) {
-        hardwareState.previewValid = false;
-        hwEl("hwCreateHolesBtn").disabled = true;
-        hardwareSetSummary({ status: "错误", type: "PREVIEW_FAILED" });
-        hardwareRenderPreview({ message: (parsed?.errors || ["预览失败"]).join(" ") });
-        hardwareSetMessage("hwActionMessage", (parsed?.errors || ["预览失败"]).join(" "), "error");
-        return;
-      }
-      hardwareState.previewValid = true;
-      hwEl("hwCreateHolesBtn").disabled = false;
-      hardwareSetSummary({
-        status: "Fusion 预览有效",
-        type: parsed.contactType || "DIRECT_SIDE_CONTACT",
-        host: parsed.hostBody || "-",
-        target: parsed.targetBody || "-",
-        width: `${parsed.projectedWidthMm || "-"} mm`,
-        holeCount: String(parsed.holeCount || 0),
-      });
-      hardwareRenderPreview({ message: "Fusion 预览草图已在宿主板入射面创建。请在模型画布查看（非本网页）。" });
-      const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
-      hardwareSetMessage("hwActionMessage", `${parsed.message || "Fusion 预览已创建。"} 请检查模型后点击「创建孔」。`, warnings.length ? "warn" : "ok");
-      hardwareSetMessage("hwWarningMessage", warnings.length ? warnings.join(" ") : `接触路径长度：${parsed.contactPathLengthMm || "-"} mm`, warnings.length ? "warn" : "ok");
-    }
-
-    function hardwareHandleCreateHolesResult(parsed) {
-      if (!parsed?.ok) {
-        if (hardwareState.previewValid) hwEl("hwCreateHolesBtn").disabled = false;
-        hardwareSetMessage("hwActionMessage", (parsed?.errors || ["创建孔失败"]).join(" "), "error");
-        return;
-      }
-      hardwareState.previewValid = false;
-      hwEl("hwCreateHolesBtn").disabled = true;
-      hardwareSetSummary({
-        status: "孔已创建",
-        type: "HOST_ONLY_CUT",
-        host: parsed.hostBody || "-",
-        target: parsed.targetBody || "-",
-        width: "-",
-        holeCount: String(parsed.holeCount || 0),
-      });
-      const warnings = Array.isArray(parsed.warnings) ? parsed.warnings : [];
-      hardwareSetMessage("hwActionMessage", parsed.message || "已在宿主板创建钻孔。", "ok");
-      hardwareSetMessage("hwWarningMessage", warnings.length ? warnings.join(" ") : `切割深度：${parsed.depthMm || "-"} mm`, warnings.length ? "warn" : "ok");
-      hardwareRenderPreview({ message: `已创建 Fusion 切割特征：${parsed.cutFeatureName || "HW_SIDE_CONTACT_HOLE_CUT"}` });
-    }
-
-    function hardwareCalculatePreview() {
-      hardwareState.previewValid = false;
-      hwEl("hwCreateHolesBtn").disabled = true;
-      hardwareSetMessage("hwActionMessage", "正在根据最新测试板计算 Fusion 预览…");
-      fusionSend("hardware.calculateSideContactPreview", hardwarePreviewPayload());
-    }
-
-    function hardwareCreateHoles() {
-      if (!hardwareState.previewValid) {
-        hardwareSetMessage("hwActionMessage", "请先成功完成计算预览后再创建孔。", "error");
-        return;
-      }
-      hwEl("hwCreateHolesBtn").disabled = true;
-      hardwareSetMessage("hwActionMessage", "正在创建宿主板钻孔…");
-      fusionSend("hardware.createSideContactHoles", hardwarePreviewPayload());
-    }
-
-    function hardwareInitUi() {
-      if (!hwEl("hwCalculateBtn")) return;
-      document.querySelectorAll('input[name="hwPatternMode"]').forEach((input) => {
-        input.addEventListener("change", hardwareUpdatePatternFields);
-      });
-      hwEl("hwThroughHost").addEventListener("change", (event) => {
-        hwEl("hwHoleDepth").disabled = event.target.checked;
-        hardwareSetMessage("hwActionMessage", event.target.checked ? "已选通孔（穿宿主板）。" : "已启用自定义孔深。");
-      });
-      hwEl("hwSelectBody1Btn").addEventListener("click", () => hardwareSelectBody(1));
-      hwEl("hwSelectBody2Btn").addEventListener("click", () => hardwareSelectBody(2));
-      hwEl("hwCreateTestBoardsBtn").addEventListener("click", hardwareCreateTestBoards);
-      hwEl("hwCalculateBtn").addEventListener("click", hardwareCalculatePreview);
-      hwEl("hwCreateHolesBtn").addEventListener("click", hardwareCreateHoles);
-      ["hwHoleDiameter", "hwHoleDepth", "hwHoleNumber", "hwEvenSideDistance", "hwSpacingSideDistance", "hwHoleDistance"].forEach((id) => {
-        const input = hwEl(id);
-        if (input) input.addEventListener("change", () => {
-          hardwareState.previewValid = false;
-          hwEl("hwCreateHolesBtn").disabled = true;
-          hardwareSetMessage("hwActionMessage", "参数已变更，请重新计算预览后再创建孔。");
-        });
-      });
-    }
-
-    hardwareInitUi();
-    hwRelDebugInitUi();
+    connectUiInit();
     attrInitPanelAttributesUi();
     // On palette startup, sync zone sizes + generator origins from any work
     // zones already saved in the open design (delayed for bridge readiness).

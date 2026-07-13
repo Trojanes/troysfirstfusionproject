@@ -96,6 +96,9 @@ interface AvoidanceAdjustmentState {
   enabled: boolean;
   shortDepth?: number;
   effectiveAvoidH?: number;
+  fridgeMode?: "none" | "normal" | "raised";
+  fridgeGap?: number;
+  fridgeBaseBottomZ?: number;
 }
 
 function n(value: unknown, fallback: number): number {
@@ -131,6 +134,81 @@ function board(
 
 function findZoneItem(stackingItems: StackingItem[], zoneId: string): StackingItem | undefined {
   return stackingItems.find((item) => item.type === "functional_zone" && item.zoneId === zoneId);
+}
+
+function addFridgeV5Boards(
+  boards: Board[],
+  params: GeneralTallCabinetParams,
+  stackingItems: StackingItem[],
+  debug: GeneralTallCabinetDebug,
+  notes: string[],
+): void {
+  const fridgeZones = (params.zones || []).filter((zone) => zone.type === "fridge");
+  if (!fridgeZones.length) return;
+
+  const pt = debug.panelThickness;
+  const fpt = debug.frontFaceAllowance;
+  const carcassY0 = fpt;
+  const carcassY1 = fpt + debug.midDepth;
+  const cabinetWidth = Number(params.cabinetWidth);
+  // Opposite the decorative exterior panel; none defaults to left (Fridge recipe).
+  const v5OnLeft = params.exteriorSide !== "left";
+
+  for (const zone of fridgeZones) {
+    const item = findZoneItem(stackingItems, zone.id);
+    if (!item) {
+      notes.push(`Fridge zone ${zone.id}: skipped V5 (stacking item missing).`);
+      continue;
+    }
+    let x0: number;
+    let x1: number;
+    if (v5OnLeft) {
+      x0 = debug.leftSidePanelThickness + pt;
+      x1 = x0 + pt;
+    } else {
+      x1 = cabinetWidth - debug.rightSidePanelThickness - pt;
+      x0 = x1 - pt;
+    }
+    const depth = carcassY1 - carcassY0;
+    const height = item.z1 - item.z0;
+    // Local YZ rectangle — Fusion profileVector uses local axes (not Fridge outerVector/flat_xy).
+    const v5Profile = [
+      { y: 0, z: 0 },
+      { y: depth, z: 0 },
+      { y: depth, z: height },
+      { y: 0, z: height },
+      { y: 0, z: 0 },
+    ];
+    const v5Board = board(
+      "V5",
+      "V5",
+      "vertical_structure",
+      "V5",
+      pt,
+      "YZ",
+      "X",
+      {
+        x0,
+        x1,
+        y0: carcassY0,
+        y1: carcassY1,
+        z0: item.z0,
+        z1: item.z1,
+      },
+      "fridge_v5",
+      [
+        "V5 fridge clearance strip: opposite exteriorSide (none→left); Z spans fridge cavity; X inset one PT from carcass wall.",
+      ],
+    );
+    v5Board.profileVector = v5Profile;
+    v5Board.cutProfileVector = v5Profile;
+    boards.push(v5Board);
+    notes.push(
+      `Fridge zone ${zone.id}: V5 on ${v5OnLeft ? "left" : "right"} (exteriorSide=${params.exteriorSide || "none"}).`,
+    );
+    // ponytail: one V5 for first fridge zone only; multi-cavity V5 ids later.
+    break;
+  }
 }
 
 function resolveAvoidanceAdjustment(
@@ -186,6 +264,91 @@ function resolveAvoidanceAdjustment(
   }
 
   return { enabled: true, shortDepth, effectiveAvoidH };
+}
+
+function applyFridgeRaisedAvoidance(
+  params: GeneralTallCabinetParams,
+  stackingItems: StackingItem[],
+  debug: GeneralTallCabinetDebug,
+  avoidance: AvoidanceAdjustmentState,
+  validation: GeneratorValidation,
+): AvoidanceAdjustmentState {
+  const fridgeZone = (params.zones || []).find((zone) => zone.type === "fridge");
+  if (!fridgeZone) return avoidance;
+
+  const fridgeItemIndex = stackingItems.findIndex(
+    (item) => item.type === "functional_zone" && item.zoneId === fridgeZone.id,
+  );
+  if (fridgeItemIndex < 0) return avoidance;
+
+  const below = stackingItems[fridgeItemIndex - 1];
+  const fridgeItem = stackingItems[fridgeItemIndex];
+  const fridgeBaseBottomZ = below?.type === "boundary_panel"
+    ? below.z0
+    : fridgeItem.z0;
+  const inputHeight = Number(params.avoidance?.height);
+  const pt = debug.panelThickness;
+
+  if (params.avoidance?.enabled !== true || avoidance.enabled !== true) {
+    debug.fridgeAvoidance = {
+      finalMode: "none",
+      fridgeGap: 0,
+      fridgeBaseBottomZ,
+      inputHeight: Number.isFinite(inputHeight) ? inputHeight : 0,
+    };
+    return avoidance;
+  }
+
+  if (!Number.isFinite(inputHeight)) return avoidance;
+  const gap = fridgeBaseBottomZ - inputHeight;
+
+  if (fridgeBaseBottomZ < inputHeight + pt) {
+    validation.errors.push(
+      `Fridge base bottom Z (${fridgeBaseBottomZ}) must be >= Avoidance Height + panel thickness (${inputHeight}+${pt}).`,
+    );
+    debug.fridgeAvoidance = {
+      finalMode: "none",
+      fridgeGap: gap,
+      fridgeBaseBottomZ,
+      inputHeight,
+    };
+    return avoidance;
+  }
+
+  if (gap < 105) {
+    validation.warnings.push(
+      `Fridge/avoidance gap ${gap.toFixed(1)} mm < 105 mm: raised avoidance mode and above-fridge HSet will be used.`,
+    );
+    debug.fridgeAvoidance = {
+      finalMode: "raised",
+      fridgeGap: gap,
+      fridgeBaseBottomZ,
+      inputHeight,
+    };
+    return {
+      ...avoidance,
+      effectiveAvoidH: fridgeBaseBottomZ,
+      fridgeMode: "raised",
+      fridgeGap: gap,
+      fridgeBaseBottomZ,
+    };
+  }
+
+  validation.warnings.push(
+    `Fridge/avoidance gap ${gap.toFixed(1)} mm >= 105 mm: normal avoidance height kept.`,
+  );
+  debug.fridgeAvoidance = {
+    finalMode: "normal",
+    fridgeGap: gap,
+    fridgeBaseBottomZ,
+    inputHeight,
+  };
+  return {
+    ...avoidance,
+    fridgeMode: "normal",
+    fridgeGap: gap,
+    fridgeBaseBottomZ,
+  };
 }
 
 function boundaryId(aboveZoneId: string, belowZoneId: string): string {
@@ -394,11 +557,14 @@ function addAvoidanceSupportBoards(
   params: GeneralTallCabinetParams,
   debug: GeneralTallCabinetDebug,
   validation: GeneratorValidation,
+  avoidance?: AvoidanceAdjustmentState,
 ): void {
   if (params.avoidance?.enabled !== true) return;
   const cabinetDepth = Number(params.cabinetDepth);
   const avoidDepth = Number(params.avoidance.depth);
-  const avoidHeight = Number(params.avoidance.height);
+  const avoidHeight = Number(
+    avoidance?.effectiveAvoidH != null ? avoidance.effectiveAvoidH : params.avoidance.height,
+  );
   if (!Number.isFinite(cabinetDepth) || !Number.isFinite(avoidDepth) || !Number.isFinite(avoidHeight)) return;
   if (avoidDepth <= 0 || avoidHeight <= 0) return;
 
@@ -429,7 +595,11 @@ function addAvoidanceSupportBoards(
     "Z",
     { x0, x1, y0, y1, z0, z1 },
     "avoidance_support",
-    ["Avoidance horizontal support panel generated from avoidance settings."],
+    [
+      avoidance?.fridgeMode === "raised"
+        ? "Avoidance horizontal raised to fridge base bottom (gap < 105mm)."
+        : "Avoidance horizontal support panel generated from avoidance settings.",
+    ],
   );
   horizontal.profileVector = [
     { x: 0, y: 0 },
@@ -1469,15 +1639,114 @@ function generateZiSlotFeatures(
   return features;
 }
 
-function addHSupportBoards(boards: Board[], params: GeneralTallCabinetParams, debug: GeneralTallCabinetDebug): void {
+function addFridgeRaisedHSetBoards(
+  boards: Board[],
+  stackingItems: StackingItem[],
+  params: GeneralTallCabinetParams,
+  debug: GeneralTallCabinetDebug,
+  avoidance: AvoidanceAdjustmentState,
+): void {
+  if (avoidance.fridgeMode !== "raised") return;
+  const fridgeZone = (params.zones || []).find((zone) => zone.type === "fridge");
+  if (!fridgeZone) return;
+  const fridgeItemIndex = stackingItems.findIndex(
+    (item) => item.type === "functional_zone" && item.zoneId === fridgeZone.id,
+  );
+  if (fridgeItemIndex < 0) return;
+  const below = stackingItems[fridgeItemIndex - 1];
+  const fridgeItem = stackingItems[fridgeItemIndex];
+  // Above the fridge-base Zi (panel z1) — matches Fridge above_panel HSet.
+  const z0 = below?.type === "boundary_panel" ? below.z1 : fridgeItem.z0;
+  const z1 = z0 + H_SUPPORT_HEIGHT;
+  const sideY0 = H_SUPPORT_SIDE_DEPTH_START;
+  const sideY1 = debug.midDepth - H_SUPPORT_SIDE_REAR_CLEARANCE;
+  const rearY0 = debug.midDepth - H34_DEPTH;
+  const rearY1 = debug.midDepth;
+  const notes = [
+    "Fridge raised HSet above fridge-base Zi (gap < 105mm).",
+  ];
+
+  boards.push(
+    board(
+      "H13_fridge",
+      "H13 fridge",
+      "h_support",
+      "H13",
+      H_SUPPORT_THICKNESS,
+      "YZ",
+      "X",
+      {
+        x0: 0,
+        x1: H_SUPPORT_THICKNESS,
+        y0: sideY0,
+        y1: sideY1,
+        z0,
+        z1,
+      },
+      "h_support_fridge",
+      notes,
+    ),
+    board(
+      "H24_fridge",
+      "H24 fridge",
+      "h_support",
+      "H24",
+      H_SUPPORT_THICKNESS,
+      "YZ",
+      "X",
+      {
+        x0: debug.midWidth - H_SUPPORT_THICKNESS,
+        x1: debug.midWidth,
+        y0: sideY0,
+        y1: sideY1,
+        z0,
+        z1,
+      },
+      "h_support_fridge",
+      notes,
+    ),
+    board(
+      "H34_fridge",
+      "H34 fridge",
+      "h_support",
+      "H34",
+      H_SUPPORT_THICKNESS,
+      "XZ",
+      "Y",
+      {
+        x0: H_SUPPORT_THICKNESS,
+        x1: debug.midWidth - H_SUPPORT_THICKNESS,
+        y0: rearY0,
+        y1: rearY1,
+        z0,
+        z1,
+      },
+      "h_support_fridge",
+      notes,
+    ),
+  );
+}
+
+function addHSupportBoards(
+  boards: Board[],
+  params: GeneralTallCabinetParams,
+  debug: GeneralTallCabinetDebug,
+  avoidance: AvoidanceAdjustmentState,
+): void {
   const ch = Number(params.cabinetHeight);
+  // Fridge raised: omit H_bot — fridge above-panel HSet replaces that band (Fridge generateHPlanes).
+  const omitBottomForRaised = avoidance.fridgeMode === "raised";
   const hSets = [
-    {
-      suffix: "bottom",
-      z0: 0,
-      z1: H_SUPPORT_HEIGHT,
-      notes: ["Bottom H support skeleton", "Avoidance adjustment deferred"],
-    },
+    ...(omitBottomForRaised
+      ? []
+      : [
+          {
+            suffix: "bottom",
+            z0: 0,
+            z1: H_SUPPORT_HEIGHT,
+            notes: ["Bottom H support skeleton", "Avoidance adjustment deferred"],
+          },
+        ]),
     {
       suffix: "mid",
       z0: ch / 2 - H_SUPPORT_HEIGHT / 2,
@@ -2788,7 +3057,7 @@ function buildGeneralTallFrontPanels(
   const zoneIsOpen = (zoneId: string | undefined): boolean => {
     if (!zoneId) return false;
     const zone = zoneById.get(zoneId);
-    return !!zone && (zone.type === "open_space" || zone.type === "open_appliance");
+    return !!zone && (zone.type === "open_space" || zone.type === "open_appliance" || zone.type === "fridge");
   };
 
   const panels: GeneralTallFrontPanel[] = [];
@@ -3221,6 +3490,44 @@ function buildDebug(params: GeneralTallCabinetParams): GeneralTallCabinetDebug {
   };
 }
 
+function applyFridgeExteriorModel(
+  params: GeneralTallCabinetParams,
+  notes: string[],
+): GeneralTallCabinetParams {
+  const fridgeZones = (params.zones || []).filter((zone) => zone.type === "fridge");
+  if (!fridgeZones.length) return params;
+
+  const exteriorSide = params.exteriorSide === "left" || params.exteriorSide === "right"
+    ? params.exteriorSide
+    : "none";
+  // Fridge recipe uses a fixed 16mm exterior side panel thickness.
+  const SIDE_PANEL_MM = 16;
+  const next: GeneralTallCabinetParams = { ...params, exteriorSide };
+
+  if (exteriorSide === "left") {
+    next.leftSidePanelThickness = SIDE_PANEL_MM;
+    notes.push("Fridge exteriorSide=left → SidePanel_L thickness 16mm.");
+  } else if (exteriorSide === "right") {
+    next.rightSidePanelThickness = SIDE_PANEL_MM;
+    notes.push("Fridge exteriorSide=right → SidePanel_R thickness 16mm.");
+  }
+
+  const sync = params.syncCabinetWidthFromFridge !== false;
+  const applianceWidth = Number(fridgeZones[0].applianceWidthMm);
+  if (sync && Number.isFinite(applianceWidth) && applianceWidth > 0) {
+    const allowance = exteriorSide === "none" ? 45 : 61;
+    const targetWidth = applianceWidth + allowance;
+    if (Math.abs(Number(params.cabinetWidth) - targetWidth) > 0.01) {
+      notes.push(
+        `Cabinet width synced from fridge appliance (${applianceWidth}+${allowance}=${targetWidth}).`,
+      );
+    }
+    next.cabinetWidth = targetWidth;
+  }
+
+  return next;
+}
+
 export function generateGeneralTallCabinet(inputParams: GeneralTallCabinetParams): GeneralTallCabinetResult {
   if (!inputParams || typeof inputParams !== "object") {
     throw new Error("generateGeneralTallCabinet requires params.");
@@ -3228,14 +3535,30 @@ export function generateGeneralTallCabinet(inputParams: GeneralTallCabinetParams
 
   // Structural pipeline treats left/right side doors exactly like the legacy side_door type.
   // The original zone types are kept on inputParams for the front panel layer.
-  const params: GeneralTallCabinetParams = {
+  const fridgeNotes: string[] = [];
+  let params: GeneralTallCabinetParams = {
     ...inputParams,
-    zones: (inputParams.zones || []).map((zone) =>
-      zone.type === "left_side_door" || zone.type === "right_side_door"
-        ? { ...zone, type: "side_door" as ZoneType }
-        : zone,
-    ),
+    zones: (inputParams.zones || []).map((zone) => {
+      if (zone.type === "left_side_door" || zone.type === "right_side_door") {
+        return { ...zone, type: "side_door" as ZoneType };
+      }
+      if (zone.type !== "fridge") return zone;
+      const applianceHeight = Number(zone.applianceHeightMm);
+      if (Number.isFinite(applianceHeight) && applianceHeight > 0) {
+        if (Math.abs(Number(zone.height) - applianceHeight) > 0.01) {
+          fridgeNotes.push(
+            `Fridge zone ${zone.id} height synced to applianceHeightMm=${applianceHeight}.`,
+          );
+        }
+        return { ...zone, height: applianceHeight };
+      }
+      fridgeNotes.push(
+        `Fridge zone ${zone.id} has no applianceHeightMm; using zone height ${Number(zone.height) || 0}.`,
+      );
+      return zone;
+    }),
   };
+  params = applyFridgeExteriorModel(params, fridgeNotes);
 
   const debug = buildDebug(params);
   const stacking = calculateZStacking({
@@ -3248,21 +3571,45 @@ export function generateGeneralTallCabinet(inputParams: GeneralTallCabinetParams
   const boards: Board[] = [];
   const validation = {
     errors: [...stacking.validation.errors],
-    warnings: [...stacking.validation.warnings],
+    warnings: [...stacking.validation.warnings, ...fridgeNotes],
   };
-  const avoidance = resolveAvoidanceAdjustment(params, debug, validation);
+  for (const zone of params.zones) {
+    if (zone.type !== "fridge") continue;
+    const width = Number(zone.applianceWidthMm);
+    const depth = Number(zone.applianceDepthMm);
+    if (Number.isFinite(width) && width > debug.midWidth + 0.01) {
+      validation.warnings.push(
+        `Fridge zone ${zone.id} applianceWidthMm=${width} exceeds interior midWidth=${debug.midWidth}.`,
+      );
+    }
+    if (Number.isFinite(depth) && depth > debug.midDepth + 0.01) {
+      validation.warnings.push(
+        `Fridge zone ${zone.id} applianceDepthMm=${depth} exceeds interior midDepth=${debug.midDepth}.`,
+      );
+    }
+  }
+  const avoidanceBase = resolveAvoidanceAdjustment(params, debug, validation);
+  const avoidance = applyFridgeRaisedAvoidance(
+    params,
+    stacking.items,
+    debug,
+    avoidanceBase,
+    validation,
+  );
 
   addVerticalBoards(boards, params, debug, Number(params.cabinetHeight));
   addSidePanelBoards(boards, params, debug, validation);
-  addAvoidanceSupportBoards(boards, params, debug, validation);
+  addAvoidanceSupportBoards(boards, params, debug, validation, avoidance);
   addStyle1BottomSystemBoards(boards, params, debug);
   addStyle1TopSystemBoards(boards, params, debug);
   addStyle2SystemPanels(boards, params, debug);
   addStyle1InsertBoardProfileVectors(boards, debug);
   addSystemPlaceholders(boards, params, debug, stacking.topSystemHeight, stacking.bottomSystemHeight);
   addBoundaryZiBoards(boards, stacking.items, debug, params, avoidance);
+  addFridgeV5Boards(boards, params, stacking.items, debug, validation.warnings);
   addZiBoardProfileVectors(boards, debug, validation);
-  addHSupportBoards(boards, params, debug);
+  addHSupportBoards(boards, params, debug, avoidance);
+  addFridgeRaisedHSetBoards(boards, stacking.items, params, debug, avoidance);
   addTopRearTBoards(boards, params, debug);
   detectMergeAndAdjustHConflicts(boards, params, debug, validation);
   addVerticalDividerBoards(boards, params, stacking.items, debug, validation);

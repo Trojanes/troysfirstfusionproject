@@ -115,6 +115,21 @@ def main() -> int:
         return _fail("verify soft warning", declare_only.get("warnings"))
     print("[PASS] declarations alone survive face-verify failure")
 
+    # Declare "no panels" must not by itself be a hard pipeline error when verify can proceed.
+    soft_declare = build_pipeline_report(
+        declare_report={
+            "ok": False,
+            "cutSafeCount": 0,
+            "errors": [],
+            "warnings": ["未从声明路径扫到面板元数据，继续尝试面验证。"],
+        },
+        verify_report={"ok": True, "verifiedCount": 1, "skippedCount": 0, "processedCount": 1},
+        cut_report={"ok": True, "createdCount": 1, "skippedCount": 0, "processedCount": 1},
+    )
+    if not soft_declare.get("ok"):
+        return _fail("soft declare + verify should ok", soft_declare)
+    print("[PASS] soft declare empty panels + verify still ok")
+
     verify_fail = build_pipeline_report(
         declare_report={"ok": False, "cutSafeCount": 0, "errors": ["No declarations"]},
         verify_report={"ok": False, "errors": ["verify boom"], "verifiedCount": 0, "skippedCount": 0},
@@ -169,6 +184,7 @@ def main() -> int:
     with open(controller_path, "r", encoding="utf-8") as handle:
         controller = handle.read()
     for token in (
+        "RelationshipsController",
         "reconcile_generator_declarations",
         "merge_pipeline_cut_candidates",
         "filter_cut_safe_hardware_candidates",
