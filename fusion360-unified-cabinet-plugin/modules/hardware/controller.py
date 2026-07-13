@@ -647,6 +647,59 @@ class HardwareController:
                 "trace": traceback.format_exc(),
             }
 
+    def run_connect_pipeline(self, payload, palette):
+        """One-click: batch face-verify (3a) then batch hardware cut (3c)."""
+        try:
+            from connect_pipeline import PIPELINE_ACTION, build_pipeline_report
+            from modules.relationships.controller import RelationshipController
+
+            if not isinstance(payload, dict):
+                return "hardwarePipelineResult", {
+                    "ok": False,
+                    "action": PIPELINE_ACTION,
+                    "errors": ["Missing pipeline payload."],
+                }
+
+            rel_ctrl = RelationshipController(self.fusion)
+
+            verify_payload = {
+                "toleranceMm": payload.get("toleranceMm", 1.0),
+                "maxPairs": payload.get("verifyMaxPairs", payload.get("maxPairs", 200)),
+                "gapJoints": payload.get("gapJoints"),
+                "bboxSource": payload.get("bboxSource") or "physical",
+            }
+            _ev, verify_report = rel_ctrl.verify_all_bbox_candidates(verify_payload, palette)
+            if not isinstance(verify_report, dict):
+                verify_report = {"ok": False, "errors": ["Verify stage returned no report."]}
+
+            cut_report = None
+            if verify_report.get("ok"):
+                cut_payload = {
+                    "rule": payload.get("rule") if isinstance(payload.get("rule"), dict) else {"type": "screw_hole"},
+                    "maxPairs": payload.get("cutMaxPairs", payload.get("maxPairs", 50)),
+                    "gapJoints": payload.get("gapJoints"),
+                    "autoHardware": payload.get("autoHardware"),
+                }
+                # Use 3a verified list directly (even if empty) — avoid rescan race.
+                cut_payload["relationships"] = list(verify_report.get("verifiedRelationships") or [])
+                _cev, cut_report = self.create_hardware_for_cut_safe_relationships(cut_payload, palette)
+                if not isinstance(cut_report, dict):
+                    cut_report = {"ok": False, "errors": ["Cut stage returned no report."]}
+
+            report = build_pipeline_report(
+                verify_report=verify_report,
+                cut_report=cut_report,
+                auto_hardware=payload.get("autoHardware"),
+            )
+            return "hardwarePipelineResult", report
+        except Exception as ex:
+            return "hardwarePipelineResult", {
+                "ok": False,
+                "action": "hardware.runConnectPipeline",
+                "errors": [str(ex)],
+                "trace": traceback.format_exc(),
+            }
+
     def preview_hinge_holes_from_relationship(self, payload, _palette):
         try:
             if not isinstance(payload, dict):

@@ -2294,7 +2294,7 @@
                   <div class="connect-detail-item" style="grid-column:1/-1;">
                     <label style="display:flex;align-items:center;gap:8px;margin:0;">
                       <input id="connectGapIncludeBatch" type="checkbox" checked disabled style="width:auto;">
-                      进入「验证全部 / 批量创建五金」
+                      进入「验证全部 / 批量创建五金 / 一键流水线」
                     </label>
                   </div>
                 </div>
@@ -2334,7 +2334,7 @@
               </div>
               <div class="connect-detail-grid" id="connectHardwareParams" style="margin-bottom: 10px;"></div>
               <div class="hardware-section-note" id="connectVerifyHint" style="margin-bottom:8px;">
-                验证优先：生成器声明（检查后自动同步）→ 面验证 /「验证全部候选」→（调试）手动确认。≤1mm 近接触视为可切接触。面验证通过后会写入板件元数据，重新扫描可恢复可切状态。
+                验证优先：生成器声明（检查后自动同步）→ 面验证 /「验证全部候选」/「一键验证并创建五金」→（调试）手动确认。≤1mm 近接触视为可切接触。面验证通过后会写入板件元数据，重新扫描可恢复可切状态。
               </div>
               <div class="connect-actions">
                 <button type="button" class="ghost" id="connectPreviewBtn" disabled>预览</button>
@@ -2342,6 +2342,7 @@
                 <button type="button" class="ghost" id="connectFaceVerifyBtn" disabled>面验证</button>
                 <button type="button" class="primary" id="connectCutBtn" disabled>创建</button>
                 <button type="button" class="ghost" id="connectBatchCutBtn">批量创建五金</button>
+                <button type="button" class="primary" id="connectPipelineBtn">一键验证并创建五金</button>
               </div>
               <div class="connect-detail-grid" style="margin-top: 10px;">
                 <div class="connect-detail-item"><strong>预览摘要</strong><span id="connectPreviewHoleCount">-</span></div>
@@ -8793,6 +8794,8 @@
             connectUiHandleCutResult(parsed);
           } else if (action === "hardwareBatchCutResult") {
             connectUiHandleBatchCutResult(parsed);
+          } else if (action === "hardwarePipelineResult") {
+            connectUiHandlePipelineResult(parsed);
           } else if (action === "hardwareTypesResult") {
             connectUiHandleHardwareTypesResult(parsed);
           } else if (action === "connectDemoResult") {
@@ -11898,6 +11901,35 @@
       });
     }
 
+    function connectUiRunConnectPipeline() {
+      const rule = connectUiActiveHardwareRule();
+      const autoHardware = connectUiReadAutoHardware();
+      const meta = connectUiHardwareMeta(rule?.type || connectUiSelectedHardwareType());
+      if (!autoHardware.enabled && !meta.cutReady) {
+        connectUiSetMessage(`${meta.label} 仅预览，不可一键流水线切削。`, "error");
+        return;
+      }
+      connectUiPersistGapJoints();
+      connectUiPersistAutoHardware();
+      const gapJoints = connectUiReadGapJoints();
+      const label = autoHardware.enabled ? "自动选型" : meta.label;
+      connectUiSetMessage(
+        gapJoints.enabled
+          ? `一键流水线：面验证（接触+缝隙）→ 批量创建 ${label}…`
+          : `一键流水线：面验证 → 批量创建 ${label}…`
+      );
+      connectUiSetOperation("一键流水线计算中…", "warn");
+      fusionSend("hardware.runConnectPipeline", {
+        rule,
+        maxPairs: 50,
+        verifyMaxPairs: 200,
+        cutMaxPairs: 50,
+        gapJoints,
+        autoHardware,
+        toleranceMm: 1.0,
+      });
+    }
+
     function connectUiHandleBatchCutResult(parsed) {
       connectUiRenderBatchSkipList(parsed?.skipped || []);
       if (!parsed?.ok) {
@@ -11919,6 +11951,34 @@
       if (first?.cutFeatureName) {
         connectUiEl("connectCutFeature") && (connectUiEl("connectCutFeature").textContent = first.cutFeatureName);
         connectUiEl("connectCutHoleCount") && (connectUiEl("connectCutHoleCount").textContent = String(parsed.createdCount || 0));
+      }
+    }
+
+    function connectUiHandlePipelineResult(parsed) {
+      connectUiRenderBatchSkipList(parsed?.skipped || []);
+      if (!parsed?.ok) {
+        const err = (parsed?.errors || ["一键流水线失败"]).join(" ");
+        connectUiSetOperation(err, "error");
+        connectUiSetMessage(err, "error");
+        return;
+      }
+      const verify = parsed?.verify || {};
+      const cut = parsed?.cut || {};
+      const typeCounts = cut?.hardwareTypeCounts || {};
+      const typeSummary = Object.keys(typeCounts).length
+        ? ` · ${Object.entries(typeCounts).map(([k, v]) => `${k}:${v}`).join(", ")}`
+        : (cut.hardwareType ? ` · ${cut.hardwareType}` : "");
+      const summary =
+        `流水线：验证通过 ${verify.verifiedCount || 0} · 验证跳过 ${verify.skippedCount || 0}`
+        + ` · 创建 ${cut.createdCount || 0} · 切削跳过 ${cut.skippedCount || 0}${typeSummary}`;
+      const reminders = (parsed?.reminders || []).filter(Boolean);
+      const tone = ((verify.skippedCount || 0) + (cut.skippedCount || 0)) > 0 ? "warn" : "ok";
+      connectUiSetOperation(summary, tone);
+      connectUiSetMessage(reminders.length ? reminders.join(" ") : summary, tone);
+      const first = (parsed?.created || [])[0];
+      if (first?.cutFeatureName) {
+        connectUiEl("connectCutFeature") && (connectUiEl("connectCutFeature").textContent = first.cutFeatureName);
+        connectUiEl("connectCutHoleCount") && (connectUiEl("connectCutHoleCount").textContent = String(cut.createdCount || 0));
       }
     }
 
@@ -12243,6 +12303,7 @@
       connectUiEl("connectPreviewBtn")?.addEventListener("click", connectUiPreview);
       connectUiEl("connectCutBtn")?.addEventListener("click", connectUiCut);
       connectUiEl("connectBatchCutBtn")?.addEventListener("click", connectUiBatchCutHardware);
+      connectUiEl("connectPipelineBtn")?.addEventListener("click", connectUiRunConnectPipeline);
       connectUiEl("connectHardwareType")?.addEventListener("change", connectUiRefreshHardwareTypeUi);
       connectUiRefreshHardwareTypeUi();
       fusionSend("hardware.listHardwareTypes", {});

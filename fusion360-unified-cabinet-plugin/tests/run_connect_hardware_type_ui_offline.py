@@ -125,6 +125,7 @@ def main() -> int:
         "hardware.previewHardwareFromRelationship",
             "hardware.createHardwareFromRelationship",
             "hardware.createHardwareForCutSafeRelationships",
+            "hardware.runConnectPipeline",
         ):
         if route not in text:
             return _fail("plugin route missing", route)
@@ -153,6 +154,9 @@ def main() -> int:
         'id="connectBatchCutBtn"',
         "connectUiBatchCutHardware",
         "hardware.createHardwareForCutSafeRelationships",
+        'id="connectPipelineBtn"',
+        "connectUiRunConnectPipeline",
+        "hardware.runConnectPipeline",
         'id="connectGapJointsEnabled"',
         "connectUiReadGapJoints",
         "cabinetnc.connect.gapJoints.v1",

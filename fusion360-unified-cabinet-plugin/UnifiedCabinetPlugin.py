@@ -111,6 +111,7 @@ class UnifiedCabinetPluginApp:
             "hardware.previewHardwareFromRelationship": hardware.preview_hardware_from_relationship,
             "hardware.createHardwareFromRelationship": hardware.create_hardware_from_relationship,
             "hardware.createHardwareForCutSafeRelationships": hardware.create_hardware_for_cut_safe_relationships,
+            "hardware.runConnectPipeline": hardware.run_connect_pipeline,
             "hardware.previewHingeHolesFromRelationship": hardware.preview_hinge_holes_from_relationship,
             "hardware.createHingeHolesFromRelationship": hardware.create_hinge_holes_from_relationship,
             "hardware.previewDrawerRunnerHolesFromRelationship": hardware.preview_drawer_runner_holes_from_relationship,

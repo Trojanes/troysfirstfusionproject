@@ -151,6 +151,13 @@ Auto hardware type (2026-07-13):
   ✅ batch per-relationship type + hardwareTypeCounts
   ✅ offline: test_suggest_hardware.py
   📄 docs/connect-auto-hardware-checklist.md
+
+One-click pipeline (2026-07-13):
+  ✅ hardware.runConnectPipeline = 3a verify-all → 3c batch cut
+  ✅ passes gapJoints / autoHardware / rule; cut uses verifiedRelationships
+  ✅ Connect「一键验证并创建五金」
+  ✅ offline: run_connect_pipeline_offline.py
+  📄 docs/connect-one-click-pipeline-checklist.md
 ```
 
 Current relationship layer is **not production-truth**. It is currently:

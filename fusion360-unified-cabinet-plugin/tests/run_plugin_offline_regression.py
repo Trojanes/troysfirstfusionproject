@@ -81,6 +81,7 @@ def main() -> int:
         "run_generic_hardware_route_offline.py",
         "run_verify_all_offline.py",
         "run_batch_hardware_cut_offline.py",
+        "run_connect_pipeline_offline.py",
     ):
         code = run(
             [sys.executable, str(ROOT / "tests" / smoke_script)],
