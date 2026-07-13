@@ -1,8 +1,8 @@
 #!/usr/bin/env pwsh
 # Offline + hand-test guide for General Tall fridge stack.
 # Usage (from repo root):
-#   pwsh -File scripts/run_gt_fridge_verify.ps1
-#   pwsh -File scripts/run_gt_fridge_verify.ps1 -SkipOffline
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_gt_fridge_verify.ps1
+#   powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_gt_fridge_verify.ps1 -SkipOffline
 
 param(
   [switch]$SkipOffline
