@@ -1,4 +1,7 @@
-import adsk.core
+try:
+    import adsk.core  # noqa: F401  (only present inside Fusion)
+except ImportError:
+    pass
 
 from panel_metadata_types import PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR
 
@@ -141,12 +144,21 @@ def body_by_name(component, body_name):
     return None
 
 
+def _safe_entity_token(entity):
+    if not entity:
+        return ""
+    try:
+        return str(getattr(entity, "entityToken", "") or "").strip()
+    except Exception:
+        return ""
+
+
 def body_matches_record(body, body_record):
     if not body or not isinstance(body_record, dict):
         return False
 
     token = str(body_record.get("entityToken") or "").strip()
-    body_token = str(getattr(body, "entityToken", "") or "").strip()
+    body_token = _safe_entity_token(body)
     if token and body_token and token == body_token:
         return True
 
@@ -183,7 +195,7 @@ def find_body_in_design(root_component, body_record):
     def walk(component):
         nonlocal token_match
         for body in list_solid_bodies(component):
-            body_token = str(getattr(body, "entityToken", "") or "").strip()
+            body_token = _safe_entity_token(body)
             if token and body_token == token:
                 token_match = body
                 return
@@ -215,7 +227,14 @@ def find_body_in_design(root_component, body_record):
 
 def _is_nested_instance(body):
     try:
-        attr = body.attributes.itemByName("UnifiedCabinet", "instanceRole")
-        return bool(attr and str(attr.value) == "nested")
+        attrs = body.attributes
+        role = attrs.itemByName("UnifiedCabinet", "instanceRole")
+        if role and str(role.value) == "nested":
+            return True
+        system_role = attrs.itemByName("UnifiedCabinet", "systemRole")
+        return bool(
+            system_role
+            and str(system_role.value) == "nestingWorkpiece"
+        )
     except Exception:
         return False

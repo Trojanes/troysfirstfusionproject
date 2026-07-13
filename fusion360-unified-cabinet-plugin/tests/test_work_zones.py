@@ -20,6 +20,8 @@ from work_zones import (  # noqa: E402
     compute_zone_layout,
     generation_zone_center_mm,
     grow_nesting_zone,
+    is_nested_instance,
+    mark_instance_role,
     resolve_origin_from_payload,
     zone_of_point,
     zones_overlap,
@@ -44,6 +46,22 @@ class _FakeAttrs:
 class _FakeRoot:
     def __init__(self, layout):
         self.attributes = _FakeAttrs(layout)
+
+
+class _RoleAttrs:
+    def __init__(self):
+        self.items = {}
+
+    def itemByName(self, group, name):
+        return self.items.get((group, name))
+
+    def add(self, group, name, value):
+        self.items[(group, name)] = _FakeAttr(value)
+
+
+class _RoleBody:
+    def __init__(self):
+        self.attributes = _RoleAttrs()
 
 
 class WorkZoneLayoutTests(unittest.TestCase):
@@ -145,6 +163,37 @@ class WorkZoneLayoutTests(unittest.TestCase):
         nesting = grown[ZONE_NESTING]
         self.assertEqual(nesting["x1"] - nesting["x0"], 10000)
         self.assertEqual(nesting["y1"] - nesting["y0"], 10000)
+
+    def test_grow_to_layout_required_size_keeps_manual_floor(self):
+        """Nesting zone expands to fit layout; never below the manual size."""
+        layout = compute_zone_layout(10000, 10000, nesting_width_mm=10000, nesting_depth_mm=10000)
+        nesting = layout[ZONE_NESTING]
+        required_w, required_d = 106293.0, 7025.0
+        self.assertGreater(required_w, nesting["x1"] - nesting["x0"])
+        grown = grow_nesting_zone(layout, required_w, required_d)
+        grown_nesting = grown[ZONE_NESTING]
+        self.assertAlmostEqual(grown_nesting["x1"] - grown_nesting["x0"], required_w)
+        self.assertEqual(grown_nesting["y1"] - grown_nesting["y0"], 10000)  # depth floor
+        self.assertEqual(grown_nesting["y0"], nesting["y0"])
+        self.assertFalse(zones_overlap(grown))
+        # Smaller follow-up layout must not shrink the expanded zone.
+        again = grow_nesting_zone(grown, 8000, 5000)
+        again_nesting = again[ZONE_NESTING]
+        self.assertAlmostEqual(again_nesting["x1"] - again_nesting["x0"], required_w)
+        self.assertEqual(again_nesting["y1"] - again_nesting["y0"], 10000)
+
+    def test_nested_instance_marker_is_deterministic(self):
+        body = _RoleBody()
+        self.assertFalse(is_nested_instance(body))
+        self.assertTrue(mark_instance_role(body, "nested"))
+        self.assertTrue(is_nested_instance(body))
+
+    def test_nesting_workpiece_system_role_is_also_excluded(self):
+        body = _RoleBody()
+        body.attributes.add(
+            "UnifiedCabinet", "systemRole", "nestingWorkpiece"
+        )
+        self.assertTrue(is_nested_instance(body))
 
 
 if __name__ == "__main__":

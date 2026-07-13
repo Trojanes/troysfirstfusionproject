@@ -2,6 +2,7 @@ import json
 
 from panel_body_resolver import list_solid_bodies, resolve_occurrence_path_for_body
 from panel_metadata_types import PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR, PANEL_METADATA_ATTR
+import attribute_state_service
 
 try:
     from face_attribute_store import read_face_metadata
@@ -18,7 +19,25 @@ try:
 except Exception:
     work_zones = None
 
+try:
+    from attribute_ready import evaluate_attribute_ready
+except Exception:
+    try:
+        from panel_attributes.attribute_ready import evaluate_attribute_ready
+    except Exception:
+        evaluate_attribute_ready = None
+
+try:
+    import thickness_rules
+except Exception:
+    try:
+        from panel_attributes import thickness_rules
+    except Exception:
+        thickness_rules = None
+
 LEGACY_ATTRIBUTE_GROUP = "UnifiedCabinetPlugin"
+CABINETNC_ATTRIBUTE_GROUP = "CabinetNC"
+MODULE_ATTR_GROUPS = (PANEL_ATTRIBUTE_GROUP, LEGACY_ATTRIBUTE_GROUP, CABINETNC_ATTRIBUTE_GROUP, "UnifiedCabinet")
 
 
 def _attr_group_value(entity, group, name):
@@ -40,6 +59,15 @@ def _legacy_attr_value(entity, name):
     return _attr_group_value(entity, LEGACY_ATTRIBUTE_GROUP, name)
 
 
+def _module_attr_value(entity, name):
+    """Read a module attribute from any known generator attribute group."""
+    for group in MODULE_ATTR_GROUPS:
+        value = _attr_group_value(entity, group, name)
+        if value:
+            return value
+    return ""
+
+
 def _read_metadata(entity):
     raw = _attr_value(entity, PANEL_METADATA_ATTR)
     if not raw:
@@ -50,6 +78,115 @@ def _read_metadata(entity):
         return None, "Invalid metadata JSON: {}".format(ex), raw[:1200]
     except Exception as ex:
         return None, str(ex), raw[:1200]
+
+
+def _infer_material_class(module, board_type, panel_type, panel_kind):
+    text = " ".join(
+        [
+            str(module or "").lower(),
+            str(board_type or "").lower(),
+            str(panel_type or "").lower(),
+            str(panel_kind or "").lower(),
+        ]
+    )
+    board_id = str(board_type or "").strip().upper()
+    # General Tall / Fridge style-1 inserted boards are carcass, even when CPT
+    # equals the door thickness rule (e.g. both 16 mm).
+    if board_id in ("T3", "B3", "T2", "B2", "T4", "T5"):
+        return "carcass_board"
+    if board_id in ("T1", "B1") or board_id.startswith("FP"):
+        return "door_board"
+    # Kitchen / Lounge front panels are doors even when named frontPanel (camelCase).
+    if any(
+        token in text
+        for token in (
+            "door",
+            "flap",
+            "fascia",
+            "front_visible",
+            "frontpanel",
+            "front_panel",
+            "front-panel",
+        )
+    ):
+        return "door_board"
+    if "partition" in text or "divider" in text:
+        return "partition_board"
+    return "carcass_board"
+
+
+def _synthesize_module_metadata(entity, component=None):
+    """Build a scan-time metadata stub for Kitchen/Lounge/OHC bodies that only
+    have generator attributes (CabinetNC / UnifiedCabinetPlugin), not full
+    UnifiedCabinet.Panel payloads yet.
+    """
+    module = _module_attr_value(entity, "module") or _module_attr_value(component, "module")
+    if not module:
+        return None
+
+    board_id = (
+        _module_attr_value(entity, "boardId")
+        or _module_attr_value(entity, "bodyId")
+        or _module_attr_value(entity, "panelId")
+        or _module_attr_value(component, "boardId")
+        or _module_attr_value(component, "bodyId")
+        or _module_attr_value(component, "panelId")
+        or str(getattr(entity, "name", "") or "")
+    )
+    if not board_id:
+        return None
+
+    board_type = (
+        _module_attr_value(entity, "boardType")
+        or _module_attr_value(entity, "panelType")
+        or _module_attr_value(entity, "panelKind")
+        or _module_attr_value(component, "boardType")
+        or _module_attr_value(component, "panelType")
+        or board_id
+    )
+    panel_type = _module_attr_value(entity, "panelType") or _module_attr_value(component, "panelType")
+    panel_kind = _module_attr_value(entity, "panelKind") or _module_attr_value(component, "panelKind")
+    material_class = _infer_material_class(module, board_type, panel_type, panel_kind)
+    role = "door" if material_class == "door_board" else ("partition" if material_class == "partition_board" else "carcass")
+    panel_id = "{}.{}".format(module, board_id)
+    return {
+        "schemaVersion": 1,
+        "identity": {
+            "panelId": panel_id,
+            "generator": module,
+            "module": module,
+            "cabinetType": module,
+            "sourceBoardId": board_id,
+            "sourceBoardType": board_type,
+            "boardType": board_type,
+            "runId": _module_attr_value(entity, "runLabel")
+            or _module_attr_value(component, "runLabel")
+            or "scan",
+        },
+        "defaultAttributes": {
+            "role": role,
+            "category": role,
+            "materialClass": material_class,
+            "tags": [module, board_type],
+        },
+        "classification": {
+            "boardType": {
+                "value": role,
+                "source": "generator",
+                "locked": False,
+            },
+            "color": {
+                "value": "",
+                "source": "default",
+                "locked": False,
+            },
+        },
+        "lifecycle": {
+            "state": "module_scanned",
+            "reviewRequired": True,
+        },
+        "_synthesizedFromModuleAttrs": True,
+    }
 
 
 def _legacy_overhead_board_type(board_id, source_type=""):
@@ -183,17 +320,27 @@ def _contains_white_stipple(value):
     return False
 
 
+def _normalize_surface_mode_key(value):
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if text in ("single_sided", "singlesided", "single"):
+        return "single_sided"
+    if text in ("double_sided", "doublesided", "double"):
+        return "double_sided"
+    return text
+
+
 def _metadata_surface_mode(metadata):
     value = _path_value(
         metadata,
         [
             ["defaultAttributes", "surfaceMode"],
+            ["faceRegistry", "surfaceMode"],
             ["surfaceMode"],
             ["faceMetadata", "surfaceMode"],
             ["manufacturingDefaults", "surfaceMode"],
         ],
     )
-    return str(value or "").strip()
+    return _normalize_surface_mode_key(value)
 
 
 def _metadata_door_color_slot(metadata):
@@ -207,20 +354,72 @@ def _metadata_door_color_slot(metadata):
         return None
 
 
+def _is_undefined_tag_text(value):
+    text = str(value or "").strip().lower()
+    if not text:
+        return True
+    return "unknown" in text or text in ("undefined", "unassigned", "none", "n/a")
+
+
+def _slug_color_tag(color_name, max_len=32):
+    try:
+        from tag_metadata_editor import slug_color_tag
+        return slug_color_tag(color_name, max_len=max_len)
+    except Exception:
+        import re
+        text = str(color_name or "").strip().lower().replace(" ", "_")
+        text = re.sub(r"[^a-z0-9_]+", "_", text)
+        text = re.sub(r"_+", "_", text).strip("_")
+        return text[:max_len] if text else ""
+
+
 def _derive_color_tag(metadata, material_class):
+    classification = metadata.get("classification") if isinstance(metadata, dict) else {}
+    color_state = classification.get("color") if isinstance(classification, dict) else {}
+    canonical = str((color_state or {}).get("value") or "").strip().lower()
+    if canonical and not attribute_state_service.is_undefined(canonical):
+        return canonical
     explicit = _path_value(
         metadata,
         [["derivedTags", "colorTag"], ["typedTags", "colorTag"], ["colorTag"]],
     )
-    if explicit == "white_stipple" or _contains_white_stipple(explicit):
+    explicit_text = str(explicit or "").strip()
+    if explicit_text == "white_stipple" or _contains_white_stipple(explicit):
         return "white_stipple"
     if _contains_white_stipple(metadata):
         return "white_stipple"
+
+    # Prefer explicit custom / stored colorTag (same pattern as boardTypeTag).
+    # Do not keep legacy slot tags that bake sidedness into the name when a
+    # doorColorName exists — those are rebuilt below from the display name.
+    if explicit_text and not _is_undefined_tag_text(explicit_text):
+        lower = explicit_text.lower()
+        if lower not in ("carcass_colour",) and not lower.startswith("door_colour_"):
+            return lower
+
+    color_name = _path_value(
+        metadata,
+        [
+            ["defaultAttributes", "colorName"],
+            ["defaultAttributes", "doorColorName"],
+            ["colorName"],
+            ["doorColorName"],
+        ],
+    )
+    color_name = str(color_name or "").strip()
+    if color_name:
+        slug = _slug_color_tag(color_name)
+        if slug:
+            return slug
 
     if material_class == "carcass_board":
         return "carcass_colour"
     if material_class != "door_board":
         return ""
+
+    # Legacy slot-based tags still encode sidedness for old panels.
+    if explicit_text and not _is_undefined_tag_text(explicit_text):
+        return explicit_text.lower()
 
     slot = _metadata_door_color_slot(metadata)
     if slot not in (1, 2):
@@ -231,28 +430,70 @@ def _derive_color_tag(metadata, material_class):
         return "door_colour_{}_single_sided".format(slot)
     if surface_mode == "double_sided":
         return "door_colour_{}_double_sided".format(slot)
-    return "door_colour_{}_unknown_surface_mode".format(slot)
+    # Unknown / missing surface mode is not a real color — treat as undefined.
+    return ""
 
 
 def _derive_board_type_tag(metadata):
+    classification = metadata.get("classification") if isinstance(metadata, dict) else {}
+    board_state = classification.get("boardType") if isinstance(classification, dict) else {}
+    canonical = str((board_state or {}).get("value") or "").strip().lower()
+    if canonical and not attribute_state_service.is_undefined(canonical):
+        return canonical
     explicit = _path_value(
         metadata,
         [["derivedTags", "boardTypeTag"], ["typedTags", "boardTypeTag"]],
     )
-    if explicit in ("carcass", "partition", "door"):
-        return str(explicit)
+    explicit_text = str(explicit or "").strip().lower()
+    # Keep any explicit tag (built-in or custom like bunk_bed). Only fall through
+    # to materialClass/role heuristics when the tag is empty/unknown.
+    if explicit_text and "unknown" not in explicit_text and explicit_text not in (
+        "undefined",
+        "unassigned",
+        "none",
+        "n/a",
+    ):
+        return explicit_text
 
     material_class = str(_path_value(metadata, [["defaultAttributes", "materialClass"], ["materialClass"]]) or "")
     role = str(_path_value(metadata, [["defaultAttributes", "role"], ["role"], ["panelType"]]) or "").lower()
     category = str(_path_value(metadata, [["defaultAttributes", "category"], ["category"]]) or "").lower()
     panel_type = str(_path_value(metadata, [["panelType"]]) or "").lower()
+    identity_type = str(
+        _path_value(metadata, [["identity", "boardType"], ["identity", "sourceBoardType"], ["boardType"]]) or ""
+    ).strip().lower()
 
     if material_class == "door_board" or role in ("door", "front_visible") or panel_type == "door":
         return "door"
-    if role == "partition" or category == "partition" or panel_type == "partition":
+    if material_class == "partition_board" or role == "partition" or category == "partition" or panel_type == "partition":
         return "partition"
     if material_class == "carcass_board" or role in ("carcass", "carcass_rail") or panel_type == "carcass":
         return "carcass"
+    # Free-form tags list (legacy / quick tags) — only accept exact board-type words.
+    free_tags = [
+        str(item).strip().lower()
+        for item in _list_value(_path_value(metadata, [["defaultAttributes", "tags"], ["tags"]]))
+    ]
+    for candidate in ("partition", "door", "carcass"):
+        if candidate in free_tags:
+            return candidate
+    # Custom materialClass "bunk_bed_board" → bunk_bed
+    if material_class.endswith("_board") and len(material_class) > 6:
+        mapped = material_class[:-6]
+        if mapped and mapped not in ("door", "carcass", "partition"):
+            return mapped
+    if identity_type and "unknown" not in identity_type and identity_type not in (
+        "undefined",
+        "unassigned",
+        "none",
+        "n/a",
+    ):
+        # Prefer high-level tags; skip long semantic names like up_flap_door_panel
+        # unless they already look like a board-type slug.
+        if identity_type in ("carcass", "partition", "door") or (
+            "_" in identity_type and len(identity_type) <= 32 and "panel" not in identity_type
+        ):
+            return identity_type
     return ""
 
 
@@ -270,6 +511,72 @@ def _derived_tags(metadata, summary):
             "boardTypeTag": board_type_tag,
         },
     }
+
+
+def _overlay_face_registry_from_entities(body, metadata):
+    """Read-only reconciliation: face attributes are canonical, registry is index.
+
+    No Fusion attributes are written. This keeps Attribute Ready stable even
+    for legacy bodies whose face payloads were updated without a registry sync.
+    """
+    if body is None or not isinstance(metadata, dict) or not callable(read_face_metadata):
+        return metadata
+    working = json.loads(json.dumps(metadata))
+    registry = working.get("faceRegistry")
+    if not isinstance(registry, dict):
+        registry = {}
+        working["faceRegistry"] = registry
+    entries = registry.get("faces")
+    if not isinstance(entries, list):
+        entries = []
+        registry["faces"] = entries
+    by_id = {
+        str(item.get("faceId") or ""): item
+        for item in entries
+        if isinstance(item, dict) and item.get("faceId")
+    }
+    by_token = {
+        str(item.get("entityToken") or ""): item
+        for item in entries
+        if isinstance(item, dict) and item.get("entityToken")
+    }
+    try:
+        faces = body.faces
+        count = faces.count if faces else 0
+    except Exception:
+        count = 0
+    for index in range(count):
+        try:
+            face = faces.item(index)
+            payload, _error = read_face_metadata(face)
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        if str(payload.get("faceClass") or "").upper() != "SURFACE":
+            continue
+        role = str(payload.get("millingSurface") or "").upper()
+        if not role:
+            continue
+        face_id = str(payload.get("faceId") or "")
+        token = _safe_entity_token(face)
+        entry = by_id.get(face_id) or by_token.get(token)
+        if entry is None:
+            entry = {
+                "faceId": face_id,
+                "entityToken": token,
+                "faceClass": "SURFACE",
+                "faceRole": str(payload.get("faceRole") or "surface"),
+            }
+            entries.append(entry)
+            if face_id:
+                by_id[face_id] = entry
+            if token:
+                by_token[token] = entry
+        entry["millingSurface"] = role
+        entry["millingSource"] = str(payload.get("millingSource") or entry.get("millingSource") or "legacy")
+        entry["millingLocked"] = bool(payload.get("millingLocked", entry.get("millingLocked", False)))
+    return attribute_state_service.migrate_metadata(working)
 
 
 def _validate_metadata(metadata, parse_error, fallback_panel_id):
@@ -300,38 +607,264 @@ def _validate_metadata(metadata, parse_error, fallback_panel_id):
     return "Valid", []
 
 
-def _entity_record(entity, entity_kind, occurrence_path, component_name="", body_name="", include_missing=False):
+def _synthesize_from_ancestors(component, body_name=""):
+    """Walk parentComponent chain for generator attrs when the body itself has none."""
+    current = component
+    seen = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        synthesized = _synthesize_module_metadata(current, current)
+        if synthesized:
+            if body_name:
+                identity = dict(synthesized.get("identity") or {})
+                identity["sourceBoardId"] = body_name
+                identity["panelId"] = "{}.{}".format(identity.get("module") or "panel", body_name)
+                synthesized["identity"] = identity
+            return synthesized
+        try:
+            current = getattr(current, "parentComponent", None)
+        except Exception:
+            break
+    return None
+
+
+def _entity_record(entity, entity_kind, occurrence_path, component_name="", body_name="", include_missing=False, parent_component=None, thickness_rules_payload=None, detail="full"):
+    detail_mode = str(detail or "full").strip().lower() or "full"
+    light = detail_mode in ("light", "nesting", "preflight")
+
     metadata, parse_error, raw_metadata = _read_metadata(entity)
     fallback_panel_id = _attr_value(entity, PANEL_ID_ATTR)
     legacy_metadata = None
+    synthesized = False
+    # Nesting/light must still synthesize from generator/component attrs so
+    # Kitchen/Lounge/GT/OHC boards without persisted Panel metadata are counted
+    # (usually as Not Nesting Ready) instead of silently dropped.
     if metadata is None and not parse_error:
-        legacy_metadata = _legacy_overhead_metadata(entity)
-        if legacy_metadata:
-            metadata = legacy_metadata
-            fallback_panel_id = str(_path_value(metadata, [["identity", "panelId"]]) or fallback_panel_id or "")
+        # Prefer cheap parent-component Panel metadata before full synthesis.
+        if parent_component is not None and entity is not parent_component:
+            parent_meta, parent_err, _parent_raw = _read_metadata(parent_component)
+            if isinstance(parent_meta, dict) and not parent_err:
+                metadata = json.loads(json.dumps(parent_meta))
+                if body_name:
+                    identity = dict(metadata.get("identity") or {})
+                    identity["sourceBoardId"] = body_name
+                    if not identity.get("panelId"):
+                        identity["panelId"] = "{}.{}".format(
+                            identity.get("module") or "panel", body_name
+                        )
+                    metadata["identity"] = identity
+                fallback_panel_id = str(
+                    _path_value(metadata, [["identity", "panelId"]])
+                    or fallback_panel_id
+                    or ""
+                )
+                synthesized = True
+        if metadata is None:
+            legacy_metadata = _legacy_overhead_metadata(entity)
+            if legacy_metadata:
+                metadata = legacy_metadata
+                fallback_panel_id = str(_path_value(metadata, [["identity", "panelId"]]) or fallback_panel_id or "")
+            else:
+                synthesized_metadata = _synthesize_module_metadata(entity, parent_component)
+                if synthesized_metadata is None and parent_component is not None:
+                    # Some Kitchen/Lounge boards only keep module attrs on the
+                    # owning component (or an ancestor), not on every solid body.
+                    synthesized_metadata = _synthesize_module_metadata(parent_component, parent_component)
+                    if synthesized_metadata is None:
+                        synthesized_metadata = _synthesize_from_ancestors(parent_component, body_name)
+                    elif body_name:
+                        identity = dict(synthesized_metadata.get("identity") or {})
+                        identity["sourceBoardId"] = body_name
+                        identity["panelId"] = "{}.{}".format(identity.get("module") or "panel", body_name)
+                        synthesized_metadata["identity"] = identity
+                if synthesized_metadata:
+                    metadata = synthesized_metadata
+                    synthesized = True
+                    fallback_panel_id = str(_path_value(metadata, [["identity", "panelId"]]) or fallback_panel_id or "")
     if metadata is None and not parse_error and not fallback_panel_id and not include_missing:
         return None
+    if light and metadata is None and not fallback_panel_id:
+        # Truly unmarked solids (not generator panels) stay skipped.
+        return None
+    if metadata is None and include_missing and not parse_error and not fallback_panel_id:
+        # Still emit a Missing row so unscanned boards are visible in the list.
+        fallback_panel_id = str(body_name or component_name or "unnamed_body")
 
     status, warnings = _validate_metadata(metadata, parse_error, fallback_panel_id)
     if legacy_metadata:
         warnings = ["Derived from legacy UnifiedCabinetPlugin overhead body attributes."] + list(warnings or [])
         if status == "Valid":
             status = "Warning"
-    summary = _metadata_summary(metadata, fallback_panel_id)
+    if synthesized:
+        warnings = [
+            "Synthesized from generator attributes (no UnifiedCabinet.Panel metadata yet)."
+        ] + list(warnings or [])
+        if status == "Valid":
+            status = "Warning"
+    if status == "Missing" and entity_kind in ("body", "selected_body"):
+        warnings = list(warnings or [])
+        if not any("no generator" in str(w).lower() for w in warnings):
+            warnings.append(
+                "No UnifiedCabinet.Panel metadata and no generator module attrs on this body/component."
+            )
+
+    # Measure thickness on bodies; rule matching happens in the walk with
+    # design-level rules from zone_context. Light/nesting scans skip this.
+    measured = None
+    if (
+        not light
+        and entity_kind in ("body", "selected_body")
+        and thickness_rules is not None
+    ):
+        try:
+            measured = thickness_rules.measure_body_thickness_mm(
+                entity, metadata, rules_payload=thickness_rules_payload
+            )
+        except Exception:
+            measured = None
+
+    stored_metadata = metadata
+    legacy_needs_migration = (
+        isinstance(stored_metadata, dict)
+        and not isinstance(stored_metadata.get("classification"), dict)
+    )
+    normalized_metadata = (
+        attribute_state_service.migrate_metadata(metadata)
+        if isinstance(metadata, dict)
+        else metadata
+    )
+    # Full Attributes scan always reconciles live face attributes into the
+    # registry. Nesting/light keeps the fast path, but if Cutting Face would
+    # otherwise be UNASSIGNED we still overlay SURFACE milling roles — those
+    # often live only on face attributes after Analyze/Orient.
+    if (
+        entity_kind in ("body", "selected_body")
+        and isinstance(normalized_metadata, dict)
+    ):
+        needs_overlay = not light
+        if light and callable(evaluate_attribute_ready):
+            try:
+                preview = evaluate_attribute_ready(normalized_metadata, None)
+                needs_overlay = str(
+                    (preview or {}).get("requiredFaceUp") or "UNASSIGNED"
+                ).upper() == "UNASSIGNED"
+            except Exception:
+                needs_overlay = True
+        if needs_overlay:
+            normalized_metadata = _overlay_face_registry_from_entities(
+                entity, normalized_metadata
+            )
+            # Overlay may recover SURFACE milling roles that migrate missed.
+            # Re-migrate so classification.cuttingFace is filled in-memory.
+            normalized_metadata = attribute_state_service.migrate_metadata(
+                normalized_metadata
+            )
+    summary = _metadata_summary(normalized_metadata, fallback_panel_id)
+    derived = _derived_tags(normalized_metadata, summary)
+    attribute_readiness = None
+    if callable(evaluate_attribute_ready) and isinstance(normalized_metadata, dict):
+        try:
+            attribute_readiness = evaluate_attribute_ready(
+                normalized_metadata, derived.get("derivedTags")
+            )
+        except Exception:
+            attribute_readiness = None
     record = {
         "entityKind": entity_kind,
         "componentName": str(component_name or ""),
         "bodyName": str(body_name or ""),
         "occurrencePath": occurrence_path,
-        "entityToken": str(getattr(entity, "entityToken", "") or ""),
+        "entityToken": _safe_entity_token(entity),
         "status": status,
-        "warnings": warnings,
-        "rawMetadata": raw_metadata,
-        "metadata": metadata,
-        **_derived_tags(metadata, summary),
+        "warnings": warnings if not light else [],
+        "rawMetadata": raw_metadata if not light else None,
+        "storedMetadata": stored_metadata if not light else None,
+        "metadata": normalized_metadata,
+        "metadataSource": "synthesized" if synthesized else ("stored" if stored_metadata else "missing"),
+        "scanDetail": detail_mode,
+        **derived,
         **summary,
     }
-    if entity_kind in ("body", "selected_body") and callable(list_body_face_records):
+    if legacy_needs_migration and not light:
+        record["warnings"] = list(record.get("warnings") or []) + [
+            "Legacy metadata normalized read-only; the next explicit write will persist canonical source/lock fields."
+        ]
+        if record.get("status") == "Valid":
+            record["status"] = "Warning"
+    if measured is not None:
+        record["measuredThicknessMm"] = measured
+    if attribute_readiness:
+        record["attributeReady"] = bool(attribute_readiness.get("ready"))
+        record["attributeReadyState"] = attribute_readiness.get("state")
+        record["attributeReadyMissing"] = list(
+            attribute_readiness.get("missing") or []
+        )
+        record["requiredFaceUp"] = attribute_readiness.get("requiredFaceUp")
+        record["cuttingFace"] = attribute_readiness.get("cuttingFace") or (
+            attribute_readiness.get("requiredFaceUp")
+        )
+    # Prefer canonical classification values on the scan record itself so
+    # Nesting / UI do not need to dig through deprecated derivedTags.
+    if isinstance(normalized_metadata, dict):
+        classification = normalized_metadata.get("classification") or {}
+        if isinstance(classification, dict):
+            board_state = classification.get("boardType") or {}
+            color_state = classification.get("color") or {}
+            cutting_state = classification.get("cuttingFace") or {}
+            if isinstance(board_state, dict) and board_state.get("value"):
+                record["boardTypeTag"] = str(board_state.get("value") or "").strip()
+            if isinstance(color_state, dict) and color_state.get("value"):
+                record["colorTag"] = str(color_state.get("value") or "").strip()
+            if isinstance(cutting_state, dict) and cutting_state.get("value"):
+                cutting_value = str(cutting_state.get("value") or "").strip().upper()
+                if cutting_value in ("MILLING", "EITHER"):
+                    record["cuttingFace"] = cutting_value
+                    record["requiredFaceUp"] = cutting_value
+    if light:
+        return record
+    return _attach_geometry_fields(record, entity_kind, entity, normalized_metadata)
+
+
+def _apply_thickness_classification(record, rules_payload):
+    """Attach a read-only thickness suggestion; never mutate scanned metadata."""
+    if not record or thickness_rules is None:
+        return record
+    measured = record.get("measuredThicknessMm")
+    if measured is None:
+        return record
+    match = thickness_rules.match_thickness_rule(measured, rules_payload)
+    if not match:
+        record.setdefault("warnings", []).append(
+            "Thickness {:.1f} mm did not match any configured board-type rule.".format(measured)
+        )
+        return record
+
+    current_metadata = record.get("metadata")
+    current_tag = thickness_rules.current_board_type_tag(current_metadata)
+    record["thicknessSuggestion"] = {
+        "boardTypeTag": match.get("boardTypeTag"),
+        "thicknessMm": match.get("thicknessMm"),
+        "deltaMm": match.get("deltaMm"),
+        "wouldChange": (
+            not thickness_rules.has_known_board_type(current_metadata)
+            or current_tag != str(match.get("boardTypeTag") or "").strip().lower()
+        ),
+    }
+    if record["thicknessSuggestion"]["wouldChange"]:
+        record.setdefault("warnings", []).append(
+            "Thickness suggestion only (not written): {:.1f} mm → {} (rule {:.1f} mm).".format(
+                measured,
+                match.get("boardTypeTag"),
+                float(match.get("thicknessMm") or 0),
+            )
+        )
+    return record
+
+
+def _attach_geometry_fields(record, entity_kind, entity, metadata):
+    if entity_kind not in ("body", "selected_body"):
+        return record
+    if callable(list_body_face_records):
         face_records = list_body_face_records(entity, metadata)
         if face_records:
             registry = (metadata or {}).get("faceRegistry") or {}
@@ -346,25 +879,24 @@ def _entity_record(entity, entity_kind, occurrence_path, component_name="", body
                 "featureFaceCount": len(registry.get("featureFaces") or []),
                 "featureFaces": registry.get("featureFaces") or [],
             }
-    if entity_kind in ("body", "selected_body"):
-        meta = metadata or {}
-        dimensions = meta.get("dimensions")
-        if isinstance(dimensions, dict):
-            record["dimensions"] = dimensions
-        feature_summary = meta.get("featureSummary")
-        if isinstance(feature_summary, dict):
-            record["featureSummary"] = feature_summary
-        features = meta.get("features")
-        if isinstance(features, list):
-            record["features"] = features
-        milling_svg = meta.get("millingSurfaceSvg")
-        if isinstance(milling_svg, dict):
-            record["millingSurfaceSvg"] = {
-                "viewBox": milling_svg.get("viewBox"),
-                "widthMm": milling_svg.get("widthMm"),
-                "heightMm": milling_svg.get("heightMm"),
-                "svg": milling_svg.get("svg"),
-            }
+    meta = metadata or {}
+    dimensions = meta.get("dimensions")
+    if isinstance(dimensions, dict):
+        record["dimensions"] = dimensions
+    feature_summary = meta.get("featureSummary")
+    if isinstance(feature_summary, dict):
+        record["featureSummary"] = feature_summary
+    features = meta.get("features")
+    if isinstance(features, list):
+        record["features"] = features
+    milling_svg = meta.get("millingSurfaceSvg")
+    if isinstance(milling_svg, dict):
+        record["millingSurfaceSvg"] = {
+            "viewBox": milling_svg.get("viewBox"),
+            "widthMm": milling_svg.get("widthMm"),
+            "heightMm": milling_svg.get("heightMm"),
+            "svg": milling_svg.get("svg"),
+        }
     return record
 
 
@@ -398,18 +930,73 @@ def _is_nested_instance(body):
         return False
 
 
-def _walk_component(component, occurrence_path, sink, zone_context=None):
+def _safe_entity_token(entity):
+    """entityToken raises on nested proxies whose top parent is not root."""
+    if not entity:
+        return ""
+    try:
+        return str(getattr(entity, "entityToken", "") or "")
+    except Exception:
+        return ""
+
+
+def _occurrence_proxy_in_root(root_component, occurrence_path):
+    """Build an occurrence proxy whose assembly context is the root component.
+
+    Fusion only allows entityToken on proxies whose top-level parent is root.
+    Nested leaf occurrences must be re-created via createForAssemblyContext
+    along the path; a bare nested Occurrence will crash on .entityToken.
+    """
+    path = list(occurrence_path or [])
+    if not root_component or not path:
+        return None
+    try:
+        occ = None
+        component = root_component
+        for index in path:
+            if not component.occurrences or index >= component.occurrences.count:
+                return None
+            child = component.occurrences.item(index)
+            occ = child if occ is None else child.createForAssemblyContext(occ)
+            if occ is None:
+                return None
+            component = child.component
+        return occ
+    except Exception:
+        return None
+
+
+def _body_proxy_in_root(body, root_component, occurrence_path):
+    if not body:
+        return None
+    occ = _occurrence_proxy_in_root(root_component, occurrence_path)
+    if occ is None:
+        return body
+    try:
+        proxy = body.createForAssemblyContext(occ)
+        return proxy or body
+    except Exception:
+        return body
+
+
+def _walk_component(component, occurrence_path, sink, zone_context=None, root_component=None, detail="full"):
     if not component:
         return
+    root = root_component or component
+    detail_mode = str(detail or "full").strip().lower() or "full"
+    light = detail_mode in ("light", "nesting", "preflight")
 
-    component_record = _entity_record(
-        component,
-        "component",
-        occurrence_path,
-        component_name=getattr(component, "name", "") or "",
-    )
-    if component_record:
-        sink.append(component_record)
+    if not light:
+        component_record = _entity_record(
+            component,
+            "component",
+            occurrence_path,
+            component_name=getattr(component, "name", "") or "",
+            parent_component=component,
+            detail=detail_mode,
+        )
+        if component_record:
+            sink.append(component_record)
 
     for body in list_solid_bodies(component):
         if _is_assembly_zone(body):
@@ -418,27 +1005,84 @@ def _walk_component(component, occurrence_path, sink, zone_context=None):
         # they duplicate the panelId of the assembly-zone original.
         if _is_nested_instance(body):
             continue
+
+        profiler = (zone_context or {}).get("profiler")
+        # Nesting light scan skips createForAssemblyContext proxies — they are
+        # extremely expensive across deep assemblies and are not needed when we
+        # resolve later by occurrencePath + bodyName.
+        if light:
+            scan_body = body
+        else:
+            scan_body = _body_proxy_in_root(body, root, occurrence_path)
+
+        body_t0 = None
+        if profiler is not None:
+            try:
+                import time as _time
+                body_t0 = _time.perf_counter()
+            except Exception:
+                body_t0 = None
+
         body_record = _entity_record(
-            body,
+            scan_body,
             "body",
             occurrence_path,
             component_name=getattr(component, "name", "") or "",
             body_name=getattr(body, "name", "") or "",
+            parent_component=component,
+            include_missing=not light,
+            thickness_rules_payload=(zone_context or {}).get("thicknessRules"),
+            detail=detail_mode,
         )
         if not body_record:
+            if profiler is not None:
+                profiler.add("bodiesSkippedNoAttrs", 1)
             continue
+        if profiler is not None:
+            profiler.add("bodiesRecorded", 1)
+            if body_t0 is not None:
+                try:
+                    import time as _time
+                    elapsed = int((_time.perf_counter() - body_t0) * 1000)
+                    if elapsed >= 200:
+                        profiler.sample(
+                            "scanBody",
+                            elapsed,
+                            bodyName=body_record.get("bodyName") or "",
+                            componentName=body_record.get("componentName") or "",
+                        )
+                    if profiler.counters.get("bodiesRecorded", 0) % 25 == 0:
+                        profiler.mark(
+                            "scanProgress",
+                            bodies=profiler.counters.get("bodiesRecorded", 0),
+                        )
+                except Exception:
+                    pass
+        rules_payload = (zone_context or {}).get("thicknessRules")
+        if rules_payload and not light:
+            body_record = _apply_thickness_classification(body_record, rules_payload)
+        if scan_body is not body:
+            token = _safe_entity_token(scan_body)
+            if token:
+                body_record["entityToken"] = token
+            body_record["selectionProxy"] = True
         layout = (zone_context or {}).get("layout")
-        if layout is not None and work_zones is not None:
-            zone = work_zones.zone_of_body(body, layout)
+        zone_filter = (zone_context or {}).get("filter") if layout is not None else None
+        # Nesting light scans use zoneFilter=all and do not need per-body zone
+        # classification (world bbox probes are costly on large assemblies).
+        need_zone = bool(layout is not None and work_zones is not None and (
+            not light or (zone_filter and zone_filter != "all")
+        ))
+        if need_zone:
+            zone = work_zones.zone_of_body(scan_body, layout)
             body_record["zone"] = zone
-            role = work_zones.instance_role_of_body(body)
+            role = work_zones.instance_role_of_body(scan_body) or work_zones.instance_role_of_body(body)
             if role:
                 body_record["instanceRole"] = role
-            if zone == work_zones.ZONE_NESTING:
+            if zone == work_zones.ZONE_NESTING and not light:
                 body_record.setdefault("warnings", []).append(
                     "Body sits in the nesting zone but is not marked as a nested instance."
                 )
-            zone_filter = (zone_context or {}).get("filter")
             if zone_filter and zone_filter != "all" and zone != zone_filter:
                 continue
         sink.append(body_record)
@@ -449,13 +1093,78 @@ def _walk_component(component, occurrence_path, sink, zone_context=None):
     except Exception:
         return
     for index in range(count):
-        occurrence = occurrences.item(index)
-        _walk_component(occurrence.component, occurrence_path + [index], sink, zone_context)
+        child = occurrences.item(index)
+        _walk_component(
+            child.component,
+            occurrence_path + [index],
+            sink,
+            zone_context,
+            root_component=root,
+            detail=detail_mode,
+        )
 
 
-def scan_panel_metadata(root_component, zone_filter=None):
+def _count_solid_bodies(root_component):
+    """Count solid bodies that are not work-zone helpers / nested copies."""
+    total = 0
+    with_module_attr = 0
+    with_panel_metadata = 0
+    without_attrs = 0
+
+    def _walk(component):
+        nonlocal total, with_module_attr, with_panel_metadata, without_attrs
+        if not component:
+            return
+        for body in list_solid_bodies(component):
+            if _is_assembly_zone(body) or _is_nested_instance(body):
+                continue
+            total += 1
+            has_module = bool(_module_attr_value(body, "module") or _attr_value(body, PANEL_ID_ATTR))
+            if not has_module:
+                # Also count component-level generator attrs as "known".
+                try:
+                    parent = getattr(body, "parentComponent", None) or getattr(body, "component", None)
+                except Exception:
+                    parent = None
+                has_module = bool(_module_attr_value(parent, "module"))
+            if has_module:
+                with_module_attr += 1
+            else:
+                without_attrs += 1
+            metadata, _err, _raw = _read_metadata(body)
+            if metadata is not None:
+                with_panel_metadata += 1
+        try:
+            occurrences = component.occurrences
+            count = occurrences.count if occurrences else 0
+        except Exception:
+            return
+        for index in range(count):
+            try:
+                _walk(occurrences.item(index).component)
+            except Exception:
+                continue
+
+    _walk(root_component)
+    return {
+        "solidBodies": total,
+        "withModuleOrPanelId": with_module_attr,
+        "withPanelMetadata": with_panel_metadata,
+        "withoutAttrs": without_attrs,
+    }
+
+
+def scan_panel_metadata(root_component, zone_filter=None, detail="full", profiler=None):
+    import time as _time
+
+    started = _time.perf_counter()
     records = []
     layout = None
+    detail_mode = str(detail or "full").strip().lower() or "full"
+    light = detail_mode in ("light", "nesting", "preflight")
+    if profiler is not None:
+        profiler.begin("scanWalk")
+        profiler.mark("scanBegin", detail=detail_mode)
     if work_zones is not None:
         try:
             layout = work_zones.load_zone_layout(root_component)
@@ -463,9 +1172,51 @@ def scan_panel_metadata(root_component, zone_filter=None):
             layout = None
     # The zone filter only applies when work zones exist in the design;
     # without zones every body is scanned (safe default).
-    zone_context = {"layout": layout, "filter": zone_filter if layout else None}
-    _walk_component(root_component, [], records, zone_context)
-    return _finalize_records(records)
+    zone_context = {
+        "layout": layout,
+        "filter": zone_filter if layout else None,
+        "profiler": profiler,
+    }
+    if not light and thickness_rules is not None:
+        try:
+            zone_context["thicknessRules"] = thickness_rules.load_rules(root_component)
+        except Exception:
+            zone_context["thicknessRules"] = thickness_rules.normalize_rules(thickness_rules.DEFAULT_RULES)
+    _walk_component(
+        root_component,
+        [],
+        records,
+        zone_context,
+        root_component=root_component,
+        detail=detail_mode,
+    )
+    if profiler is not None:
+        profiler.end("scanWalk")
+        profiler.begin("scanFinalize")
+    records, counts = _finalize_records(records)
+    diagnostics = _count_solid_bodies(root_component) if not light else {}
+    body_records = [r for r in records if "body" in str(r.get("entityKind") or "").lower()]
+    diagnostics["scannedRecords"] = len(records)
+    diagnostics["scannedBodies"] = len(body_records)
+    diagnostics["zoneFilter"] = zone_filter if layout else None
+    diagnostics["workZonesPresent"] = bool(layout)
+    diagnostics["scanDetail"] = detail_mode
+    diagnostics["elapsedMs"] = int((_time.perf_counter() - started) * 1000)
+    if profiler is not None:
+        profiler.end("scanFinalize")
+        profiler.add("scannedBodies", len(body_records))
+        profiler.mark("scanDone", bodies=len(body_records), elapsedMs=diagnostics["elapsedMs"])
+    if not light:
+        diagnostics["missingBodies"] = sum(1 for r in body_records if r.get("status") == "Missing")
+        if layout and zone_filter and zone_filter != "all":
+            zone_counts = {}
+            for record in body_records:
+                zone = str(record.get("zone") or "unknown")
+                zone_counts[zone] = zone_counts.get(zone, 0) + 1
+            diagnostics["zoneCountsInResult"] = zone_counts
+        skipped = max(0, int(diagnostics.get("solidBodies") or 0) - len(body_records))
+        diagnostics["bodiesNotInScan"] = skipped
+    return records, counts, diagnostics
 
 
 def _component_name_for_body(body):
@@ -480,12 +1231,9 @@ def _component_name_for_body(body):
 
 
 def _body_key(body):
-    try:
-        token = getattr(body, "entityToken", None)
-        if token:
-            return str(token)
-    except Exception:
-        pass
+    token = _safe_entity_token(body)
+    if token:
+        return token
     return str(id(body))
 
 
@@ -532,7 +1280,296 @@ def _entity_kind(entity):
         return "face"
     if "BRepEdge" in object_type:
         return "edge"
+    if "Occurrence" in object_type:
+        return "occurrence"
+    if "Component" in object_type:
+        return "component"
+    # Fallbacks when objectType is missing (unit tests / stubs).
+    if hasattr(entity, "component") and hasattr(entity, "occurrencePath"):
+        return "occurrence"
+    if hasattr(entity, "bRepBodies") and hasattr(entity, "occurrences"):
+        return "component"
     return object_type or type(entity).__name__
+
+
+def _occurrence_path_indices(occurrence):
+    """Best-effort path of occurrence indices from root (may be empty)."""
+    path = []
+    try:
+        raw = getattr(occurrence, "occurrencePath", None)
+        if raw is not None:
+            try:
+                count = raw.count
+            except Exception:
+                count = len(raw) if hasattr(raw, "__len__") else 0
+            for index in range(count):
+                try:
+                    item = raw.item(index) if hasattr(raw, "item") else raw[index]
+                except Exception:
+                    item = None
+                if item is None:
+                    continue
+                try:
+                    path.append(int(getattr(item, "index", index)))
+                except Exception:
+                    path.append(index)
+            if path:
+                return path
+    except Exception:
+        pass
+    return path
+
+
+def _collect_bodies_under_occurrence(occurrence, root_component, sink, seen):
+    """Append unique solid panel bodies under an occurrence as selectable proxies.
+
+    Prefer ``occurrence.bRepBodies`` — Fusion returns body proxies already in
+    that assembly context, which ``selection.add`` accepts. Falling back to
+    native component bodies (empty occurrencePath) is what made Select Colour /
+    Milling Faces report "Found N faces but could not select them".
+    """
+    if occurrence is None:
+        return
+    try:
+        bodies = occurrence.bRepBodies
+        count = bodies.count if bodies else 0
+    except Exception:
+        count = 0
+    for index in range(count):
+        try:
+            body = bodies.item(index)
+        except Exception:
+            continue
+        if not body:
+            continue
+        try:
+            if not bool(getattr(body, "isSolid", True)):
+                continue
+        except Exception:
+            pass
+        if _is_assembly_zone(body):
+            continue
+        if _is_nested_instance(body):
+            continue
+        key = _body_key(body)
+        if key in seen:
+            continue
+        seen.add(key)
+        sink.append(body)
+
+    try:
+        children = occurrence.childOccurrences
+        child_count = children.count if children else 0
+    except Exception:
+        return
+    for index in range(child_count):
+        try:
+            child = children.item(index)
+        except Exception:
+            continue
+        _collect_bodies_under_occurrence(child, root_component, sink, seen)
+
+
+def _collect_bodies_under_component(component, occurrence_path, root_component, sink, seen):
+    """Append unique solid panel bodies under component (skip zones / nested copies)."""
+    if not component:
+        return
+    root = root_component or component
+    for body in list_solid_bodies(component):
+        if _is_assembly_zone(body):
+            continue
+        if _is_nested_instance(body):
+            continue
+        scan_body = _body_proxy_in_root(body, root, occurrence_path)
+        key = _body_key(scan_body)
+        if key in seen:
+            continue
+        seen.add(key)
+        sink.append(scan_body)
+
+    try:
+        occurrences = component.occurrences
+        count = occurrences.count if occurrences else 0
+    except Exception:
+        return
+    for index in range(count):
+        child = occurrences.item(index)
+        # Prefer walking the occurrence itself so collected bodies are proxies.
+        try:
+            child_proxy = child
+            if occurrence_path:
+                # Rebuild nested occurrence in root context when we have a path.
+                parent_occ = _occurrence_proxy_in_root(root, occurrence_path)
+                if parent_occ is not None:
+                    try:
+                        child_proxy = child.createForAssemblyContext(parent_occ) or child
+                    except Exception:
+                        child_proxy = child
+            _collect_bodies_under_occurrence(child_proxy, root, sink, seen)
+            continue
+        except Exception:
+            pass
+        _collect_bodies_under_component(
+            child.component,
+            list(occurrence_path or []) + [index],
+            root,
+            sink,
+            seen,
+        )
+
+
+def bodies_from_selected_entities(selected_entities, root_component=None):
+    """Expand Fusion selection to unique solid bodies (assemblies included).
+
+    Supports Occurrence / Component / BRepBody / BRepFace / BRepEdge.
+    Returns (bodies, warnings).
+    """
+    bodies = []
+    warnings = []
+    seen = set()
+
+    for entity in selected_entities or []:
+        kind = _entity_kind(entity)
+        if kind == "occurrence":
+            before = len(bodies)
+            _collect_bodies_under_occurrence(entity, root_component, bodies, seen)
+            if len(bodies) == before:
+                # Fallback: path-based walk if occurrence.bRepBodies was empty.
+                try:
+                    component = entity.component
+                except Exception:
+                    component = None
+                if component:
+                    path = _occurrence_path_indices(entity)
+                    _collect_bodies_under_component(component, path, root_component, bodies, seen)
+            if len(bodies) == before:
+                warnings.append("No solid panel bodies under selected occurrence.")
+            continue
+
+        if kind == "component":
+            before = len(bodies)
+            _collect_bodies_under_component(entity, [], root_component or entity, bodies, seen)
+            if len(bodies) == before:
+                warnings.append("No solid panel bodies under selected component.")
+            continue
+
+        body, source_kind = _selection_owner_body(entity)
+        if not body:
+            warnings.append("Unsupported selection: {}".format(kind or source_kind))
+            continue
+        if _is_assembly_zone(body):
+            warnings.append("Skipped work-zone helper body.")
+            continue
+        if _is_nested_instance(body):
+            warnings.append("Skipped nested-instance copy (nesting output).")
+            continue
+        key = _body_key(body)
+        if key in seen:
+            continue
+        seen.add(key)
+        bodies.append(body)
+
+    return bodies, warnings
+
+
+def metadata_looks_like_door(metadata):
+    """True when body metadata is already classified as a door panel."""
+    if not isinstance(metadata, dict):
+        return False
+    board_tag = str(
+        _path_value(metadata, [["derivedTags", "boardTypeTag"], ["typedTags", "boardTypeTag"]]) or ""
+    ).strip().lower()
+    if board_tag == "door":
+        return True
+    material_class = str(
+        _path_value(metadata, [["defaultAttributes", "materialClass"], ["materialClass"]]) or ""
+    ).strip()
+    if material_class == "door_board":
+        return True
+    role = str(
+        _path_value(metadata, [["defaultAttributes", "role"], ["role"], ["panelType"]]) or ""
+    ).strip().lower()
+    if role in ("door", "front_visible"):
+        return True
+    # Fall back to derived board type heuristics.
+    return _derive_board_type_tag(metadata) == "door"
+
+
+def _body_name_looks_like_door(name):
+    """Heuristic for generator body names when formal metadata is missing."""
+    text = str(name or "").strip().lower().replace("-", "_")
+    if not text:
+        return False
+    if "frontpanel" in text or "front_panel" in text:
+        return True
+    if "_fp_" in text or text.startswith("gt_fp") or text.startswith("oh_fp") or text.startswith("fp_"):
+        return True
+    if "door" in text and "board" not in text:
+        return True
+    if "flap" in text or "fascia" in text:
+        return True
+    return False
+
+
+def body_looks_like_door(body):
+    """True when a Fusion body is a door / front panel.
+
+    Checks formal Panel metadata first, then synthesizes from CabinetNC /
+    generator attributes (Kitchen frontPanel, GT FP*, …), then body-name
+    heuristics. This is what Orient / door-color / door filters must use —
+    raw ``_read_body_metadata_raw`` alone misses Kitchen doors that only
+    carry ``CabinetNC`` attrs.
+    """
+    if body is None:
+        return False
+
+    # 1) Formal UnifiedCabinet.Panel payload.
+    try:
+        from tag_metadata_editor import _read_body_metadata_raw
+    except Exception:
+        try:
+            from panel_attributes.tag_metadata_editor import _read_body_metadata_raw
+        except Exception:
+            _read_body_metadata_raw = None
+    if callable(_read_body_metadata_raw):
+        try:
+            metadata, _err = _read_body_metadata_raw(body)
+        except Exception:
+            metadata = None
+        if isinstance(metadata, dict):
+            classification = metadata.get("classification")
+            board_state = (
+                classification.get("boardType")
+                if isinstance(classification, dict)
+                else None
+            )
+            canonical = str((board_state or {}).get("value") or "").strip().lower()
+            if canonical and not attribute_state_service.is_undefined(canonical):
+                return canonical == "door"
+            if metadata_looks_like_door(metadata):
+                return True
+
+    # 2) Generator attrs on body / owning component (Kitchen, Lounge, …).
+    try:
+        component = None
+        try:
+            assembly = getattr(body, "assemblyContext", None)
+            component = getattr(assembly, "component", None) if assembly else None
+        except Exception:
+            component = None
+        synthesized = _synthesize_module_metadata(body, component)
+        if isinstance(synthesized, dict) and metadata_looks_like_door(synthesized):
+            return True
+    except Exception:
+        pass
+
+    # 3) Body name fallback (e.g. KITCHEN_frontPanel_…, GT_FP_…).
+    try:
+        if _body_name_looks_like_door(getattr(body, "name", "") or ""):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _edge_body(edge):
@@ -577,7 +1614,7 @@ def _face_scan(face):
     milling_surface = (metadata or {}).get("millingSurface")
     return {
         "selectionType": "face",
-        "selectionEntityToken": str(getattr(face, "entityToken", "") or ""),
+        "selectionEntityToken": _safe_entity_token(face),
         "faceClass": face_class,
         "faceRole": str((metadata or {}).get("faceRole") or "unknown"),
         "millingSurface": str(milling_surface) if milling_surface else "unknown",
@@ -599,7 +1636,7 @@ def _edge_scan(edge):
         adjacent_faces = 0
     return {
         "selectionType": "edge",
-        "selectionEntityToken": str(getattr(edge, "entityToken", "") or ""),
+        "selectionEntityToken": _safe_entity_token(edge),
         "edgeKind": "unresolved",
         "adjacentFaceCount": adjacent_faces,
         "edgeBandingRequired": "unknown",
@@ -652,7 +1689,7 @@ def tag_scan_selected(selected_entities, root_component=None):
         elif selection_type == "body":
             selection_detail = {
                 "selectionType": "body",
-                "selectionEntityToken": str(getattr(entity, "entityToken", "") or ""),
+                "selectionEntityToken": _safe_entity_token(entity),
                 "metadataStatus": "defined" if body_record.get("metadata") else "missing",
             }
 

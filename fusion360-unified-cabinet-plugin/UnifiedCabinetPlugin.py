@@ -14,6 +14,28 @@ def _plugin_dir():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def _purge_plugin_modules(plugin_dir):
+    """Drop every cached module that lives inside the plugin folder.
+
+    ``importlib.reload`` on the controllers alone is not enough: their
+    dependencies (panel_geometry, milling_surface_propagation, ...) stay
+    cached in ``sys.modules``, so code edits never take effect until Fusion
+    restarts. Purging first makes the fresh imports below load current code.
+    """
+    prefix = os.path.normcase(os.path.abspath(plugin_dir)) + os.sep
+    for name, module in list(sys.modules.items()):
+        if name == __name__:
+            continue
+        module_file = getattr(module, "__file__", None)
+        if not module_file:
+            continue
+        try:
+            if os.path.normcase(os.path.abspath(module_file)).startswith(prefix):
+                sys.modules.pop(name, None)
+        except Exception:
+            continue
+
+
 def _ensure_paths(plugin_dir):
     paths = [
         plugin_dir,
@@ -58,6 +80,7 @@ class UnifiedCabinetPluginApp:
         self.fusion = None
 
     def start(self):
+        _purge_plugin_modules(self.plugin_dir)
         from adapter import FusionAdapter
         from palette_controller import PaletteController
 
@@ -147,11 +170,28 @@ class UnifiedCabinetPluginApp:
             "panelAttributes.selectMetadataRecords": panel_attributes.select_metadata_records,
             "panelAttributes.scanMetadata": panel_attributes.scan_metadata,
             "panelAttributes.scanSelectedMetadata": panel_attributes.scan_selected_metadata,
+            "panelAttributes.checkNestingReady": panel_attributes.check_nesting_ready,
+            "panelAttributes.createNestingZoneLayout": panel_attributes.create_nesting_zone_layout,
             "panelAttributes.tagScanSelected": panel_attributes.tag_scan_selected,
             "panelAttributes.applyTagScanDrafts": panel_attributes.apply_tag_scan_drafts,
+            "panelAttributes.resetAttributeToAuto": panel_attributes.reset_attribute_to_auto,
+            "panelAttributes.applyDoorColorToSelection": panel_attributes.apply_door_color_to_selection,
+            "panelAttributes.propagateMillingFromHingeCups": panel_attributes.propagate_milling_from_hinge_cups,
+            "panelAttributes.diagnoseHingeFaces": panel_attributes.diagnose_hinge_faces,
+            "panelAttributes.revertDoorSurfaces": panel_attributes.revert_door_surfaces,
+            "panelAttributes.analyzeMillingSurfaces": panel_attributes.analyze_milling_surfaces,
+            "panelAttributes.selectMillingFaces": panel_attributes.select_milling_faces,
+            "panelAttributes.orientDoorFaces": panel_attributes.orient_door_faces_from_view_point,
+            "panelAttributes.captureObservationPoint": panel_attributes.capture_observation_point,
+            "panelAttributes.previewObservationPoint": panel_attributes.preview_observation_point,
+            "panelAttributes.selectDoorColourFaces": panel_attributes.select_door_colour_faces,
             "panelAttributes.setWorkZones": panel_attributes.set_work_zones,
             "panelAttributes.setAssemblyZone": panel_attributes.set_work_zones,
             "panelAttributes.getWorkZones": panel_attributes.get_work_zones,
+            "panelAttributes.getThicknessRules": panel_attributes.get_thickness_rules,
+            "panelAttributes.setThicknessRules": panel_attributes.set_thickness_rules,
+            "panelAttributes.setThicknessRulesAsDefault": panel_attributes.set_thickness_rules_as_default,
+            "panelAttributes.applyThicknessClassification": panel_attributes.apply_thickness_classification,
             "pingPython": self._ping,
         }
         self.palette_controller = PaletteController(

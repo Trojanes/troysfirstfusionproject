@@ -117,7 +117,7 @@ function testFlapValidationFromBoundaryResolver() {
     bottomSystem: { style: "style_1", frontRailHeight: 53, insertSlotThickness: 16 },
     zones: [zone("door", "side_door", 100), zone("top-flap", "top_flap", 100), zone("drawer", "drawer", 100)],
   });
-  assert(topInvalid.validation.errors.includes("Top flap must be the highest functional zone directly below Top System."));
+  assert(topInvalid.validation.warnings.some((warning) => warning.includes("Top flap is not the highest functional zone")));
 
   const bottomValid = calculateZStacking({
     cabinetHeight: 500,
@@ -134,7 +134,9 @@ function testFlapValidationFromBoundaryResolver() {
     zones: [zone("blank", "blank_panel", 100), zone("bottom-flap", "bottom_flap", 100)],
   });
   assert(
-    bottomInvalid.validation.errors.includes("Bottom flap must be the lowest functional zone directly above Bottom System."),
+    bottomInvalid.validation.warnings.includes(
+      "Bottom flap is not the lowest functional zone; hinge semantics still apply but verify the layout is intentional.",
+    ),
   );
 }
 

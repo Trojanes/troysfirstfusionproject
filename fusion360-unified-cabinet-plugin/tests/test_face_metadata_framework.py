@@ -32,7 +32,6 @@ from face_models import (  # noqa: E402
     FACE_CLASS_EDGE,
     FACE_CLASS_SURFACE,
     MACHINING_PRIMARY,
-    NESTING_UP,
     SURFACE_MODE_DOUBLE_SIDED,
     SURFACE_MODE_SINGLE_SIDED,
     create_edge_metadata,
@@ -107,7 +106,6 @@ class FaceMetadataFrameworkTests(unittest.TestCase):
                 {
                     "faceClass": FACE_CLASS_SURFACE,
                     "finish": {"finishId": "finish-a", "finishName": "Finish A"},
-                    "nestingOrientation": "EITHER",
                     "machiningPermission": "ALLOWED",
                     "geometrySignature": build_geometry_signature_from_values(area=500000.0),
                 },
@@ -163,9 +161,7 @@ class FaceMetadataFrameworkTests(unittest.TestCase):
         door_metadata = result["doorFace"]
         white_metadata = result["whiteStippleFace"]
         self.assertEqual(result["panelRegistry"]["surfaceMode"], SURFACE_MODE_SINGLE_SIDED)
-        self.assertEqual(door_metadata["nestingOrientation"], "DOWN")
         self.assertEqual(door_metadata["machiningPermission"], "NOT_ALLOWED")
-        self.assertEqual(white_metadata["nestingOrientation"], NESTING_UP)
         self.assertEqual(white_metadata["machiningPermission"], MACHINING_PRIMARY)
         validation = validate_single_sided_door_defaults(
             [door_metadata, white_metadata],
@@ -258,13 +254,17 @@ class FaceMetadataFrameworkTests(unittest.TestCase):
             {
                 "faceClass": FACE_CLASS_SURFACE,
                 "finish": {"finishId": "finish-a", "finishName": "Finish A"},
-                "nestingOrientation": "EITHER",
                 "machiningPermission": "ALLOWED",
                 "geometrySignature": signature,
             },
         )
+        class SignatureFace(MockFace):
+            def __init__(self, token):
+                super().__init__(token)
+
         new_face = MockFace("new-token")
-        body = MockBody([new_face])
+        signature_face = SignatureFace("resolved-token")
+        body = MockBody([new_face, signature_face])
         status, resolved_face, diagnostics = resolve_face(
             {"body": body, "panelId": self.panel_id},
             metadata["faceId"],
@@ -273,14 +273,10 @@ class FaceMetadataFrameworkTests(unittest.TestCase):
         self.assertEqual(status, RESOLVE_NOT_FOUND)
         self.assertIsNone(resolved_face)
 
-        class SignatureFace(MockFace):
-            def __init__(self, token):
-                super().__init__(token)
-
-        signature_face = SignatureFace("resolved-token")
-
         def fake_build_geometry_signature(face, panel_context=None):
-            return signature
+            if face is signature_face:
+                return signature
+            return build_geometry_signature_from_values(area=1.0)
 
         import face_entity_resolver as resolver_module
 
@@ -340,7 +336,6 @@ class FaceMetadataFrameworkTests(unittest.TestCase):
             {
                 "faceClass": FACE_CLASS_EDGE,
                 "finish": {"finishId": "raw-core", "finishName": "Raw Core"},
-                "nestingOrientation": "NOT_APPLICABLE",
                 "machiningPermission": "NOT_ALLOWED",
                 "edgeBanding": {
                     "required": False,
@@ -357,7 +352,6 @@ class FaceMetadataFrameworkTests(unittest.TestCase):
             {
                 "faceClass": FACE_CLASS_EDGE,
                 "finish": {"finishId": "raw-core", "finishName": "Raw Core"},
-                "nestingOrientation": "NOT_APPLICABLE",
                 "machiningPermission": "NOT_ALLOWED",
                 "edgeBanding": {
                     "required": False,
@@ -410,7 +404,6 @@ class FaceMetadataFrameworkTests(unittest.TestCase):
             {
                 "faceClass": FACE_CLASS_SURFACE,
                 "finish": {"finishId": "finish-a", "finishName": "Finish A"},
-                "nestingOrientation": "EITHER",
                 "machiningPermission": "ALLOWED",
                 "geometrySignature": build_geometry_signature_from_values(area=100.0),
             },

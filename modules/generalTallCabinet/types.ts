@@ -22,7 +22,7 @@ export interface GtHingeSettings {
   useThreeHinges: boolean;
 }
 
-export type GtLockPosition = "top" | "bottom" | "side";
+export type GtLockPosition = "top" | "bottom" | "side" | "shelf_top" | "shelf_bottom";
 
 export interface FunctionalZone {
   id: string;
@@ -30,10 +30,16 @@ export interface FunctionalZone {
   height: number;
   verticalDivider?: boolean;
   dividerCenterX?: number;
+  /** Door zones only: opt-in horizontal shelf inside the zone (kitchen-style). */
+  shelfEnabled?: boolean;
+  /** Shelf TOP height measured from the zone bottom (mm). Default: zone height / 2. */
+  shelfHeight?: number;
   frontPanelEnabled?: boolean;
   lockEnabled?: boolean;
   lockPosition?: GtLockPosition;
   lockSideDistance?: number;
+  /** Side locks only: lock slot center Z measured from the zone bottom (mm). Default: panel top - lockSideDistance. */
+  lockHeight?: number;
   hingeEnabled?: boolean;
   hingeSettings?: Partial<GtHingeSettings>;
 }
@@ -355,6 +361,37 @@ export interface GeneralTallCabinetDebug {
       verticalBoardId: VerticalBoardId;
       overlaps: boolean;
       note: string;
+    }>;
+    note: string;
+  };
+  assemblyOverlapAudit?: {
+    boardCount: number;
+    overlapPairCount: number;
+    parallelOverlapCount: number;
+    perpendicularOverlapCount: number;
+    allowedOverlapCount: number;
+    unexpectedOverlapCount: number;
+    pairs: Array<{
+      boardAId: string;
+      boardBId: string;
+      boardACategory: string;
+      boardBCategory: string;
+      overlapMm3: number;
+      overlapBbox: Pick<Board, "x0" | "x1" | "y0" | "y1" | "z0" | "z1">;
+      relation: "parallel_slab" | "perpendicular_corner";
+      allowed: boolean;
+      allowReason?: string;
+    }>;
+    unexpectedOverlaps: Array<{
+      boardAId: string;
+      boardBId: string;
+      boardACategory: string;
+      boardBCategory: string;
+      overlapMm3: number;
+      overlapBbox: Pick<Board, "x0" | "x1" | "y0" | "y1" | "z0" | "z1">;
+      relation: "parallel_slab" | "perpendicular_corner";
+      allowed: boolean;
+      allowReason?: string;
     }>;
     note: string;
   };

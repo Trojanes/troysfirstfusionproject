@@ -215,7 +215,7 @@ class GeneralTallController:
             if any((not isinstance(dim, (int, float)) or dim <= 0) for dim in dims):
                 invalid_boards += 1
 
-        if height_diff is not None and height_diff != 0:
+        if height_diff is not None and abs(height_diff) > 0.5:
             return (
                 "generalTallFusionResult",
                 {

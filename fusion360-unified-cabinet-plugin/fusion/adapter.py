@@ -50,13 +50,18 @@ class FusionAdapter:
             return 0
 
         selection = self._active_selection_collection(app, ui)
+        selected = 0
         if selection is not None:
             try:
                 selection.clear()
-                for body in valid_bodies:
-                    selection.add(body)
             except Exception:
-                selection = None
+                pass
+            for body in valid_bodies:
+                try:
+                    selection.add(body)
+                    selected += 1
+                except Exception:
+                    continue
 
         try:
             viewport = app.activeViewport
@@ -66,7 +71,7 @@ class FusionAdapter:
         except Exception:
             self.refresh_viewport()
 
-        return len(valid_bodies)
+        return selected if selection is not None else len(valid_bodies)
 
     def get_selected_entities(self):
         app, ui = self.get_app_ui()

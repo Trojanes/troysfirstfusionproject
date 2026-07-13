@@ -686,8 +686,9 @@ def initialize_oh_panel_faces(body, panel_metadata, board_id, service=None):
                 "faceClass": FACE_CLASS_SURFACE,
                 "faceRole": face_role,
                 "millingSurface": milling_role,
+                "millingSource": "geometry",
+                "millingLocked": False,
                 "finish": raw_core_finish(),
-                "nestingOrientation": "EITHER",
                 "machiningPermission": "ALLOWED",
             },
             panel_context=panel_context,
@@ -700,6 +701,8 @@ def initialize_oh_panel_faces(body, panel_metadata, board_id, service=None):
                 "faceRole": metadata.get("faceRole") or face_role,
                 "faceClass": FACE_CLASS_SURFACE,
                 "millingSurface": metadata.get("millingSurface") or milling_role,
+                "millingSource": metadata.get("millingSource") or "geometry",
+                "millingLocked": bool(metadata.get("millingLocked", False)),
                 "entityToken": _entity_token(face),
             }
         )
@@ -795,6 +798,12 @@ def initialize_oh_panel_faces(body, panel_metadata, board_id, service=None):
             feature_faces=feature_face_registry,
         )
     )
+    registry = updated.get("faceRegistry")
+    if isinstance(registry, dict):
+        registry["faceUpState"] = {
+            "source": "geometry",
+            "locked": False,
+        }
 
     try:
         from panel_geometry import build_body_geometry
@@ -851,6 +860,22 @@ def list_body_face_records(body, panel_metadata=None):
                 "entityToken": _entity_token(face),
                 "faceClass": str((metadata or {}).get("faceClass") or registry_entry.get("faceClass") or "unknown"),
                 "faceRole": str((metadata or {}).get("faceRole") or registry_entry.get("faceRole") or "unknown"),
+                "millingSurface": str(
+                    (metadata or {}).get("millingSurface")
+                    or registry_entry.get("millingSurface")
+                    or "UNASSIGNED"
+                ),
+                "millingSource": str(
+                    (metadata or {}).get("millingSource")
+                    or registry_entry.get("millingSource")
+                    or "legacy"
+                ),
+                "millingLocked": bool(
+                    (metadata or {}).get(
+                        "millingLocked",
+                        registry_entry.get("millingLocked", False),
+                    )
+                ),
                 "edgeGroupId": str((metadata or {}).get("edgeGroupId") or registry_entry.get("edgeGroupId") or ""),
                 "edgeId": str((metadata or {}).get("edgeId") or registry_entry.get("edgeId") or ""),
                 "classificationStatus": str(

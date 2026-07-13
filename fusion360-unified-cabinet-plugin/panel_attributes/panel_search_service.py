@@ -63,7 +63,7 @@ def _component_record(component, occurrence_path):
         tags = [str(tag) for tag in raw_tags] if isinstance(raw_tags, list) else []
         door_color_slot = metadata.get("doorColorSlot")
 
-    return {
+    record = {
         "componentName": str(getattr(component, "name", "") or ""),
         "bodyName": str(getattr(main_body, "name", "") or "") if main_body else "",
         "panelId": panel_id,
@@ -74,8 +74,14 @@ def _component_record(component, occurrence_path):
         "parseError": parse_error,
         "bodyWarning": body_warning,
         "occurrencePath": occurrence_path,
-        "entityToken": getattr(main_body, "entityToken", None) if main_body else None,
+        "entityToken": None,
     }
+    if main_body:
+        try:
+            record["entityToken"] = getattr(main_body, "entityToken", None)
+        except Exception:
+            record["entityToken"] = None
+    return record
 
 
 def _walk_occurrences(occurrences, parent_path, sink):
@@ -132,7 +138,8 @@ def resolve_panel_targets(root_component, panels):
     targets = []
     warnings = []
     for panel in panels or []:
-        component = _find_component_by_path(root_component, panel.get("occurrencePath") or [])
+        occurrence_path = panel.get("occurrencePath") or []
+        component = _find_component_by_path(root_component, occurrence_path)
         if not component:
             warnings.append("Component not found for {}".format(panel.get("componentName") or "panel"))
             continue
@@ -140,6 +147,30 @@ def resolve_panel_targets(root_component, panels):
         if body_warning:
             warnings.append("{}: {}".format(panel.get("componentName") or "panel", body_warning))
         if main_body:
+            # Build a root-context occurrence proxy so selection.add works for
+            # nested assemblies (Fusion rejects nested non-root proxies).
+            occurrence = None
+            path = list(occurrence_path or [])
+            if path and root_component:
+                try:
+                    occ = None
+                    current = root_component
+                    for index in path:
+                        child = current.occurrences.item(index)
+                        occ = child if occ is None else child.createForAssemblyContext(occ)
+                        if occ is None:
+                            break
+                        current = child.component
+                    occurrence = occ
+                except Exception:
+                    occurrence = None
+            if occurrence is not None:
+                try:
+                    proxy = main_body.createForAssemblyContext(occurrence)
+                    if proxy is not None:
+                        main_body = proxy
+                except Exception:
+                    pass
             targets.append(
                 {
                     "body": main_body,

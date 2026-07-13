@@ -136,11 +136,15 @@ function validateZones(zones: FunctionalZone[]): { errors: string[]; warnings: s
     }
 
     if (zone.type === "top_flap" && index !== zones.length - 1) {
-      errors.push("Top flap must be the highest functional zone directly below Top System.");
+      warnings.push(
+        "Top flap is not the highest functional zone; hinge semantics still apply but verify the layout is intentional.",
+      );
     }
 
     if (zone.type === "bottom_flap" && index !== 0) {
-      errors.push("Bottom flap must be the lowest functional zone directly above Bottom System.");
+      warnings.push(
+        "Bottom flap is not the lowest functional zone; hinge semantics still apply but verify the layout is intentional.",
+      );
     }
   });
 

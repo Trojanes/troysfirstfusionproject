@@ -148,21 +148,22 @@ function style1InsertProfile(midWidth: number) {
   ];
 }
 
-function fullZiProfile(midWidth: number, midDepth: number) {
+// Side notch width follows CPT (panelThickness = 16 in these test params).
+function fullZiProfile(midWidth: number, midDepth: number, cpt = 16) {
   return [
-    { x: 15, y: 0 },
-    { x: 15, y: 105 },
+    { x: cpt, y: 0 },
+    { x: cpt, y: 105 },
     { x: 0, y: 105 },
     { x: 0, y: midDepth - 105 },
-    { x: 15, y: midDepth - 105 },
-    { x: 15, y: midDepth },
-    { x: midWidth - 15, y: midDepth },
-    { x: midWidth - 15, y: midDepth - 105 },
+    { x: cpt, y: midDepth - 105 },
+    { x: cpt, y: midDepth },
+    { x: midWidth - cpt, y: midDepth },
+    { x: midWidth - cpt, y: midDepth - 105 },
     { x: midWidth, y: midDepth - 105 },
     { x: midWidth, y: 105 },
-    { x: midWidth - 15, y: 105 },
-    { x: midWidth - 15, y: 0 },
-    { x: 15, y: 0 },
+    { x: midWidth - cpt, y: 105 },
+    { x: midWidth - cpt, y: 0 },
+    { x: cpt, y: 0 },
   ];
 }
 
@@ -180,17 +181,17 @@ function halfZiProfile(midWidth: number) {
   ];
 }
 
-function shortenedZiProfile(midWidth: number, shortDepth: number) {
+function shortenedZiProfile(midWidth: number, shortDepth: number, cpt = 16) {
   return [
-    { x: 15, y: 0 },
-    { x: 15, y: 105 },
+    { x: cpt, y: 0 },
+    { x: cpt, y: 105 },
     { x: 0, y: 105 },
     { x: 0, y: shortDepth },
     { x: midWidth, y: shortDepth },
     { x: midWidth, y: 105 },
-    { x: midWidth - 15, y: 105 },
-    { x: midWidth - 15, y: 0 },
-    { x: 15, y: 0 },
+    { x: midWidth - cpt, y: 105 },
+    { x: midWidth - cpt, y: 0 },
+    { x: cpt, y: 0 },
   ];
 }
 
@@ -420,10 +421,11 @@ function testStyle1ExactFitSkeleton() {
   assert(!types.includes("bottom_system_placeholder"));
   assert.equal(result.boards.find((board) => board.id === "T1")?.materialThickness, 16);
   assert.equal(result.boards.find((board) => board.id === "T2")?.materialThickness, 15);
-  assert.equal(result.boards.find((board) => board.id === "T3")?.materialThickness, 15);
+  // Inserted boards follow CPT (baseParams panelThickness = 16).
+  assert.equal(result.boards.find((board) => board.id === "T3")?.materialThickness, 16);
   assert.equal(result.boards.find((board) => board.id === "B1")?.materialThickness, 16);
   assert.equal(result.boards.find((board) => board.id === "B2")?.materialThickness, 15);
-  assert.equal(result.boards.find((board) => board.id === "B3")?.materialThickness, 15);
+  assert.equal(result.boards.find((board) => board.id === "B3")?.materialThickness, 16);
   assert(!types.includes("side_door_panel"));
   assert(!types.includes("drawer_front"));
   assert(!types.includes("flap_front"));
@@ -976,6 +978,27 @@ function testStyle1CustomHeights() {
   );
 }
 
+function testStyle1InsertedBoardsFollowCpt() {
+  // CPT 15 with the default 16 mm insert slot: boards are 15 mm solids,
+  // top-flush (T3) / bottom-flush (B3) inside the 16 mm slot.
+  const result = generateGeneralTallCabinet({
+    ...baseParams([zone("open", "open_space", 1976)]),
+    panelThickness: 15,
+  });
+  const t3 = result.boards.find((board) => board.id === "T3");
+  const b3 = result.boards.find((board) => board.id === "B3");
+  assert.equal(t3?.materialThickness, 15);
+  assert.equal(b3?.materialThickness, 15);
+  assert.deepEqual([t3?.z0, t3?.z1], [2045, 2060]);
+  assert.deepEqual([b3?.z0, b3?.z1], [53, 68]);
+  // Slot features keep the configured insertSlotThickness (16).
+  const v1 = result.boards.find((board) => board.id === "V1");
+  const topSlot = v1?.profileFeatures?.find((feature) => feature.type === "style1_top_insert_slot");
+  const bottomSlot = v1?.profileFeatures?.find((feature) => feature.type === "style1_bottom_insert_slot");
+  assert.deepEqual([topSlot?.z0, topSlot?.z1], [2044, 2060]);
+  assert.deepEqual([bottomSlot?.z0, bottomSlot?.z1], [53, 69]);
+}
+
 function testHSupportBoardSkeletons() {
   const result = generateGeneralTallCabinet({
     ...baseParams([zone("open", "open_space", 1975)]),
@@ -1496,7 +1519,7 @@ function testZiGroovesForDoubleDoorDivider() {
   assert(grooves.every((feature) => feature.type === "zi_groove"));
   assert(grooves.every((feature) => feature.dividerBoardId === "VD_double"));
   assert(grooves.every((feature) => feature.zoneId === "double"));
-  assert(grooves.every((feature) => feature.depth === 7.5));
+  assert(grooves.every((feature) => feature.depth === 8)); // CPT 16 / 2
   assert(grooves.every((feature) => feature.x0 === 326));
   assert(grooves.every((feature) => feature.x1 === 342));
   assert(grooves.every((feature) => feature.y0 === result.debug.midDepth / 3 - 5));
@@ -1535,7 +1558,7 @@ function testDividerTongueFeaturePlaceholders() {
   assert.deepEqual(tongues.map((feature) => feature.position).sort(), ["bottom", "top"]);
   assert(tongues.every((feature) => feature.targetBoardId === "VD_double"));
   assert(tongues.every((feature) => feature.y0 === tongueY0 && feature.y1 === tongueY1));
-  assert(tongues.every((feature) => feature.insertionDepth === 7));
+  assert(tongues.every((feature) => feature.insertionDepth === 7.5)); // CPT 16 / 2 - 0.5
   assert(tongues.every((feature) => feature.notes?.includes("Divider tongue placeholder generated from zi_groove")));
   assert(tongues.every((feature) => feature.notes?.includes("Exact tongue outline deferred")));
   assert(tongues.every((feature) => feature.notes?.includes("Zi groove real cutting deferred")));
@@ -1544,8 +1567,8 @@ function testDividerTongueFeaturePlaceholders() {
   const bottomTongue = tongues.find((feature) => feature.position === "bottom");
   assert(topTongue);
   assert(bottomTongue);
-  assert.deepEqual([topTongue.z0, topTongue.z1], [divider.z1 - 7, divider.z1]);
-  assert.deepEqual([bottomTongue.z0, bottomTongue.z1], [divider.z0, divider.z0 + 7]);
+  assert.deepEqual([topTongue.z0, topTongue.z1], [divider.z1 - 7.5, divider.z1]);
+  assert.deepEqual([bottomTongue.z0, bottomTongue.z1], [divider.z0, divider.z0 + 7.5]);
   assert.equal(topTongue.relatedGrooveFeatureId, grooves.find((feature) => feature.face === "bottom")?.id);
   assert.equal(bottomTongue.relatedGrooveFeatureId, grooves.find((feature) => feature.face === "top")?.id);
   assert.equal(topTongue.relatedZiBoardId, grooves.find((feature) => feature.face === "bottom")?.targetBoardId);
@@ -1578,8 +1601,8 @@ function testDefaultVerticalDividerBottomTongueCutProfile() {
   assert.equal(relatedZi.z1, divider.z0);
 
   const tongueZ0 = divider.z0 - tongue.insertionDepth;
-  assert.equal(tongueZ0, 992);
-  assert.deepEqual(vectorRange(divider.cutProfileVector!), { minY: 0, maxY: 568, minZ: 992, maxZ: 1944 });
+  assert.equal(tongueZ0, 991.5); // divider z0 999 - (CPT 16 / 2 - 0.5)
+  assert.deepEqual(vectorRange(divider.cutProfileVector!), { minY: 0, maxY: 568, minZ: 991.5, maxZ: 1944 });
   assert(hasOrderedSequence(divider.cutProfileVector, [
     { y: 0, z: divider.z0 },
     { y: groove.y0, z: divider.z0 },
@@ -2049,6 +2072,48 @@ function testSidePanelsBothEnabled() {
   assert(result.debug.sidePanelOverlapAudit.overlaps.some((item) =>
     item.sidePanelId === "SidePanel_L" && item.verticalBoardId === "V1" && item.overlaps
   ));
+  assert(result.debug.sidePanelOverlapAudit.overlaps.some((item) =>
+    item.sidePanelId === "SidePanel_R" && item.verticalBoardId === "V2" && item.overlaps
+  ));
+  const v2 = result.boards.find((board) => board.id === "V2");
+  assert(v2);
+  assert.equal(v2.x0, 584);
+  assert.equal(v2.x1, 600);
+  assert.equal(v2.y0, 16);
+  assert.equal(v2.y1, 584);
+  const v1 = result.boards.find((board) => board.id === "V1");
+  assert(v1);
+  assert.equal(v1.y0, 16);
+  assert.equal(v1.y1, 584);
+}
+
+function testVCarcassYAlignsWithSidePanelWhenOnlyRightEnabled() {
+  const result = generateGeneralTallCabinet({
+    cabinetHeight: 1965,
+    cabinetWidth: 370,
+    cabinetDepth: 660,
+    panelThickness: 16,
+    frontPanelThickness: 16,
+    sideClearance: 3,
+    leftSidePanelThickness: 0,
+    rightSidePanelThickness: 16,
+    topSystem: { style: "style_1", frontRailHeight: 40 },
+    bottomSystem: { style: "style_1", frontRailHeight: 53 },
+    avoidance: { enabled: false },
+    zones: [
+      zone("zone-1", "left_side_door", 897),
+      zone("zone-2", "left_side_door", 897),
+    ],
+  });
+  const sidePanel = result.boards.find((board) => board.id === "SidePanel_R");
+  const v2 = result.boards.find((board) => board.id === "V2");
+  assert(sidePanel);
+  assert(v2);
+  assert.equal(sidePanel.y0, -16);
+  assert.equal(v2.y0, 16);
+  assert.equal(v2.y1, 660);
+  assert.equal(v2.y0 - sidePanel.y0, 32);
+  assert(!(result.validation.warnings || []).some((warning) => warning.includes("differs from expected carcass start")));
 }
 
 function testSidePanelOneSideEnabled() {
@@ -2275,6 +2340,207 @@ function testVerticalDividerT5ClearanceUsesContactHeightOnly() {
   assert(!hasPoint(divider.cutProfileVector, { y: 608, z: 1839 }));
 }
 
+const LOCK_SURFACE_TO_CENTER = 30.5;
+
+function frontPanelById(result: ReturnType<typeof generateGeneralTallCabinet>, id: string) {
+  const panel = (result.frontPanels || []).find((item) => item.id === id);
+  assert(panel, `missing front panel ${id}`);
+  return panel;
+}
+
+function zoneStackingItem(result: ReturnType<typeof generateGeneralTallCabinet>, zoneId: string) {
+  const item = result.stacking.items.find(
+    (entry) => entry.type === "functional_zone" && entry.zoneId === zoneId,
+  );
+  assert(item, `missing stacking item for ${zoneId}`);
+  return item;
+}
+
+function testDoorLockShelfTopMounting() {
+  const result = generateGeneralTallCabinet({
+    ...uiDefaultParams(),
+    zones: [
+      { ...zone("zone-1", "side_door", 600), shelfEnabled: true, shelfHeight: 300, lockPosition: "shelf_top" },
+      zone("zone-2", "drawer", 300),
+      { ...zone("zone-3", "double_door", 945), verticalDivider: true },
+    ],
+  });
+  const shelf = result.boards.find((board) => board.id === "DS_zone-1");
+  assert(shelf, "door shelf board missing");
+  const panel = frontPanelById(result, "FP_zone-1");
+  const cut = panel.lockCutout;
+  assert(cut, "shelf_top lock cutout missing");
+  assert.equal(cut.orientation, "horizontal");
+  assert.equal(cut.mountingBoardId, "DS_zone-1");
+  assert.equal(cut.mountingFace, "top");
+  assert.equal(cut.centerZ, shelf.z1 + LOCK_SURFACE_TO_CENTER);
+  assert.equal(cut.fallbackApplied, undefined);
+}
+
+function testDoorLockShelfBottomMounting() {
+  const result = generateGeneralTallCabinet({
+    ...uiDefaultParams(),
+    zones: [
+      { ...zone("zone-1", "side_door", 600), shelfEnabled: true, shelfHeight: 300, lockPosition: "shelf_bottom" },
+      zone("zone-2", "drawer", 300),
+      { ...zone("zone-3", "double_door", 945), verticalDivider: true },
+    ],
+  });
+  const shelf = result.boards.find((board) => board.id === "DS_zone-1");
+  assert(shelf, "door shelf board missing");
+  const cut = frontPanelById(result, "FP_zone-1").lockCutout;
+  assert(cut, "shelf_bottom lock cutout missing");
+  assert.equal(cut.mountingBoardId, "DS_zone-1");
+  assert.equal(cut.mountingFace, "bottom");
+  assert.equal(cut.centerZ, shelf.z0 - LOCK_SURFACE_TO_CENTER);
+}
+
+function testDoorLockShelfFallbackWithoutShelf() {
+  const result = generateGeneralTallCabinet({
+    ...uiDefaultParams(),
+    zones: [
+      { ...zone("zone-1", "side_door", 600), lockPosition: "shelf_top" },
+      zone("zone-2", "drawer", 300),
+      { ...zone("zone-3", "double_door", 945), verticalDivider: true },
+    ],
+  });
+  const panel = frontPanelById(result, "FP_zone-1");
+  const cut = panel.lockCutout;
+  assert(cut, "fallback lock cutout missing");
+  assert.equal(cut.fallbackApplied, true);
+  assert.equal(cut.mountingFace, "bottom"); // top position = upper board's bottom face
+  assert(panel.warnings.some((warning) => warning.includes("no horizontal shelf board found")));
+}
+
+function testDoubleDoorShelfLockUsesLeafSegments() {
+  const result = generateGeneralTallCabinet({
+    ...uiDefaultParams(),
+    zones: [
+      zone("zone-1", "side_door", 600),
+      zone("zone-2", "drawer", 300),
+      {
+        ...zone("zone-3", "double_door", 945),
+        verticalDivider: true,
+        shelfEnabled: true,
+        shelfHeight: 400,
+        lockPosition: "shelf_top",
+      },
+    ],
+  });
+  const shelfL = result.boards.find((board) => board.id === "DS_zone-3_L");
+  const shelfR = result.boards.find((board) => board.id === "DS_zone-3_R");
+  assert(shelfL && shelfR, "split shelf segments missing");
+  const cutL = frontPanelById(result, "FP_zone-3_L").lockCutout;
+  const cutR = frontPanelById(result, "FP_zone-3_R").lockCutout;
+  assert(cutL && cutR, "double door shelf lock cutouts missing");
+  assert.equal(cutL.mountingBoardId, "DS_zone-3_L");
+  assert.equal(cutR.mountingBoardId, "DS_zone-3_R");
+  assert.equal(cutL.centerZ, shelfL.z1 + LOCK_SURFACE_TO_CENTER);
+  assert.equal(cutR.centerZ, shelfR.z1 + LOCK_SURFACE_TO_CENTER);
+}
+
+function testSideLockCustomHeight() {
+  const result = generateGeneralTallCabinet({
+    ...uiDefaultParams(),
+    zones: [
+      zone("zone-1", "side_door", 600),
+      zone("zone-2", "drawer", 300),
+      {
+        ...zone("zone-3", "double_door", 945),
+        verticalDivider: true,
+        lockPosition: "side",
+        lockHeight: 500,
+      },
+    ],
+  });
+  const item = zoneStackingItem(result, "zone-3");
+  const cut = frontPanelById(result, "FP_zone-3_L").lockCutout;
+  assert(cut, "side lock cutout missing");
+  assert.equal(cut.orientation, "vertical");
+  assert.equal(cut.centerZ, item.z0 + 500);
+  const divider = result.boards.find((board) => board.id === "VD_zone-3");
+  assert(divider, "vertical divider missing");
+  assert.equal(cut.mountingBoardId, "VD_zone-3");
+}
+
+function invalidBoardIds(result: ReturnType<typeof generateGeneralTallCabinet>) {
+  return result.boards
+    .filter((board) => {
+      const dims = [
+        Number(board.x1) - Number(board.x0),
+        Number(board.y1) - Number(board.y0),
+        Number(board.z1) - Number(board.z0),
+      ];
+      return dims.some((value) => !Number.isFinite(value) || value <= 0);
+    })
+    .map((board) => board.id);
+}
+
+function testMiddleBottomFlapFusionReady() {
+  const params: GeneralTallCabinetParams = {
+    cabinetHeight: 1965,
+    cabinetWidth: 609,
+    cabinetDepth: 600,
+    panelThickness: 15,
+    leftSidePanelThickness: 15,
+    rightSidePanelThickness: 15,
+    leftSidePanelAdaptAvoidance: true,
+    rightSidePanelAdaptAvoidance: true,
+    frontPanelThickness: 16,
+    frontFaceAllowance: 16,
+    doorPanelThickness: 16,
+    frontClearance: 2,
+    sideClearance: 3.5,
+    frontHardware: {
+      frontPanelsEnabled: true,
+      frontClearance: 2,
+      locksEnabled: true,
+      lockPresetId: "razor_long_rounded_1",
+      defaultHingeSettings: {
+        cupDiameter: 35,
+        cupDepth: 13,
+        cupCenterFromEdge: 22.5,
+        useThreeHinges: false,
+        sideDistance: "auto",
+      },
+    },
+    topSystem: { style: "style_1", frontRailHeight: 40 },
+    bottomSystem: { style: "style_2", height: 100 },
+    avoidance: { enabled: true, depth: 380, height: 220 },
+    zones: [
+      { id: "zone-3", type: "right_side_door", height: 599 },
+      { id: "zone-2", type: "bottom_flap", height: 249 },
+      { id: "zone-1", type: "double_door", height: 931, verticalDivider: true },
+    ],
+  };
+  const result = generateGeneralTallCabinet(params);
+  assert.equal(result.stacking.difference, 0);
+  assert.deepEqual(result.validation.errors, []);
+  assert.deepEqual(invalidBoardIds(result), []);
+  assert(result.validation.warnings.some((warning) => warning.includes("Bottom flap is not the lowest functional zone")));
+}
+
+function testSideLockHeightOutOfRangeClamped() {
+  const result = generateGeneralTallCabinet({
+    ...uiDefaultParams(),
+    zones: [
+      zone("zone-1", "side_door", 600),
+      zone("zone-2", "drawer", 300),
+      {
+        ...zone("zone-3", "double_door", 945),
+        verticalDivider: true,
+        lockPosition: "side",
+        lockHeight: 99999,
+      },
+    ],
+  });
+  const panel = frontPanelById(result, "FP_zone-3_L");
+  const cut = panel.lockCutout;
+  assert(cut, "side lock cutout missing");
+  assert(cut.centerZ <= panel.z1, "clamped center must stay within panel");
+  assert(panel.warnings.some((warning) => warning.includes("outside panel Z")));
+}
+
 const tests = [
   testStyle1ExactFitSkeleton,
   testVBoardSideProfileSkeletonStyle1,
@@ -2294,6 +2560,7 @@ const tests = [
   testStyle2DoesNotGenerateT3B3,
   testStyle1T3B3FeaturePlaceholders,
   testStyle1CustomHeights,
+  testStyle1InsertedBoardsFollowCpt,
   testHSupportBoardSkeletons,
   testAvoidanceDisabledKeepsFullZiAndRearSlots,
   testAvoidanceConvertsEligibleFullZiToShortenedZi,
@@ -2326,6 +2593,7 @@ const tests = [
   testH34ClearanceFollowsMovedH34Mid,
   testSidePanelsDisabledByDefaultAndZeroThickness,
   testSidePanelsBothEnabled,
+  testVCarcassYAlignsWithSidePanelWhenOnlyRightEnabled,
   testSidePanelOneSideEnabled,
   testSidePanelAvoidanceNotchAppliedWhenAdaptEnabled,
   testSidePanelAdaptAvoidancePerSide,
@@ -2333,6 +2601,13 @@ const tests = [
   testAvoidanceSupportWidthUsesMidWidthNotMidDepth,
   testVerticalDividerT5ClearanceUsesContactHeightOnly,
   testVBoardStyleSemanticConsistencyAcrossStyleCombos,
+  testDoorLockShelfTopMounting,
+  testDoorLockShelfBottomMounting,
+  testDoorLockShelfFallbackWithoutShelf,
+  testDoubleDoorShelfLockUsesLeafSegments,
+  testSideLockCustomHeight,
+  testMiddleBottomFlapFusionReady,
+  testSideLockHeightOutOfRangeClamped,
 ];
 
 for (const test of tests) {

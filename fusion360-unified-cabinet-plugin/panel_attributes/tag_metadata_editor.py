@@ -1,17 +1,23 @@
 import copy
 import json
+import re
 
 from panel_metadata_types import PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR, PANEL_METADATA_ATTR
+import attribute_state_service
 
 try:
-    from face_attribute_store import read_face_metadata, write_face_metadata
+    from face_attribute_store import (
+        read_face_metadata,
+        write_face_metadata,
+        remove_face_metadata,
+    )
     from face_models import FACE_CLASS_SURFACE, generate_face_id
 except Exception:
     read_face_metadata = None
     write_face_metadata = None
+    remove_face_metadata = None
     FACE_CLASS_SURFACE = "SURFACE"
     generate_face_id = None
-
 
 def _ensure_dict(parent, key):
     value = parent.get(key)
@@ -35,6 +41,244 @@ def _set_derived_tag(metadata, key, value):
     _ensure_dict(metadata, "derivedTags")[key] = value
     _ensure_dict(metadata, "typedTags")[key] = value
     return metadata
+
+
+def _sync_board_type_fields(metadata, board_type_tag):
+    """Manual board-family edit; generator identity.boardType is preserved."""
+    updated, _result = attribute_state_service.apply_board_type(
+        metadata,
+        board_type_tag,
+        source="manual",
+        lock=True,
+        force=True,
+    )
+    return updated
+
+
+def slug_color_tag(color_name, max_len=32):
+    """Stable nesting colorTag from a user-entered display name."""
+    text = str(color_name or "").strip().lower().replace(" ", "_")
+    text = re.sub(r"[^a-z0-9_]+", "_", text)
+    text = re.sub(r"_+", "_", text).strip("_")
+    if not text:
+        return ""
+    return text[: max(1, int(max_len))]
+
+
+def normalize_surface_mode_enum(value):
+    """Return SINGLE_SIDED / DOUBLE_SIDED or empty string."""
+    text = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+    if text in ("single_sided", "singlesided", "single"):
+        return "SINGLE_SIDED"
+    if text in ("double_sided", "doublesided", "double"):
+        return "DOUBLE_SIDED"
+    upper = str(value or "").strip().upper().replace("-", "_").replace(" ", "_")
+    if upper in ("SINGLE_SIDED", "DOUBLE_SIDED"):
+        return upper
+    return ""
+
+
+def color_scope_allows(scope, is_door):
+    """Pure scope rule used by Color Override."""
+    normalized = str(scope or "doors").strip().lower()
+    if normalized == "panels":
+        return True
+    if normalized == "doors":
+        return bool(is_door)
+    raise ValueError("scope must be doors or panels")
+
+
+def apply_panel_color_to_metadata(metadata, color_name, surface_mode, is_door=False):
+    """Write canonical panel color + manual lock.
+
+    ``colorName`` is valid for every panel family. Door panels additionally
+    mirror it to legacy ``doorColorName`` so older scans/nesting consumers keep
+    working. Surface mode remains independent from the color tag.
+    """
+    updated = copy.deepcopy(metadata) if isinstance(metadata, dict) else {}
+    updated.setdefault("schemaVersion", 1)
+    defaults = _ensure_dict(updated, "defaultAttributes")
+    name = str(color_name or "").strip()
+    if not name:
+        raise ValueError("Color name is required.")
+    color_tag = slug_color_tag(name)
+    if not color_tag:
+        raise ValueError("Color name did not produce a valid colorTag slug.")
+    mode = normalize_surface_mode_enum(surface_mode)
+    if not mode:
+        raise ValueError("surfaceMode must be single_sided or double_sided.")
+
+    defaults["colorName"] = name
+    if is_door:
+        defaults["doorColorName"] = name
+    defaults["surfaceMode"] = mode
+    registry = _ensure_dict(updated, "faceRegistry")
+    registry["surfaceMode"] = mode
+    updated, _result = attribute_state_service.apply_color(
+        updated,
+        color_tag,
+        source="manual",
+        lock=True,
+        force=True,
+    )
+    return updated, color_tag, mode
+
+
+def apply_door_color_to_metadata(metadata, color_name, surface_mode):
+    """Backward-compatible door-only color wrapper."""
+    return apply_panel_color_to_metadata(
+        metadata,
+        color_name,
+        surface_mode,
+        is_door=True,
+    )
+
+
+def _safe_face_token(face):
+    try:
+        return str(getattr(face, "entityToken", "") or "")
+    except Exception:
+        return ""
+
+
+def _patch_face_milling_surface(face, role, body_metadata=None, source="geometry", locked=False):
+    """Write millingSurface onto a face entity attribute."""
+    if not face or not write_face_metadata:
+        return None
+    existing = None
+    if read_face_metadata:
+        existing, _error = read_face_metadata(face)
+    working = copy.deepcopy(existing) if isinstance(existing, dict) else _bootstrap_face_metadata(body_metadata, face)
+    working["faceClass"] = working.get("faceClass") or FACE_CLASS_SURFACE
+    working["millingSurface"] = str(role or "").strip().upper() or "UNASSIGNED"
+    working["millingSource"] = str(source or "geometry").strip().lower()
+    working["millingLocked"] = bool(locked)
+    write_face_metadata(face, working)
+    return working
+
+
+def _upsert_registry_surface(registry, face_metadata, milling_role, entity_token=""):
+    faces = registry.get("faces")
+    if not isinstance(faces, list):
+        faces = []
+        registry["faces"] = faces
+    face_id = str((face_metadata or {}).get("faceId") or "").strip()
+    entry = None
+    if face_id:
+        for item in faces:
+            if isinstance(item, dict) and str(item.get("faceId") or "") == face_id:
+                entry = item
+                break
+    if entry is None and entity_token:
+        for item in faces:
+            if isinstance(item, dict) and str(item.get("entityToken") or "") == entity_token:
+                entry = item
+                break
+    if entry is None:
+        entry = {
+            "faceId": face_id or (generate_face_id() if callable(generate_face_id) else "FACE-MANUAL"),
+            "faceClass": FACE_CLASS_SURFACE,
+            "faceRole": str((face_metadata or {}).get("faceRole") or "surface"),
+            "entityToken": entity_token,
+        }
+        faces.append(entry)
+    entry["faceClass"] = FACE_CLASS_SURFACE
+    entry["millingSurface"] = str(milling_role or "").strip().upper() or "UNASSIGNED"
+    if entity_token:
+        entry["entityToken"] = entity_token
+    if face_id:
+        entry["faceId"] = face_id
+    face_ids = registry.get("faceIds")
+    if not isinstance(face_ids, list):
+        face_ids = []
+        registry["faceIds"] = face_ids
+    if entry["faceId"] not in face_ids:
+        face_ids.append(entry["faceId"])
+    return entry
+
+
+def apply_surface_roles(body, face_a, role_a, face_b, role_b,
+                        source="geometry", lock=False, force=False):
+    """Write arbitrary milling roles on two broad faces and sync faceRegistry."""
+    if not body:
+        raise ValueError("Missing body")
+    if face_a is None or face_b is None:
+        raise ValueError("Both broad faces are required.")
+    role_a = str(role_a or "").strip().upper()
+    role_b = str(role_b or "").strip().upper()
+    if not role_a or not role_b:
+        raise ValueError("Both face roles are required.")
+
+    existing, read_error = _read_body_metadata_raw(body)
+    if read_error:
+        raise ValueError(read_error)
+    metadata = _bootstrap_body_metadata(body, existing)
+    allowed, reason = attribute_state_service.can_apply_face_up(
+        metadata, source=source, force=force
+    )
+    if not allowed:
+        raise ValueError(reason or "face_up_write_rejected")
+    registry = _ensure_dict(metadata, "faceRegistry")
+
+    locked = bool(lock or str(source or "").strip().lower() == "manual")
+    old_a, _old_a_error = read_face_metadata(face_a) if read_face_metadata else (None, None)
+    old_b, _old_b_error = read_face_metadata(face_b) if read_face_metadata else (None, None)
+    try:
+        meta_a = _patch_face_milling_surface(
+            face_a, role_a, metadata, source=source, locked=locked
+        )
+        meta_b = _patch_face_milling_surface(
+            face_b, role_b, metadata, source=source, locked=locked
+        )
+
+        _upsert_registry_surface(registry, meta_a, role_a, _safe_face_token(face_a))
+        _upsert_registry_surface(registry, meta_b, role_b, _safe_face_token(face_b))
+
+        cutting_value = attribute_state_service.cutting_face_from_surface_roles(
+            role_a, role_b
+        )
+        metadata, _result = attribute_state_service.apply_cutting_face(
+            metadata,
+            cutting_value,
+            source=source,
+            lock=locked,
+            force=True,
+        )
+        _write_body_metadata(body, metadata)
+    except Exception:
+        for face, previous in ((face_a, old_a), (face_b, old_b)):
+            try:
+                if isinstance(previous, dict):
+                    write_face_metadata(face, previous)
+                elif callable(remove_face_metadata):
+                    remove_face_metadata(face)
+            except Exception:
+                pass
+        raise
+    return metadata
+
+
+def apply_surface_milling_roles(body, milling_face, non_milling_face,
+                                source="geometry", lock=False, force=False):
+    """Set MILLING / NON_MILLING on two broad faces and sync body faceRegistry."""
+    try:
+        from face_models import MILLING_SURFACE, NON_MILLING_SURFACE
+    except Exception:
+        try:
+            from metadata.face_models import MILLING_SURFACE, NON_MILLING_SURFACE
+        except Exception:
+            MILLING_SURFACE = "MILLING"
+            NON_MILLING_SURFACE = "NON_MILLING"
+    return apply_surface_roles(
+        body,
+        milling_face,
+        MILLING_SURFACE,
+        non_milling_face,
+        NON_MILLING_SURFACE,
+        source=source,
+        lock=lock,
+        force=force,
+    )
 
 
 def _parse_yes_no(value):
@@ -81,12 +325,10 @@ def _set_edge_banding_color(metadata, value):
 
 
 BODY_FIELD_PATCHERS = {
-    "boardTypeTag": lambda metadata, value: _set_derived_tag(metadata, "boardTypeTag", value),
-    "colorTag": lambda metadata, value: _set_derived_tag(metadata, "colorTag", value),
-    "boardType": lambda metadata, value: _set_path(metadata, ["identity", "boardType"], value),
-    "materialClass": lambda metadata, value: _set_path(metadata, ["defaultAttributes", "materialClass"], value),
-    "role": lambda metadata, value: _set_path(metadata, ["defaultAttributes", "role"], value),
-    "lifecycleState": lambda metadata, value: _set_path(metadata, ["lifecycle", "state"], value),
+    "boardTypeTag": lambda metadata, value: _sync_board_type_fields(metadata, value),
+    "colorTag": lambda metadata, value: attribute_state_service.apply_color(
+        metadata, value, source="manual", lock=True, force=True
+    )[0],
 }
 
 FACE_FIELD_PATCHERS = {
@@ -141,6 +383,7 @@ def _bootstrap_body_metadata(body, existing_metadata=None):
 
 
 def _write_body_metadata(body, metadata):
+    metadata = attribute_state_service.migrate_metadata(metadata)
     payload = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
     panel_id = str(_ensure_dict(metadata, "identity").get("panelId") or "").strip()
     attrs = body.attributes
@@ -179,12 +422,45 @@ def apply_body_field_patch(metadata, field_key, value):
     if not patcher:
         raise ValueError("Unsupported body field: {}".format(field_key))
     updated = copy.deepcopy(metadata) if isinstance(metadata, dict) else _bootstrap_body_metadata(None)
-    patcher(updated, value)
+    patched = patcher(updated, value)
+    if isinstance(patched, dict):
+        updated = patched
+    # Readiness is pure scan-time derivation. Body edits never persist it.
     lifecycle = _ensure_dict(updated, "lifecycle")
-    if field_key != "lifecycleState":
-        lifecycle["state"] = "adjusted"
+    lifecycle["state"] = "adjusted"
     lifecycle["reviewRequired"] = True
     return updated
+
+
+def reset_field_to_auto(body, field_key):
+    """Unlock a manually overridden canonical field on a Fusion body."""
+    metadata, read_error = _read_body_metadata_raw(body)
+    if read_error:
+        raise ValueError(read_error)
+    working = _bootstrap_body_metadata(body, metadata)
+    working = attribute_state_service.reset_to_auto(working, field_key)
+    if str(field_key or "").strip().lower() in (
+        "faceup", "face_up", "milling", "cuttingface", "cutting_face", "requiredfaceup"
+    ):
+        try:
+            faces = body.faces
+            count = faces.count if faces else 0
+        except Exception:
+            count = 0
+        for index in range(count):
+            try:
+                face = faces.item(index)
+                face_metadata, _error = read_face_metadata(face) if read_face_metadata else (None, None)
+                if not isinstance(face_metadata, dict) or not face_metadata.get("millingSurface"):
+                    continue
+                face_metadata = copy.deepcopy(face_metadata)
+                face_metadata["millingLocked"] = False
+                face_metadata["millingSource"] = "legacy"
+                write_face_metadata(face, face_metadata)
+            except Exception:
+                continue
+    _write_body_metadata(body, working)
+    return working
 
 
 def apply_face_field_patch(metadata, field_key, value):

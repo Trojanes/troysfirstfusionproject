@@ -1,4 +1,4 @@
-export type LoungeStyle = "L_SHAPE" | "PARALLEL" | "U_SHAPE";
+export type LoungeStyle = "L_SHAPE" | "I_SHAPE" | "PARALLEL" | "U_SHAPE";
 export type LoungeLPosition = "LEFT" | "RIGHT";
 export type LoungeFrontAccess = "NONE" | "DRAWER" | "FLAP";
 
@@ -176,6 +176,7 @@ export interface LoungeGeometryResult {
   state: LoungeSettings;
   footprint: {
     main?: LoungeBounds2D;
+    i?: LoungeBounds2D;
     l?: LoungeBounds2D;
     lPosition?: LoungeLPosition;
     left?: LoungeBounds2D;

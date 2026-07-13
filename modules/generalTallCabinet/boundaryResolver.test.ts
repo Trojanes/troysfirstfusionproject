@@ -64,7 +64,8 @@ function testFlapRules() {
   assert.equal(bottomDebug.boundaryType, "none");
 
   const invalid = resolveZoneBoundaries([zone("blank", "blank_panel"), zone("bottom-flap", "bottom_flap")]);
-  assert(invalid.errors.includes("Bottom flap must be the lowest functional zone directly above Bottom System."));
+  assert.deepEqual(invalid.errors, []);
+  assert(invalid.warnings.some((warning) => warning.includes("Bottom flap is not the lowest functional zone")));
 }
 
 function testDoubleDoorDividerMiddle() {
@@ -124,10 +125,18 @@ function testDividerUpgradeFromNoneAndHalfZi() {
 
 function testValidation() {
   const topFlapInvalid = resolveZoneBoundaries([zone("door", "side_door"), zone("flap", "top_flap"), zone("drawer", "drawer")]);
-  assert(topFlapInvalid.errors.includes("Top flap must be the highest functional zone directly below Top System."));
+  assert(topFlapInvalid.warnings.some((warning) => warning.includes("Top flap is not the highest functional zone")));
 
   const heightInvalid = resolveZoneBoundaries([zone("bad", "drawer", { height: 0 })]);
   assert(heightInvalid.errors.includes("Zone bad height must be > 0."));
+
+  const middleBottomFlap = resolveZoneBoundaries([
+    zone("door", "right_side_door"),
+    zone("flap", "bottom_flap"),
+    zone("top", "double_door"),
+  ]);
+  assert.deepEqual(middleBottomFlap.errors, []);
+  assert(middleBottomFlap.warnings.some((warning) => warning.includes("Bottom flap is not the lowest functional zone")));
 }
 
 function testNoShortenedZiOutput() {

@@ -4,6 +4,33 @@ This document records the current state of the `Attributes` section in the Unifi
 
 The current goal of this section is to become the bridge between generated cabinet geometry and manufacturing metadata. It lets us inspect, search, select, and eventually edit panel metadata attached to Fusion components and bodies.
 
+## Canonical Nesting Attributes (authoritative storage)
+
+Board Type, Color, and Cutting Face share one body-level schema under
+`UnifiedCabinet.Panel` metadata:
+
+```json
+"classification": {
+  "boardType": { "value": "door", "source": "manual", "locked": true },
+  "color": { "value": "supermatt_white", "source": "manual", "locked": true },
+  "cuttingFace": { "value": "MILLING", "source": "geometry", "locked": false }
+}
+```
+
+| Field | Meaning | Writers |
+|-------|---------|---------|
+| `classification.boardType` | Nesting family (`carcass` / `partition` / `door` / custom) | Tag Edit, thickness rules |
+| `classification.color` | Colour pool slug | Color Override / Tag Edit |
+| `classification.cuttingFace` | Nesting face-up constraint (`MILLING` / `EITHER`) | Milling Analyze / Orient / Propagate / Revert |
+
+Rules:
+
+- Attribute Ready and Nesting Ready read **only** these `classification.*` values (after `migrate_metadata`).
+- `derivedTags` / `typedTags` are **deprecated mirrors** kept for older UI; do not treat them as authoritative.
+- Face-level `millingSurface` on Fusion faces (and `faceRegistry.faces[]`) remains geometry detail for which physical face is MILLING vs NON_MILLING. Writing those roles also syncs `classification.cuttingFace`.
+- `faceRegistry.faceUpState` is a compatibility mirror of cuttingFace `source` / `locked`.
+- Generator `identity.boardType` (e.g. `B3`, `front_panel`) is never overwritten by the high-level board family.
+
 ## High Level Purpose
 
 The Attributes section is being developed for four related workflows:
@@ -252,22 +279,23 @@ Supported initial color tags:
 - `door_colour_1_double_sided`
 - `door_colour_2_single_sided`
 - `door_colour_2_double_sided`
-- `door_colour_1_unknown_surface_mode`
-- `door_colour_2_unknown_surface_mode`
 - `white_stipple`
+- custom slugs from Tag Edit door color define (e.g. `alpine_white`)
+
+Empty / missing color is **Undefined**. Legacy `door_colour_*_unknown_surface_mode` values are collapsed to Undefined in the UI.
 
 Color tag derivation:
 
-- `materialClass == carcass_board` => `carcass_colour`
-- `materialClass == door_board` and `doorColorSlot == 1`:
-  - `surfaceMode == single_sided` => `door_colour_1_single_sided`
-  - `surfaceMode == double_sided` => `door_colour_1_double_sided`
-  - missing surface mode => `door_colour_1_unknown_surface_mode`
-- `materialClass == door_board` and `doorColorSlot == 2`:
-  - `surfaceMode == single_sided` => `door_colour_2_single_sided`
-  - `surfaceMode == double_sided` => `door_colour_2_double_sided`
-  - missing surface mode => `door_colour_2_unknown_surface_mode`
-- Future explicit `white_stipple` metadata derives `white_stipple`.
+- Explicit non-unknown `typedTags`/`derivedTags` `colorTag` (including custom slugs) is kept on rescan
+- Else `defaultAttributes.doorColorName` → slug (e.g. `Alpine White` → `alpine_white`); **surfaceMode does not change the tag**
+- `materialClass == carcass_board` => `carcass_colour` (when no custom tag/name)
+- Legacy: `materialClass == door_board` + `doorColorSlot` 1/2 + surface mode => `door_colour_{n}_single_sided` / `_double_sided`
+- Missing legacy surface mode with no name/tag => empty (**Undefined**)
+- Explicit `white_stipple` metadata derives `white_stipple`
+
+Tag Edit → **Define Door Color on Selection** expands the current Fusion selection (assembly / components / bodies), filters to door panels only, and writes `doorColorName` + `surfaceMode` + stable `colorTag`.
+
+Tag Edit → **Propagate Back Face from Hinge Cups** detects blind circular hinge cups geometrically, treats the open broad face as back (`MILLING`), and propagates that back to coplanar same-orientation panels in the selection.
 
 BoardType tag derivation:
 
@@ -752,6 +780,5 @@ Later:
 
 1. Add split-body reconciliation.
 2. Add face/edge metadata inheritance and review.
-3. Add cut list / nesting input export based on effective metadata.
-4. Add metadata version migration tools.
+3. Add metadata version migration tools.
 

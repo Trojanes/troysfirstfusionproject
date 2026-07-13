@@ -8,7 +8,10 @@ def has_face_metadata(face):
         return False
     try:
         attrs = face.attributes
-        return bool(attrs and attrs.itemByName(FACE_ATTRIBUTE_GROUP, FACE_PAYLOAD_ATTR))
+        attr = attrs.itemByName(FACE_ATTRIBUTE_GROUP, FACE_PAYLOAD_ATTR) if attrs else None
+        # A deleted attribute can linger as an object with an empty value;
+        # only a non-empty payload counts as metadata.
+        return bool(attr and str(getattr(attr, "value", "") or "").strip())
     except Exception:
         return False
 

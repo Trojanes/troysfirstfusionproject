@@ -7,11 +7,6 @@ from face_models import (
     MACHINING_NOT_ALLOWED,
     MACHINING_PRIMARY,
     MACHINING_PERMISSIONS,
-    NESTING_DOWN,
-    NESTING_EITHER,
-    NESTING_NOT_APPLICABLE,
-    NESTING_ORIENTATIONS,
-    NESTING_UP,
     SURFACE_MODE_DOUBLE_SIDED,
     SURFACE_MODE_SINGLE_SIDED,
     SURFACE_MODES,
@@ -81,10 +76,6 @@ def validate_face_metadata(metadata, panel_context=None):
     elif finish_id == FINISH_UNASSIGNED_ID:
         warnings.append("finish is UNASSIGNED")
 
-    nesting_orientation = metadata.get("nestingOrientation")
-    if nesting_orientation not in NESTING_ORIENTATIONS:
-        errors.append("nestingOrientation is invalid")
-
     machining_permission = metadata.get("machiningPermission")
     if machining_permission not in MACHINING_PERMISSIONS:
         errors.append("machiningPermission is invalid")
@@ -102,8 +93,6 @@ def validate_face_metadata(metadata, panel_context=None):
             errors.append("EDGE face must include edgeBanding")
         else:
             errors.extend(_validate_edge_banding(edge_banding))
-        if nesting_orientation != NESTING_NOT_APPLICABLE:
-            errors.append("EDGE face nestingOrientation must be NOT_APPLICABLE")
         if machining_permission == MACHINING_PRIMARY:
             errors.append("EDGE face cannot be PRIMARY machining face")
 
@@ -140,30 +129,31 @@ def validate_panel_surface_mode(panel_metadata, face_metadatas):
 
 def validate_single_sided_door_defaults(face_metadatas, door_finish_id):
     errors = []
+    warnings = []
     surfaces = [
         metadata
         for metadata in (face_metadatas or [])
         if metadata and metadata.get("faceClass") == FACE_CLASS_SURFACE
     ]
-    if len(surfaces) < 2:
+    if not surfaces:
         return validation_result(True, [], ["Not enough SURFACE faces to validate door defaults"])
+    if len(surfaces) < 2:
+        # Still validate the defaults on whatever faces exist: a lone door
+        # colour face marked PRIMARY machining is wrong regardless of count.
+        warnings.append("Not enough SURFACE faces to validate door defaults")
 
     door_faces = [surface for surface in surfaces if _finish_id(surface) == str(door_finish_id)]
     white_faces = [surface for surface in surfaces if _finish_id(surface) == "white-stipple"]
 
     for face in door_faces:
-        if face.get("nestingOrientation") != NESTING_DOWN:
-            errors.append("Door colour face must default to nestingOrientation DOWN")
         if face.get("machiningPermission") != MACHINING_NOT_ALLOWED:
             errors.append("Door colour face must default to machiningPermission NOT_ALLOWED")
 
     for face in white_faces:
-        if face.get("nestingOrientation") != NESTING_UP:
-            errors.append("White Stipple face must default to nestingOrientation UP")
         if face.get("machiningPermission") != MACHINING_PRIMARY:
             errors.append("White Stipple face must default to machiningPermission PRIMARY")
 
-    return validation_result(not errors, errors)
+    return validation_result(not errors, errors, warnings)
 
 
 def validate_double_sided_door_defaults(face_metadatas, door_finish_id):
@@ -176,8 +166,6 @@ def validate_double_sided_door_defaults(face_metadatas, door_finish_id):
     for face in surfaces:
         if _finish_id(face) != str(door_finish_id):
             errors.append("DOUBLE_SIDED door surfaces must share the same finishId")
-        if face.get("nestingOrientation") != NESTING_EITHER:
-            errors.append("DOUBLE_SIDED door surfaces must use nestingOrientation EITHER")
     return validation_result(not errors, errors)
 
 

@@ -1,4 +1,5 @@
 import { calculateZStacking } from "./stackingCalculator.ts";
+import { formatAssemblyOverlapWarning, runAssemblyOverlapAudit } from "./assemblyOverlapAudit.ts";
 import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
 import type {
   Board,
@@ -17,6 +18,7 @@ import type {
   GtLockPosition,
   StackingItem,
   VerticalBoardId,
+  ZiSlotFeature,
   ZoneType,
 } from "./types.ts";
 
@@ -27,25 +29,24 @@ const DEFAULT_H_THICKNESS = 15;
 const DEFAULT_SIDE_CLEARANCE = 3;
 const DEFAULT_DOOR_PANEL_THICKNESS = 16;
 const DEFAULT_DIVIDER_THICKNESS = 15;
-const DEFAULT_GROOVE_DEPTH = 7.5;
 const DEFAULT_STYLE_1_INSERT_SLOT_THICKNESS = 16;
 const TOP_STYLE_1_MIN_FRONT_RAIL_HEIGHT = 40;
 const BOTTOM_STYLE_1_MIN_FRONT_RAIL_HEIGHT = 53;
 const STYLE_1_SECOND_RAIL_THICKNESS = 15;
-const STYLE_1_INSERTED_BOARD_THICKNESS = 15;
-const STYLE_1_INSERT_SIDE_NOTCH_WIDTH = 16;
+// Zi/insert board side notches clear the V stiles, so their width follows CPT
+// (panelThickness). Notch DEPTHS stay fixed: they are stile-depth design values.
 const STYLE_1_INSERT_FRONT_NOTCH_DEPTH = 75;
 const STYLE_1_INSERT_BOARD_DEPTH = 150;
-const ZI_FULL_SIDE_NOTCH_WIDTH = 15;
 const ZI_FULL_FRONT_REAR_NOTCH_DEPTH = 105;
-const ZI_HALF_SIDE_NOTCH_WIDTH = 16;
 const ZI_HALF_FRONT_NOTCH_DEPTH = 45;
 const ZI_HALF_DEPTH = 150;
 const B3_GROOVE_WIDTH = 14.5;
 const B3_GROOVE_DEPTH = 6.5;
 const B3_GROOVE_BRANCH_COUNT = 2;
 const B3_GROOVE_BRANCH_WIDTH = 20;
-const ZI_SLOT_HALF_HEIGHT = 8;
+// Zi slot height in the V stiles = mating board thickness + 1mm clearance
+// (computed per board; was a fixed 16 = 15 + 1).
+const ZI_SLOT_CLEARANCE = 1;
 const ZI_SLOT_DEPTH = 50;
 const V12_STYLE_1_Y_FRONT_FACE = 70;
 const V12_STYLE_1_Y_STEP_INNER = 80;
@@ -57,9 +58,11 @@ const V34_STYLE_1_Y_REAR = 150;
 const V34_TOP_NOTCH_FRONT_Y = 29;
 const V34_TOP_NOTCH_INNER_Y = 134;
 const V34_TOP_REAR_NOTCH_HEIGHT = 105;
-const ZI_GROOVE_HALF_WIDTH = 8;
+// Divider-to-Zi joint follows CPT: groove depth = CPT/2, tongue insertion =
+// CPT/2 - 0.5 (0.5 bottom clearance). Groove width = divider thickness + 1mm.
+const ZI_GROOVE_WIDTH_CLEARANCE = 1;
 const ZI_GROOVE_Y_OVERHANG = 5;
-const DIVIDER_TONGUE_INSERTION_DEPTH = 7;
+const DIVIDER_TONGUE_GROOVE_CLEARANCE = 0.5;
 const H34_CLEARANCE_DEPTH = 16;
 const H34_CLEARANCE_Z_BELOW = 5;
 const H34_CLEARANCE_Z_ABOVE_START = 105;
@@ -201,26 +204,39 @@ function isDoubleDoorDividerSupportBoundary(boundaryItemId: string, zones: Funct
   });
 }
 
-function addVerticalBoards(boards: Board[], debug: GeneralTallCabinetDebug, ch: number): void {
+function addVerticalBoards(
+  boards: Board[],
+  params: GeneralTallCabinetParams,
+  debug: GeneralTallCabinetDebug,
+  ch: number,
+): void {
   const pt = debug.panelThickness;
-  const midWidth = debug.midWidth;
+  const cabinetWidth = Number(params.cabinetWidth);
+  const rspT = debug.rightSidePanelThickness;
+  const fpt = debug.frontFaceAllowance;
   const midDepth = debug.midDepth;
-  const rearY0 = Math.max(0, midDepth - 150);
+  const carcassY0 = fpt;
+  const carcassY1 = fpt + midDepth;
+  const rearY0 = carcassY0 + Math.max(0, midDepth - 150);
+  // V stiles share the side-panel X slab in absolute cabinet coordinates.
+  // Left pair sits on 0..pt; right pair mirrors SidePanel_R at cw-rspT..cw-rspT+pt.
+  const rightV0 = rspT > 0 ? cabinetWidth - rspT : cabinetWidth - pt;
+  const rightV1 = rspT > 0 ? cabinetWidth - rspT + pt : cabinetWidth;
 
   boards.push(
     board("V1", "V1", "vertical_structure", "V1", pt, "YZ", "X", {
       x0: 0,
       x1: pt,
-      y0: 0,
-      y1: midDepth,
+      y0: carcassY0,
+      y1: carcassY1,
       z0: 0,
       z1: ch,
     }),
     board("V2", "V2", "vertical_structure", "V2", pt, "YZ", "X", {
-      x0: midWidth - pt,
-      x1: midWidth,
-      y0: 0,
-      y1: midDepth,
+      x0: rightV0,
+      x1: rightV1,
+      y0: carcassY0,
+      y1: carcassY1,
       z0: 0,
       z1: ch,
     }),
@@ -236,7 +252,7 @@ function addVerticalBoards(boards: Board[], debug: GeneralTallCabinetDebug, ch: 
         x0: 0,
         x1: pt,
         y0: rearY0,
-        y1: midDepth,
+        y1: carcassY1,
         z0: 0,
         z1: ch,
       },
@@ -252,10 +268,10 @@ function addVerticalBoards(boards: Board[], debug: GeneralTallCabinetDebug, ch: 
       "YZ",
       "X",
       {
-        x0: midWidth - pt,
-        x1: midWidth,
+        x0: rightV0,
+        x1: rightV1,
         y0: rearY0,
-        y1: midDepth,
+        y1: carcassY1,
         z0: 0,
         z1: ch,
       },
@@ -460,18 +476,26 @@ function applyCoreBoardXOffset(
 ): void {
   const dx = debug.leftSidePanelThickness;
   if (!Number.isFinite(dx) || Math.abs(dx) <= 1e-9) return;
-  const shiftVBoards = params.topSystem.style === "style_2" || params.bottomSystem.style === "style_2";
+  void params;
   for (const item of boards) {
     if (item.category === "side_panel" || item.category === "avoidance_support") continue;
-    if (!shiftVBoards && ["V1", "V2", "V3", "V4"].includes(item.id)) continue;
+    // V stiles never follow the side-panel offset: they share the side panels'
+    // X slab in every style combo (the former style_2 exception pushed them
+    // 16mm inboard, which was wrong).
+    if (["V1", "V2", "V3", "V4"].includes(item.id)) continue;
     item.x0 += dx;
     item.x1 += dx;
   }
 }
 
-function updateSidePanelOverlapAudit(boards: Board[], debug: GeneralTallCabinetDebug): void {
+function updateSidePanelOverlapAudit(
+  boards: Board[],
+  debug: GeneralTallCabinetDebug,
+  validation?: { warnings: string[] },
+): void {
   const sidePanels = boards.filter((item) => item.category === "side_panel" && (item.id === "SidePanel_L" || item.id === "SidePanel_R"));
   const verticalBoards = boards.filter((item) => ["V1", "V2", "V3", "V4"].includes(item.id));
+  const fpt = debug.frontFaceAllowance;
   const bboxOf = (item: Board) => ({
     x0: item.x0,
     x1: item.x1,
@@ -484,9 +508,28 @@ function updateSidePanelOverlapAudit(boards: Board[], debug: GeneralTallCabinetD
     a.x0 < b.x1 && a.x1 > b.x0 &&
     a.y0 < b.y1 && a.y1 > b.y0 &&
     a.z0 < b.z1 && a.z1 > b.z0;
+  const sharesXSlab = (sidePanel: Board, verticalBoard: Board): boolean =>
+    Math.abs(sidePanel.x0 - verticalBoard.x0) <= 0.001 && Math.abs(sidePanel.x1 - verticalBoard.x1) <= 0.001;
   if (sidePanels.length === 0) {
     debug.sidePanelOverlapAudit = undefined;
     return;
+  }
+  for (const sidePanel of sidePanels) {
+    const verticalId = sidePanel.id === "SidePanel_L" ? "V1" : "V2";
+    const verticalBoard = verticalBoards.find((item) => item.id === verticalId);
+    if (!verticalBoard || !sharesXSlab(sidePanel, verticalBoard)) continue;
+    const expectedFrontY = -fpt;
+    const expectedCarcassY0 = fpt;
+    if (Math.abs(sidePanel.y0 - expectedFrontY) > 0.01) {
+      validation?.warnings.push(
+        `${sidePanel.id} y0 ${sidePanel.y0} differs from expected front wrap ${expectedFrontY} (FPT ${fpt}).`,
+      );
+    }
+    if (Math.abs(verticalBoard.y0 - expectedCarcassY0) > 0.01) {
+      validation?.warnings.push(
+        `${verticalId} y0 ${verticalBoard.y0} differs from expected carcass start ${expectedCarcassY0} (FPT ${fpt}).`,
+      );
+    }
   }
   debug.sidePanelOverlapAudit = {
     sidePanels: sidePanels.map((item) => ({
@@ -510,8 +553,20 @@ function updateSidePanelOverlapAudit(boards: Board[], debug: GeneralTallCabinetD
         };
       })
     ),
-    note: "Core boards are placed in inner span using left side panel offset; no additional overlap resolution applied.",
+    note: "V stiles share the side-panel X slab (0..pt left, cw-rspT..cw right); core boards use inner span offset.",
   };
+}
+
+function updateAssemblyOverlapAudit(
+  boards: Board[],
+  debug: GeneralTallCabinetDebug,
+  validation: { warnings: string[] },
+): void {
+  const audit = runAssemblyOverlapAudit(boards);
+  debug.assemblyOverlapAudit = audit;
+  for (const pair of audit.unexpectedOverlaps) {
+    validation.warnings.push(formatAssemblyOverlapWarning(pair));
+  }
 }
 
 function style1FrontRailHeight(value: unknown, minHeight: number): number {
@@ -991,10 +1046,7 @@ function addStyle1TopSystemBoards(
 
   const ch = Number(params.cabinetHeight);
   const frontRailHeight = style1FrontRailHeight(params.topSystem.frontRailHeight, TOP_STYLE_1_MIN_FRONT_RAIL_HEIGHT);
-  const insertSlotThickness = style1InsertSlotThickness(params.topSystem.insertSlotThickness);
-  const topSystemHeight = frontRailHeight + insertSlotThickness;
   const frontRailZ0 = ch - frontRailHeight;
-  const insertZ0 = ch - topSystemHeight;
   const insertZ1 = ch - frontRailHeight;
 
   boards.push(
@@ -1014,12 +1066,15 @@ function addStyle1TopSystemBoards(
       z0: frontRailZ0,
       z1: ch,
     }, "top_system", ["Style 1 second top rail behind T1"]),
-    board("T3", "T3", "top_system", "T3", STYLE_1_INSERTED_BOARD_THICKNESS, "XY", "Z", {
+    // Board solid follows CPT (panelThickness); the V-stile insert slot stays
+    // insertSlotThickness for clearance. T3 sits top-flush under the front
+    // rails, matching the fridge module's T3Ref (topFaceZ = slot top).
+    board("T3", "T3", "top_system", "T3", debug.panelThickness, "XY", "Z", {
       x0: 0,
       x1: debug.midWidth,
       y0: 0,
       y1: 150,
-      z0: insertZ0,
+      z0: insertZ1 - debug.panelThickness,
       z1: insertZ1,
     }, "top_system", ["Style 1 top inserted board"]),
   );
@@ -1036,8 +1091,6 @@ function addStyle1BottomSystemBoards(
     params.bottomSystem.frontRailHeight,
     BOTTOM_STYLE_1_MIN_FRONT_RAIL_HEIGHT,
   );
-  const insertSlotThickness = style1InsertSlotThickness(params.bottomSystem.insertSlotThickness);
-  const bottomSystemHeight = frontRailHeight + insertSlotThickness;
 
   boards.push(
     board("B1", "B1", "bottom_system", "B1", 16, "XZ", "Y", {
@@ -1056,13 +1109,16 @@ function addStyle1BottomSystemBoards(
       z0: 0,
       z1: frontRailHeight,
     }, "bottom_system", ["Style 1 second bottom rail behind B1"]),
-    board("B3", "B3", "bottom_system", "B3", STYLE_1_INSERTED_BOARD_THICKNESS, "XY", "Z", {
+    // Board solid follows CPT (panelThickness); the V-stile insert slot stays
+    // insertSlotThickness for clearance. B3 rests bottom-flush on the front
+    // rails, matching the fridge module's B3Ref (bottomFaceZ = rail top).
+    board("B3", "B3", "bottom_system", "B3", debug.panelThickness, "XY", "Z", {
       x0: 0,
       x1: debug.midWidth,
       y0: 0,
       y1: 150,
       z0: frontRailHeight,
-      z1: bottomSystemHeight,
+      z1: frontRailHeight + debug.panelThickness,
     }, "bottom_system", [
       "Style 1 bottom inserted board",
       "B3 groove placeholder remains feature-only",
@@ -1070,30 +1126,30 @@ function addStyle1BottomSystemBoards(
   );
 }
 
-function style1InsertBoardProfileVector(midWidth: number): Board["profileVector"] {
+function style1InsertBoardProfileVector(midWidth: number, notchWidth: number): Board["profileVector"] {
   return [
-    { x: STYLE_1_INSERT_SIDE_NOTCH_WIDTH, y: 0 },
-    { x: STYLE_1_INSERT_SIDE_NOTCH_WIDTH, y: STYLE_1_INSERT_FRONT_NOTCH_DEPTH },
+    { x: notchWidth, y: 0 },
+    { x: notchWidth, y: STYLE_1_INSERT_FRONT_NOTCH_DEPTH },
     { x: 0, y: STYLE_1_INSERT_FRONT_NOTCH_DEPTH },
     { x: 0, y: STYLE_1_INSERT_BOARD_DEPTH },
     { x: midWidth, y: STYLE_1_INSERT_BOARD_DEPTH },
     { x: midWidth, y: STYLE_1_INSERT_FRONT_NOTCH_DEPTH },
-    { x: midWidth - STYLE_1_INSERT_SIDE_NOTCH_WIDTH, y: STYLE_1_INSERT_FRONT_NOTCH_DEPTH },
-    { x: midWidth - STYLE_1_INSERT_SIDE_NOTCH_WIDTH, y: 0 },
-    { x: STYLE_1_INSERT_SIDE_NOTCH_WIDTH, y: 0 },
+    { x: midWidth - notchWidth, y: STYLE_1_INSERT_FRONT_NOTCH_DEPTH },
+    { x: midWidth - notchWidth, y: 0 },
+    { x: notchWidth, y: 0 },
   ];
 }
 
 function addStyle1InsertBoardProfileVectors(boards: Board[], debug: GeneralTallCabinetDebug): void {
   const t3 = boards.find((board) => board.id === "T3" && board.boardType === "T3");
   if (t3) {
-    t3.profileVector = style1InsertBoardProfileVector(debug.midWidth);
+    t3.profileVector = style1InsertBoardProfileVector(debug.midWidth, debug.panelThickness);
     t3.notes = ["Style 1 top inserted board", "Exact Style 1 T3 notched profileVector implemented"];
   }
 
   const b3 = boards.find((board) => board.id === "B3" && board.boardType === "B3");
   if (b3) {
-    b3.profileVector = style1InsertBoardProfileVector(debug.midWidth);
+    b3.profileVector = style1InsertBoardProfileVector(debug.midWidth, debug.panelThickness);
     b3.notes = [
       "Style 1 bottom inserted board",
       "Exact Style 1 B3 notched profileVector implemented",
@@ -1258,32 +1314,32 @@ function addBoundaryZiBoards(
   }
 }
 
-function fullZiProfileVector(midWidth: number, midDepth: number): Board["profileVector"] {
+function fullZiProfileVector(midWidth: number, midDepth: number, notchWidth: number): Board["profileVector"] {
   return [
-    { x: ZI_FULL_SIDE_NOTCH_WIDTH, y: 0 },
-    { x: ZI_FULL_SIDE_NOTCH_WIDTH, y: ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
+    { x: notchWidth, y: 0 },
+    { x: notchWidth, y: ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
     { x: 0, y: ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
     { x: 0, y: midDepth - ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
-    { x: ZI_FULL_SIDE_NOTCH_WIDTH, y: midDepth - ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
-    { x: ZI_FULL_SIDE_NOTCH_WIDTH, y: midDepth },
-    { x: midWidth - ZI_FULL_SIDE_NOTCH_WIDTH, y: midDepth },
-    { x: midWidth - ZI_FULL_SIDE_NOTCH_WIDTH, y: midDepth - ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
+    { x: notchWidth, y: midDepth - ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
+    { x: notchWidth, y: midDepth },
+    { x: midWidth - notchWidth, y: midDepth },
+    { x: midWidth - notchWidth, y: midDepth - ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
     { x: midWidth, y: midDepth - ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
     { x: midWidth, y: ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
-    { x: midWidth - ZI_FULL_SIDE_NOTCH_WIDTH, y: ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
-    { x: midWidth - ZI_FULL_SIDE_NOTCH_WIDTH, y: 0 },
-    { x: ZI_FULL_SIDE_NOTCH_WIDTH, y: 0 },
+    { x: midWidth - notchWidth, y: ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
+    { x: midWidth - notchWidth, y: 0 },
+    { x: notchWidth, y: 0 },
   ];
 }
 
-function halfZiProfileVector(midWidth: number): Board["profileVector"] {
+function halfZiProfileVector(midWidth: number, notchWidth: number): Board["profileVector"] {
   return [
     { x: 0, y: 0 },
     { x: 0, y: ZI_HALF_FRONT_NOTCH_DEPTH },
-    { x: ZI_HALF_SIDE_NOTCH_WIDTH, y: ZI_HALF_FRONT_NOTCH_DEPTH },
-    { x: ZI_HALF_SIDE_NOTCH_WIDTH, y: ZI_HALF_DEPTH },
-    { x: midWidth - ZI_HALF_SIDE_NOTCH_WIDTH, y: ZI_HALF_DEPTH },
-    { x: midWidth - ZI_HALF_SIDE_NOTCH_WIDTH, y: ZI_HALF_FRONT_NOTCH_DEPTH },
+    { x: notchWidth, y: ZI_HALF_FRONT_NOTCH_DEPTH },
+    { x: notchWidth, y: ZI_HALF_DEPTH },
+    { x: midWidth - notchWidth, y: ZI_HALF_DEPTH },
+    { x: midWidth - notchWidth, y: ZI_HALF_FRONT_NOTCH_DEPTH },
     { x: midWidth, y: ZI_HALF_FRONT_NOTCH_DEPTH },
     { x: midWidth, y: 0 },
     { x: 0, y: 0 },
@@ -1293,6 +1349,7 @@ function halfZiProfileVector(midWidth: number): Board["profileVector"] {
 function shortenedZiProfileVector(
   midWidth: number,
   shortDepth: number,
+  notchWidth: number,
   validation: GeneratorValidation,
 ): Board["profileVector"] {
   if (shortDepth < ZI_HALF_DEPTH) {
@@ -1309,15 +1366,15 @@ function shortenedZiProfileVector(
   }
 
   return [
-    { x: ZI_FULL_SIDE_NOTCH_WIDTH, y: 0 },
-    { x: ZI_FULL_SIDE_NOTCH_WIDTH, y: ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
+    { x: notchWidth, y: 0 },
+    { x: notchWidth, y: ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
     { x: 0, y: ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
     { x: 0, y: shortDepth },
     { x: midWidth, y: shortDepth },
     { x: midWidth, y: ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
-    { x: midWidth - ZI_FULL_SIDE_NOTCH_WIDTH, y: ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
-    { x: midWidth - ZI_FULL_SIDE_NOTCH_WIDTH, y: 0 },
-    { x: ZI_FULL_SIDE_NOTCH_WIDTH, y: 0 },
+    { x: midWidth - notchWidth, y: ZI_FULL_FRONT_REAR_NOTCH_DEPTH },
+    { x: midWidth - notchWidth, y: 0 },
+    { x: notchWidth, y: 0 },
   ];
 }
 
@@ -1336,13 +1393,13 @@ function addZiBoardProfileVectors(boards: Board[], debug: GeneralTallCabinetDebu
     if (board.boardType !== "full_zi" && board.boardType !== "half_zi" && board.boardType !== "shortened_zi") continue;
 
     if (board.boardType === "full_zi") {
-      board.profileVector = fullZiProfileVector(debug.midWidth, debug.midDepth);
+      board.profileVector = fullZiProfileVector(debug.midWidth, debug.midDepth, debug.panelThickness);
       board.notes = exactZiNotes(board, "Exact full_zi notched outer profile implemented; groove machining remains feature-only.");
     } else if (board.boardType === "half_zi") {
-      board.profileVector = halfZiProfileVector(debug.midWidth);
+      board.profileVector = halfZiProfileVector(debug.midWidth, debug.panelThickness);
       board.notes = exactZiNotes(board, "Exact half_zi outer profile implemented.");
     } else {
-      board.profileVector = shortenedZiProfileVector(debug.midWidth, board.y1, validation);
+      board.profileVector = shortenedZiProfileVector(debug.midWidth, board.y1, debug.panelThickness, validation);
       board.notes = exactZiNotes(board, "Exact shortened_zi notched outer profile implemented; rear connection omitted.");
     }
   }
@@ -1382,6 +1439,8 @@ function generateZiSlotFeatures(
       validation.warnings.push(`Zi slot depth clamped for shortened_zi boundary ${item.id}.`);
     }
 
+    // Slot height = Zi board thickness + clearance, centred on the boundary.
+    const slotHalfHeight = (debug.ziThickness + ZI_SLOT_CLEARANCE) / 2;
     for (const targetBoardId of targetBoardIds) {
       const useLocalV12Slot = targetBoardId === "V1" || targetBoardId === "V2";
       const useLocalV34Slot =
@@ -1398,8 +1457,8 @@ function generateZiSlotFeatures(
         boundaryType: boundaryBoardType,
         y0: useLocalV12Slot ? V12_STYLE_1_Y_ZI_INNER : useLocalV34Slot ? V34_STYLE_1_Y_FRONT : slotY0,
         y1: useLocalV12Slot ? V12_STYLE_1_Y_REAR : useLocalV34Slot ? V34_STYLE_1_Y_ZI_INNER : slotY1,
-        z0: item.centerZ - ZI_SLOT_HALF_HEIGHT,
-        z1: item.centerZ + ZI_SLOT_HALF_HEIGHT,
+        z0: item.centerZ - slotHalfHeight,
+        z1: item.centerZ + slotHalfHeight,
         centerZ: item.centerZ,
         source: item.id,
         notes: ["Rear Zi slot placeholder; exact side profile vector deferred"],
@@ -1746,6 +1805,204 @@ function addVerticalDividerBoards(
   }
 }
 
+const DOOR_SHELF_MIN_ZONE_HEIGHT = 350;
+
+function doorShelfProfileVector(
+  width: number,
+  depth: number,
+  notchWidth: number,
+  notchLeft: boolean,
+  notchRight: boolean,
+  rearConnected: boolean,
+): Board["profileVector"] {
+  // Same corner-notch joinery as the boundary Zi boards (CPT-wide side notch,
+  // 105mm deep at the front and, when the shelf reaches the rear, at the back).
+  if (depth <= ZI_FULL_FRONT_REAR_NOTCH_DEPTH) {
+    return [
+      { x: 0, y: 0 },
+      { x: width, y: 0 },
+      { x: width, y: depth },
+      { x: 0, y: depth },
+      { x: 0, y: 0 },
+    ];
+  }
+  const nw = notchWidth;
+  const nd = ZI_FULL_FRONT_REAR_NOTCH_DEPTH;
+  const points: NonNullable<Board["profileVector"]> = [];
+  const start = { x: notchLeft ? nw : 0, y: 0 };
+  points.push(start);
+  if (notchLeft) {
+    points.push({ x: nw, y: nd }, { x: 0, y: nd });
+    if (rearConnected) {
+      points.push({ x: 0, y: depth - nd }, { x: nw, y: depth - nd }, { x: nw, y: depth });
+    } else {
+      points.push({ x: 0, y: depth });
+    }
+  } else {
+    points.push({ x: 0, y: depth });
+  }
+  if (notchRight && rearConnected) {
+    points.push({ x: width - nw, y: depth }, { x: width - nw, y: depth - nd }, { x: width, y: depth - nd });
+  } else {
+    points.push({ x: width, y: depth });
+  }
+  if (notchRight) {
+    points.push({ x: width, y: nd }, { x: width - nw, y: nd }, { x: width - nw, y: 0 });
+  } else {
+    points.push({ x: width, y: 0 });
+  }
+  points.push({ ...start });
+  return points;
+}
+
+function generateDoorShelfZiSlotFeatures(boards: Board[], debug: GeneralTallCabinetDebug): ZiSlotFeature[] {
+  const features: ZiSlotFeature[] = [];
+  for (const shelf of boards) {
+    if (shelf.category !== "door_shelf") continue;
+    const centerZ = (shelf.z0 + shelf.z1) / 2;
+    const rearConnected = shelf.y1 >= debug.midDepth;
+    const isLeftSegment = shelf.id.endsWith("_L");
+    const isRightSegment = shelf.id.endsWith("_R");
+    const targets: VerticalBoardId[] = [];
+    if (!isRightSegment) targets.push("V1");
+    if (!isLeftSegment) targets.push("V2");
+    // Rear stiles only engage when the shelf reaches the rear (same rule as
+    // full_zi vs shortened_zi boundaries).
+    if (rearConnected) {
+      if (!isRightSegment) targets.push("V3");
+      if (!isLeftSegment) targets.push("V4");
+    }
+    // Slot height = shelf thickness (CPT) + clearance, centred on the shelf.
+    const slotHalfHeight = (shelf.materialThickness + ZI_SLOT_CLEARANCE) / 2;
+    for (const targetBoardId of targets) {
+      const isFrontStile = targetBoardId === "V1" || targetBoardId === "V2";
+      features.push({
+        id: `${targetBoardId}_${shelf.id}_zi_slot`,
+        type: "zi_slot",
+        targetBoardId,
+        boundaryId: shelf.id,
+        boundaryType: "full_zi",
+        y0: isFrontStile ? V12_STYLE_1_Y_ZI_INNER : V34_STYLE_1_Y_FRONT,
+        y1: isFrontStile ? V12_STYLE_1_Y_REAR : V34_STYLE_1_Y_ZI_INNER,
+        z0: centerZ - slotHalfHeight,
+        z1: centerZ + slotHalfHeight,
+        centerZ,
+        source: shelf.id,
+        notes: ["Door shelf Zi slot (same joinery as boundary full_zi)"],
+      });
+    }
+  }
+  return features;
+}
+
+function addDoorShelfBoards(
+  boards: Board[],
+  params: GeneralTallCabinetParams,
+  stackingItems: StackingItem[],
+  debug: GeneralTallCabinetDebug,
+  validation: { errors: string[]; warnings: string[] },
+  avoidance: AvoidanceAdjustmentState,
+): void {
+  const shelfThickness = debug.panelThickness;
+
+  for (const zone of params.zones) {
+    if (!isGtDoorType(zone.type) || zone.shelfEnabled !== true) continue;
+
+    const zoneItem = findZoneItem(stackingItems, zone.id);
+    if (!zoneItem) {
+      validation.warnings.push(`Door shelf requested for zone ${zone.id}, but no stacking item was found.`);
+      continue;
+    }
+
+    const zoneHeight = zoneItem.z1 - zoneItem.z0;
+    if (zoneHeight < DOOR_SHELF_MIN_ZONE_HEIGHT) {
+      validation.warnings.push(
+        `Door shelf skipped in ${zone.id}: zone height ${zoneHeight} < ${DOOR_SHELF_MIN_ZONE_HEIGHT}.`,
+      );
+      continue;
+    }
+
+    const shelfTopHeight = n(zone.shelfHeight, Math.round(zoneHeight / 2));
+    const shelfTopZ = zoneItem.z0 + shelfTopHeight;
+    const shelfZ0 = shelfTopZ - shelfThickness;
+    if (shelfZ0 <= zoneItem.z0 || shelfTopZ >= zoneItem.z1) {
+      validation.warnings.push(
+        `Door shelf skipped in ${zone.id}: shelf top Z ${shelfTopZ} (thickness ${shelfThickness}) is outside zone range ${zoneItem.z0}-${zoneItem.z1}.`,
+      );
+      continue;
+    }
+
+    // Same shortening rule as full Zi boards: keep the shelf clear of the
+    // rear avoidance pocket when it sits below the avoidance height.
+    const shouldShorten =
+      avoidance.enabled &&
+      typeof avoidance.shortDepth === "number" &&
+      typeof avoidance.effectiveAvoidH === "number" &&
+      shelfZ0 < avoidance.effectiveAvoidH;
+    const shelfY1 = shouldShorten ? (avoidance.shortDepth as number) : debug.midDepth;
+    const rearConnected = !shouldShorten;
+    const shelfNotes = [
+      "Horizontal door shelf: same joinery as a boundary full Zi (side tongues into V-board slots)",
+      "Shelf top height is user input; z0 = shelfTopZ - panelThickness",
+      ...(shouldShorten ? ["Depth shortened by avoidance adjustment; rear V3/V4 connection omitted"] : []),
+    ];
+
+    // A double-door vertical divider splits the shelf into two segments;
+    // each segment only keeps the Zi tongue on the edge that meets a V board.
+    const hasDivider = zone.type === "double_door" && zone.verticalDivider === true;
+    const segments: Array<{ suffix: string; x0: number; x1: number; notchLeft: boolean; notchRight: boolean }> = [];
+    if (hasDivider) {
+      const dividerThickness = n(params.dividerThickness, DEFAULT_DIVIDER_THICKNESS);
+      const dividerCenterX = n(zone.dividerCenterX, debug.midWidth / 2);
+      const dividerX0 = dividerCenterX - dividerThickness / 2;
+      const dividerX1 = dividerCenterX + dividerThickness / 2;
+      segments.push({ suffix: "_L", x0: 0, x1: dividerX0, notchLeft: true, notchRight: false });
+      segments.push({ suffix: "_R", x0: dividerX1, x1: debug.midWidth, notchLeft: false, notchRight: true });
+    } else {
+      segments.push({ suffix: "", x0: 0, x1: debug.midWidth, notchLeft: true, notchRight: true });
+    }
+
+    for (const segment of segments) {
+      if (segment.x1 - segment.x0 <= 0) {
+        validation.warnings.push(
+          `Door shelf segment DS_${zone.id}${segment.suffix} skipped: width ${segment.x1 - segment.x0} <= 0.`,
+        );
+        continue;
+      }
+      const shelfBoard = board(
+        `DS_${zone.id}${segment.suffix}`,
+        `Door Shelf ${zone.id}${segment.suffix}`,
+        "door_shelf",
+        "door_shelf",
+        shelfThickness,
+        "XY",
+        "Z",
+        {
+          x0: segment.x0,
+          x1: segment.x1,
+          y0: 0,
+          y1: shelfY1,
+          z0: shelfZ0,
+          z1: shelfTopZ,
+        },
+        zone.id,
+        hasDivider
+          ? [...shelfNotes, "Divider-side edge is plain; divider groove machining deferred"]
+          : shelfNotes,
+      );
+      shelfBoard.profileVector = doorShelfProfileVector(
+        segment.x1 - segment.x0,
+        shelfY1,
+        debug.panelThickness,
+        segment.notchLeft,
+        segment.notchRight,
+        rearConnected,
+      );
+      boards.push(shelfBoard);
+    }
+  }
+}
+
 function findFullZiBoardForBoundary(boards: Board[], boundaryId: string): Board | undefined {
   return boards.find(
     (board) => board.category === "boundary_panel" && board.boardType === "full_zi" && board.source === boundaryId,
@@ -1769,9 +2026,12 @@ function generateZiGrooveFeatures(
       return;
     }
 
+    // Groove width fits the actual divider board (+ clearance); groove depth
+    // follows CPT: panelThickness / 2.
+    const grooveHalfWidth = (dividerBoard.materialThickness + ZI_GROOVE_WIDTH_CLEARANCE) / 2;
     const dividerCenterX = (dividerBoard.x0 + dividerBoard.x1) / 2;
-    const x0 = dividerCenterX - ZI_GROOVE_HALF_WIDTH;
-    const x1 = dividerCenterX + ZI_GROOVE_HALF_WIDTH;
+    const x0 = dividerCenterX - grooveHalfWidth;
+    const x1 = dividerCenterX + grooveHalfWidth;
 
     if (x0 < 0 || x1 > debug.midWidth || grooveY0 < 0 || grooveY1 > debug.midDepth || x1 <= x0 || grooveY1 <= grooveY0) {
       validation.errors.push(
@@ -1791,7 +2051,7 @@ function generateZiGrooveFeatures(
       x1,
       y0: grooveY0,
       y1: grooveY1,
-      depth: DEFAULT_GROOVE_DEPTH,
+      depth: debug.panelThickness / 2,
       source: boundaryId,
       notes: ["Zi groove placeholder; exact groove cutting deferred", "Through groove merge deferred"],
     });
@@ -1925,8 +2185,10 @@ function generateDividerTongueFeatures(
     }
 
     const position = groove.face === "bottom" ? "top" : "bottom";
-    const z0 = position === "top" ? divider.z1 - DIVIDER_TONGUE_INSERTION_DEPTH : divider.z0;
-    const z1 = position === "top" ? divider.z1 : divider.z0 + DIVIDER_TONGUE_INSERTION_DEPTH;
+    // Tongue insertion follows CPT: groove depth (CPT/2) minus 0.5mm bottom clearance.
+    const tongueInsertionDepth = debug.panelThickness / 2 - DIVIDER_TONGUE_GROOVE_CLEARANCE;
+    const z0 = position === "top" ? divider.z1 - tongueInsertionDepth : divider.z0;
+    const z1 = position === "top" ? divider.z1 : divider.z0 + tongueInsertionDepth;
     if (tongueY1 <= tongueY0 || z1 <= z0) {
       validation.warnings.push(`Invalid divider tongue range for zi_groove ${groove.id}.`);
       continue;
@@ -1945,7 +2207,7 @@ function generateDividerTongueFeatures(
       y1: tongueY1,
       z0,
       z1,
-      insertionDepth: DIVIDER_TONGUE_INSERTION_DEPTH,
+      insertionDepth: tongueInsertionDepth,
       source: groove.id,
       notes: [
         "Divider tongue placeholder generated from zi_groove",
@@ -2829,19 +3091,61 @@ function buildGeneralTallFrontPanels(
             position = "top";
             fallbackApplied = true;
           }
-          if (position === "side" && leaf.sideLockBoard) {
+          // Shelf mounting: the door shelf segment that backs this leaf.
+          // Double-door leaves map onto split shelf segments (DS_<zone>_L / DS_<zone>_R).
+          let shelfBoard: Board | null = null;
+          if (position === "shelf_top" || position === "shelf_bottom") {
+            shelfBoard =
+              boardById(`DS_${zone.id}${leaf.idSuffix}`) ||
+              boardById(`DS_${zone.id}`) ||
+              null;
+            if (!shelfBoard) {
+              panel.warnings.push(
+                `${position} lock requested but no horizontal shelf board found for this leaf; fell back to top`,
+              );
+              position = "top";
+              fallbackApplied = true;
+            }
+          }
+          if ((position === "shelf_top" || position === "shelf_bottom") && shelfBoard) {
+            const centerX =
+              leaf.handleEdge === "right" ? panel.x1 - lockSideDistance : panel.x0 + lockSideDistance;
+            const centerZ =
+              position === "shelf_top"
+                ? shelfBoard.z1 + LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER
+                : shelfBoard.z0 - LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER;
+            panel.lockCutout = gtLockCutoutFromCenter(
+              centerX,
+              centerZ,
+              "horizontal",
+              shelfBoard.id,
+              position === "shelf_top" ? "top" : "bottom",
+              fallbackApplied,
+            );
+          } else if (position === "side" && leaf.sideLockBoard) {
             const mount = leaf.sideLockBoard;
             const centerX =
               leaf.handleEdge === "right"
                 ? mount.x0 - LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER
                 : mount.x1 + LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER;
+            let centerZ = panel.z1 - lockSideDistance;
+            const lockHeight = zone.lockHeight;
+            if (lockHeight !== undefined && Number.isFinite(Number(lockHeight))) {
+              centerZ = item.z0 + Number(lockHeight);
+              if (centerZ < panel.z0 || centerZ > panel.z1) {
+                panel.warnings.push(
+                  `side lock height ${lockHeight} puts slot center Z ${centerZ} outside panel Z ${panel.z0}..${panel.z1}; clamped`,
+                );
+                centerZ = Math.max(panel.z0 + LOCK_SLOT_LENGTH / 2, Math.min(panel.z1 - LOCK_SLOT_LENGTH / 2, centerZ));
+              }
+            }
             panel.lockCutout = gtLockCutoutFromCenter(
               centerX,
-              panel.z1 - lockSideDistance,
+              centerZ,
               "vertical",
               mount.id,
               leaf.handleEdge === "right" ? "left" : "right",
-              false,
+              fallbackApplied,
             );
           } else if (position === "bottom") {
             if (lowerFaceZ != null) {
@@ -2948,7 +3252,7 @@ export function generateGeneralTallCabinet(inputParams: GeneralTallCabinetParams
   };
   const avoidance = resolveAvoidanceAdjustment(params, debug, validation);
 
-  addVerticalBoards(boards, debug, Number(params.cabinetHeight));
+  addVerticalBoards(boards, params, debug, Number(params.cabinetHeight));
   addSidePanelBoards(boards, params, debug, validation);
   addAvoidanceSupportBoards(boards, params, debug, validation);
   addStyle1BottomSystemBoards(boards, params, debug);
@@ -2962,11 +3266,13 @@ export function generateGeneralTallCabinet(inputParams: GeneralTallCabinetParams
   addTopRearTBoards(boards, params, debug);
   detectMergeAndAdjustHConflicts(boards, params, debug, validation);
   addVerticalDividerBoards(boards, params, stacking.items, debug, validation);
+  addDoorShelfBoards(boards, params, stacking.items, debug, validation, avoidance);
   addBlankPanelH12Boards(boards, params.zones, stacking.items, debug);
   addStyle2FixedFrontPanels(boards, params, debug);
   const ziGrooveFeatures = generateZiGrooveFeatures(boards, params, debug, validation);
   const features = [
     ...generateZiSlotFeatures(stacking.items, boards, debug, validation),
+    ...generateDoorShelfZiSlotFeatures(boards, debug),
     ...ziGrooveFeatures,
     ...generateDividerTongueFeatures(boards, ziGrooveFeatures, debug, validation),
     ...generateH34ClearanceSlotFeatures(boards, debug, validation),
@@ -2975,7 +3281,8 @@ export function generateGeneralTallCabinet(inputParams: GeneralTallCabinetParams
   addVerticalDividerH34ClearanceProfiles(boards, features, debug, validation);
   addVBoardSideProfileSkeletons(boards, features, params, debug, validation, avoidance);
   applyCoreBoardXOffset(boards, debug, params);
-  updateSidePanelOverlapAudit(boards, debug);
+  updateSidePanelOverlapAudit(boards, debug, validation);
+  updateAssemblyOverlapAudit(boards, debug, validation);
   const frontPanels = buildGeneralTallFrontPanels(inputParams, stacking.items, boards, debug, validation);
   const relationshipDeclarations = relationshipDeclarationsForBoards(boards);
 
