@@ -2273,6 +2273,31 @@
                   <button type="button" class="ghost" id="connectShowContactPatchBtn" disabled>显示接触面</button>
                   <button type="button" class="ghost" id="connectClearContactPatchBtn">清除接触面</button>
                 </div>
+                <div class="connect-detail-grid" style="margin-top:10px;" id="connectGapJointsBlock">
+                  <div class="connect-detail-item" style="grid-column:1/-1;">
+                    <label style="display:flex;align-items:center;gap:8px;margin:0;">
+                      <input id="connectGapJointsEnabled" type="checkbox" style="width:auto;">
+                      <strong>启用缝隙接头</strong>
+                    </label>
+                    <div class="hardware-section-note" style="margin-top:4px;">
+                      默认关闭。开启后，平行缝隙（如门缝）可进入面验证与批量五金；不特殊化「门」。
+                    </div>
+                  </div>
+                  <div class="connect-detail-item">
+                    <strong>最小缝 (mm)</strong>
+                    <input id="connectGapMinMm" type="number" value="1.0" min="0" step="0.1" disabled style="width:100%;margin-top:4px;">
+                  </div>
+                  <div class="connect-detail-item">
+                    <strong>最大缝 (mm)</strong>
+                    <input id="connectGapMaxMm" type="number" value="20" min="0" step="0.1" disabled style="width:100%;margin-top:4px;">
+                  </div>
+                  <div class="connect-detail-item" style="grid-column:1/-1;">
+                    <label style="display:flex;align-items:center;gap:8px;margin:0;">
+                      <input id="connectGapIncludeBatch" type="checkbox" checked disabled style="width:auto;">
+                      进入「验证全部 / 批量创建五金」
+                    </label>
+                  </div>
+                </div>
                 <details class="connect-more" id="connectBatchSkipDetails" hidden>
                   <summary>批量验证跳过列表</summary>
                   <pre id="connectBatchSkipList" class="connect-batch-skip-list" style="white-space:pre-wrap;margin:8px 0 0;font-size:12px;"></pre>
@@ -11399,7 +11424,9 @@
       const panels = connectUiPanelsMapFromList(connectContactState.lastPanels);
       const hostId = relationship?.roles?.hostPanelId;
       const targetId = relationship?.roles?.targetPanelId;
-      const payload = { relationship, rule: connectUiActiveHardwareRule() };
+      const gapJoints = connectUiReadGapJoints();
+      const rule = Object.assign({}, connectUiActiveHardwareRule(), { gapJoints });
+      const payload = { relationship, rule, gapJoints };
       if (hostId && targetId && panels[hostId] && panels[targetId]) {
         payload.panels = { [hostId]: panels[hostId], [targetId]: panels[targetId] };
       }
@@ -11637,7 +11664,11 @@
         connectUiSetMessage("请先检查选中板件对。", "error");
         return;
       }
-      fusionSend("relationships.connectExecute", { action: "confirm", relationship });
+      fusionSend("relationships.connectExecute", {
+        action: "confirm",
+        relationship,
+        gapJoints: connectUiReadGapJoints(),
+      });
     }
 
     function connectUiFaceVerify() {
@@ -11648,13 +11679,90 @@
       }
       connectUiSetMessage("正在验证选中板对的面接触…");
       connectUiSetOperation("面验证计算中…", "warn");
-      fusionSend("relationships.verifySelectedPairFaces", { toleranceMm: 1.0 });
+      fusionSend("relationships.verifySelectedPairFaces", {
+        toleranceMm: 1.0,
+        gapJoints: connectUiReadGapJoints(),
+      });
+    }
+
+    const CONNECT_GAP_JOINTS_STORAGE_KEY = "cabinetnc.connect.gapJoints.v1";
+
+    function connectUiDefaultGapJoints() {
+      return { enabled: false, minGapMm: 1.0, maxGapMm: 20.0, includeInBatch: true };
+    }
+
+    function connectUiLoadGapJointsFromStorage() {
+      try {
+        const raw = localStorage.getItem(CONNECT_GAP_JOINTS_STORAGE_KEY);
+        if (!raw) return connectUiDefaultGapJoints();
+        const parsed = JSON.parse(raw);
+        return {
+          enabled: !!parsed.enabled,
+          minGapMm: Number(parsed.minGapMm) || 1.0,
+          maxGapMm: Number(parsed.maxGapMm) || 20.0,
+          includeInBatch: parsed.includeInBatch !== false,
+        };
+      } catch (_err) {
+        return connectUiDefaultGapJoints();
+      }
+    }
+
+    function connectUiReadGapJoints() {
+      const enabled = !!connectUiEl("connectGapJointsEnabled")?.checked;
+      const minGapMm = Number(connectUiEl("connectGapMinMm")?.value);
+      const maxGapMm = Number(connectUiEl("connectGapMaxMm")?.value);
+      const includeInBatch = !!connectUiEl("connectGapIncludeBatch")?.checked;
+      return {
+        enabled,
+        minGapMm: Number.isFinite(minGapMm) ? minGapMm : 1.0,
+        maxGapMm: Number.isFinite(maxGapMm) ? maxGapMm : 20.0,
+        includeInBatch: enabled ? includeInBatch : false,
+      };
+    }
+
+    function connectUiApplyGapJointsToForm(settings) {
+      const enabledEl = connectUiEl("connectGapJointsEnabled");
+      const minEl = connectUiEl("connectGapMinMm");
+      const maxEl = connectUiEl("connectGapMaxMm");
+      const batchEl = connectUiEl("connectGapIncludeBatch");
+      if (enabledEl) enabledEl.checked = !!settings.enabled;
+      if (minEl) minEl.value = String(settings.minGapMm ?? 1.0);
+      if (maxEl) maxEl.value = String(settings.maxGapMm ?? 20.0);
+      if (batchEl) batchEl.checked = settings.includeInBatch !== false;
+      connectUiSyncGapJointsControls();
+    }
+
+    function connectUiSyncGapJointsControls() {
+      const enabled = !!connectUiEl("connectGapJointsEnabled")?.checked;
+      ["connectGapMinMm", "connectGapMaxMm", "connectGapIncludeBatch"].forEach((id) => {
+        const el = connectUiEl(id);
+        if (el) el.disabled = !enabled;
+      });
+    }
+
+    function connectUiPersistGapJoints() {
+      try {
+        localStorage.setItem(CONNECT_GAP_JOINTS_STORAGE_KEY, JSON.stringify(connectUiReadGapJoints()));
+      } catch (_err) {
+        /* ignore quota */
+      }
+      connectUiSyncGapJointsControls();
     }
 
     function connectUiVerifyAllBboxCandidates() {
-      connectUiSetMessage("正在批量面验证 bbox 候选（接触类接头）…");
+      const gapJoints = connectUiReadGapJoints();
+      connectUiPersistGapJoints();
+      connectUiSetMessage(
+        gapJoints.enabled
+          ? "正在批量面验证 bbox 候选（接触类 + 已启用缝隙）…"
+          : "正在批量面验证 bbox 候选（接触类接头）…"
+      );
       connectUiSetOperation("批量面验证计算中…", "warn");
-      fusionSend("relationships.verifyAllBboxCandidates", { toleranceMm: 1.0, maxPairs: 200 });
+      fusionSend("relationships.verifyAllBboxCandidates", {
+        toleranceMm: 1.0,
+        maxPairs: 200,
+        gapJoints,
+      });
     }
 
     function connectUiRenderBatchSkipList(skipped) {
@@ -11681,7 +11789,11 @@
         connectUiSetMessage("请先检查并完成声明同步或面验证。", "error");
         return;
       }
-      fusionSend("relationships.connectExecute", { action: "cut", relationship });
+      fusionSend("relationships.connectExecute", {
+        action: "cut",
+        relationship,
+        gapJoints: connectUiReadGapJoints(),
+      });
     }
 
     function connectUiBatchCutHardware() {
@@ -11696,6 +11808,7 @@
       fusionSend("hardware.createHardwareForCutSafeRelationships", {
         rule,
         maxPairs: 50,
+        gapJoints: connectUiReadGapJoints(),
       });
     }
 
@@ -12019,6 +12132,10 @@
     }
 
     function connectUiInit() {
+      connectUiApplyGapJointsToForm(connectUiLoadGapJointsFromStorage());
+      ["connectGapJointsEnabled", "connectGapMinMm", "connectGapMaxMm", "connectGapIncludeBatch"].forEach((id) => {
+        connectUiEl(id)?.addEventListener("change", connectUiPersistGapJoints);
+      });
       connectUiEl("connectProbeSelectionBtn")?.addEventListener("click", connectUiProbeSelection);
       connectUiEl("connectScanBtn")?.addEventListener("click", connectUiScan);
       connectUiEl("connectVerifyAllBtn")?.addEventListener("click", connectUiVerifyAllBboxCandidates);

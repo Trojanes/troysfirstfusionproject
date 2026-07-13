@@ -14,7 +14,7 @@ from screw_hole_from_relationship import (
     assert_safe_for_preview,
     resolve_relationship_verification,
 )
-from connect_formal_ui import is_contact_hardware_pair
+from connect_formal_ui import is_hardware_eligible, gap_settings_from_rule
 
 HARDWARE_TYPE_HINGE_HOLE = "hinge_hole"
 HARDWARE_TYPE_LOCK_CUTOUT = "lock_cutout"
@@ -73,6 +73,7 @@ def _common_preview_context(
     hardware_type: str,
     action: str,
     panel_snapshots: Optional[Dict[str, Dict[str, Any]]],
+    rule: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     if not isinstance(relationship, dict):
         return _error_report(hardware_type, action, "Relationship payload must be an object.", errors=["Missing relationship object."])
@@ -83,7 +84,7 @@ def _common_preview_context(
 
     geometry_type = str(relationship.get("geometryType") or "")
     relationship_type = str(relationship.get("relationshipType") or "")
-    if not is_contact_hardware_pair(relationship):
+    if not is_hardware_eligible(relationship, gap_settings_from_rule(rule)):
         return _error_report(
             hardware_type,
             action,
@@ -181,6 +182,7 @@ def preview_hinge_holes_from_relationship(
         hardware_type=HARDWARE_TYPE_HINGE_HOLE,
         action=action,
         panel_snapshots=panel_snapshots,
+        rule=rule,
     )
     if not ctx.get("ok"):
         return ctx
@@ -397,6 +399,7 @@ def preview_lock_cutout_from_relationship(
         hardware_type=HARDWARE_TYPE_LOCK_CUTOUT,
         action=action,
         panel_snapshots=panel_snapshots,
+        rule=rule,
     )
     if not ctx.get("ok"):
         return ctx
@@ -618,6 +621,7 @@ def preview_drawer_runner_holes_from_relationship(
         hardware_type=HARDWARE_TYPE_DRAWER_RUNNER_HOLE,
         action=action,
         panel_snapshots=panel_snapshots,
+        rule=rule,
     )
     if not ctx.get("ok"):
         return ctx

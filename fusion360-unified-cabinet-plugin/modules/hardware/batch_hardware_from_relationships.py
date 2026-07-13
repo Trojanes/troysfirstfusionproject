@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from connect_formal_ui import is_contact_hardware_pair, is_cut_allowed
+from connect_formal_ui import is_hardware_eligible, is_cut_allowed, gap_settings_from_rule
 
 BATCH_CUT_ACTION = "hardware.createHardwareForCutSafeRelationships"
 DEFAULT_BATCH_CUT_MAX_PAIRS = 50
@@ -12,15 +12,16 @@ DEFAULT_BATCH_CUT_MAX_PAIRS = 50
 
 def filter_cut_safe_hardware_candidates(
     relationships: List[Dict[str, Any]],
+    gap_settings: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """Cut-safe contact joints (edge_to_surface or surface_to_surface)."""
+    """Cut-safe contact joints (+ optional gap joints when enabled)."""
     accepted: List[Dict[str, Any]] = []
     for relationship in relationships or []:
         if not isinstance(relationship, dict):
             continue
         if not is_cut_allowed(relationship):
             continue
-        if not is_contact_hardware_pair(relationship):
+        if not is_hardware_eligible(relationship, gap_settings, for_batch=True):
             continue
         accepted.append(relationship)
     return accepted

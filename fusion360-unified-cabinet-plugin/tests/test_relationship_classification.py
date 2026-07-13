@@ -81,6 +81,8 @@ class RelationshipClassificationTests(unittest.TestCase):
         rel = classify_pair(door, carcass)
         self.assertEqual(rel.geometryType, "gap_parallel")
         self.assertEqual(rel.relationshipType, "door_to_carcass_candidate")
+        self.assertEqual(rel.roles.hostPanelId, "REL_GAP_A")
+        self.assertEqual(rel.roles.targetPanelId, "REL_GAP_B")
 
     def test_near_contact_within_one_mm_is_contact(self):
         """Shop rule: separation <= 1mm counts as contact, not gap_parallel."""

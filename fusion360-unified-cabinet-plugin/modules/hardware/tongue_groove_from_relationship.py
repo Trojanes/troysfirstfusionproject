@@ -13,7 +13,7 @@ from screw_hole_from_relationship import (
     assert_safe_for_preview,
     resolve_relationship_verification,
 )
-from connect_formal_ui import is_contact_hardware_pair
+from connect_formal_ui import is_hardware_eligible, gap_settings_from_rule
 
 RULE_ID = "tongue_groove_from_edge_to_surface_v1"
 OPERATION_TYPE = "TONGUE_GROOVE_FROM_RELATIONSHIP"
@@ -148,7 +148,7 @@ def preview_tongue_groove_from_relationship(
 
     geometry_type = str(relationship.get("geometryType") or "")
     relationship_type = str(relationship.get("relationshipType") or "")
-    if not is_contact_hardware_pair(relationship):
+    if not is_hardware_eligible(relationship, gap_settings_from_rule(rule)):
         return _error_report(
             "Relationship type not supported for tongue_groove preview.",
             errors=[

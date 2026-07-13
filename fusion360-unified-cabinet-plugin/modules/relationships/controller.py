@@ -378,6 +378,7 @@ class RelationshipsController:
                 faces_a,
                 faces_b,
                 tolerance_mm=tolerance_mm,
+                gap_settings=(payload or {}).get("gapJoints"),
             )
             verify_report["inspect"] = inspect_report
             verify_report["selectedPanelIds"] = [panels[0].panelId, panels[1].panelId]
@@ -511,6 +512,7 @@ class RelationshipsController:
                 tolerance_mm=tolerance_mm,
                 max_pairs=max_pairs,
                 extract_faces=extract_faces,
+                gap_settings=(payload or {}).get("gapJoints"),
             )
             persisted = []
             try:
@@ -667,7 +669,8 @@ class RelationshipsController:
             connect_formal_ui = importlib.reload(connect_formal_ui)
             action = str((payload or {}).get("action") or "").strip()
             relationship = (payload or {}).get("relationship") if isinstance(payload, dict) else None
-            gate = connect_formal_ui.evaluate_connect_action(action, relationship)
+            gap_settings = (payload or {}).get("gapJoints") if isinstance(payload, dict) else None
+            gate = connect_formal_ui.evaluate_connect_action(action, relationship, gap_settings)
             result = dict(gate)
             result["action"] = "relationships.connectExecute"
             result["requestedAction"] = action

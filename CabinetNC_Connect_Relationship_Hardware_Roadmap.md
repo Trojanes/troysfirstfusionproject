@@ -134,11 +134,17 @@ Batch face verify 3a (SEALED 2026-07-11):
   📄 docs/connect-batch-face-verify-checklist.md
 
 Batch hardware cut 3c (2026-07-12):
-  ✅ filter cut-safe edge_to_surface structural joints; maxPairs=50
+  ✅ filter cut-safe contact joints; maxPairs=50
   ✅ hardware.createHardwareForCutSafeRelationships (skip+remind)
   ✅ Connect「批量创建五金」uses current type/params
   ✅ face_verified persistence hydrate feeds the cut pool
   ✅ offline: run_batch_hardware_cut_offline.py
+
+Configurable gap joints (2026-07-13):
+  ✅ default off; Connect UI enable + min/max + includeInBatch
+  ✅ gap_parallel host/target at scan; optional 3a/3c + face verify band
+  ✅ not door-specialized; offline: test_gap_joints.py
+  📄 docs/connect-gap-joints-checklist.md
 ```
 
 Current relationship layer is **not production-truth**. It is currently:

@@ -12,6 +12,48 @@ CONTACT_HARDWARE_PAIRS: Set[tuple] = {
     ("surface_to_surface", "face_contact"),
 }
 
+GAP_GEOMETRY_TYPE = "gap_parallel"
+
+# Session defaults: gap joints off until the user enables them.
+DEFAULT_GAP_JOINTS: Dict[str, Any] = {
+    "enabled": False,
+    "minGapMm": 1.0,
+    "maxGapMm": 20.0,
+    "includeInBatch": True,
+}
+
+
+def normalize_gap_joints_settings(raw: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Normalize Connect gap-joint options; defaults keep gap hardware off."""
+    base = dict(DEFAULT_GAP_JOINTS)
+    if not isinstance(raw, dict):
+        return {
+            "enabled": False,
+            "minGapMm": float(base["minGapMm"]),
+            "maxGapMm": float(base["maxGapMm"]),
+            "includeInBatch": False,
+        }
+    enabled = bool(raw.get("enabled", base["enabled"]))
+    try:
+        min_gap = float(raw.get("minGapMm", base["minGapMm"]))
+    except Exception:
+        min_gap = float(base["minGapMm"])
+    try:
+        max_gap = float(raw.get("maxGapMm", base["maxGapMm"]))
+    except Exception:
+        max_gap = float(base["maxGapMm"])
+    if min_gap < 0:
+        min_gap = 0.0
+    if max_gap < min_gap:
+        max_gap = min_gap
+    include = raw.get("includeInBatch", base["includeInBatch"])
+    return {
+        "enabled": enabled,
+        "minGapMm": min_gap,
+        "maxGapMm": max_gap,
+        "includeInBatch": bool(include) if enabled else False,
+    }
+
 
 def is_contact_hardware_pair(relationship: Optional[Dict[str, Any]]) -> bool:
     if not isinstance(relationship, dict):
@@ -21,6 +63,57 @@ def is_contact_hardware_pair(relationship: Optional[Dict[str, Any]]) -> bool:
         str(relationship.get("relationshipType") or ""),
     )
     return pair in CONTACT_HARDWARE_PAIRS
+
+
+def _gap_distance_mm(relationship: Dict[str, Any]) -> Optional[float]:
+    contact = relationship.get("contact") or {}
+    try:
+        return float(contact.get("distanceMm"))
+    except Exception:
+        return None
+
+
+def is_gap_hardware_pair(
+    relationship: Optional[Dict[str, Any]],
+    gap_settings: Optional[Dict[str, Any]] = None,
+    *,
+    for_batch: bool = False,
+) -> bool:
+    """True when gap_parallel is enabled and distance is inside the user band."""
+    if not isinstance(relationship, dict):
+        return False
+    if str(relationship.get("geometryType") or "") != GAP_GEOMETRY_TYPE:
+        return False
+    settings = normalize_gap_joints_settings(gap_settings)
+    if not settings["enabled"]:
+        return False
+    if for_batch and not settings["includeInBatch"]:
+        return False
+    roles = relationship.get("roles") or {}
+    if not roles.get("hostPanelId") or not roles.get("targetPanelId"):
+        return False
+    distance = _gap_distance_mm(relationship)
+    if distance is None:
+        return False
+    return settings["minGapMm"] <= distance <= settings["maxGapMm"]
+
+
+def is_hardware_eligible(
+    relationship: Optional[Dict[str, Any]],
+    gap_settings: Optional[Dict[str, Any]] = None,
+    *,
+    for_batch: bool = False,
+) -> bool:
+    """Contact pairs always; gap_parallel only when gapJoints enabled (+ batch flag)."""
+    if is_contact_hardware_pair(relationship):
+        return True
+    return is_gap_hardware_pair(relationship, gap_settings, for_batch=for_batch)
+
+
+def gap_settings_from_rule(rule: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(rule, dict):
+        return normalize_gap_joints_settings(None)
+    return normalize_gap_joints_settings(rule.get("gapJoints"))
 
 
 VERIFICATION_UI: Dict[str, Dict[str, Any]] = {
@@ -71,12 +164,19 @@ def relationship_verification_level(relationship: Dict[str, Any]) -> str:
     return str(verification.get("level") or "unknown")
 
 
-def is_preview_allowed(relationship: Dict[str, Any]) -> bool:
+def is_preview_allowed(
+    relationship: Dict[str, Any],
+    gap_settings: Optional[Dict[str, Any]] = None,
+) -> bool:
     verification = relationship.get("verification") or {}
     if verification.get("safeForPreview") is True:
         return True
     geometry_type = str(relationship.get("geometryType") or "")
-    return geometry_type in ("edge_to_surface", "surface_to_surface")
+    if geometry_type in ("edge_to_surface", "surface_to_surface"):
+        return True
+    if geometry_type == GAP_GEOMETRY_TYPE:
+        return bool(normalize_gap_joints_settings(gap_settings)["enabled"])
+    return False
 
 
 def is_cut_allowed(relationship: Dict[str, Any]) -> bool:
@@ -99,25 +199,29 @@ def apply_manual_confirm(relationship: Dict[str, Any]) -> Dict[str, Any]:
     return merged
 
 
-def evaluate_connect_action(action: str, relationship: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def evaluate_connect_action(
+    action: str,
+    relationship: Optional[Dict[str, Any]],
+    gap_settings: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     action_key = str(action or "").strip().lower()
     if not relationship:
         return {"ok": False, "action": action_key, "errors": ["No relationship selected."]}
+    settings = normalize_gap_joints_settings(gap_settings)
 
     if action_key in ("preview", "preview_screw_holes"):
-        if not is_preview_allowed(relationship):
+        if not is_preview_allowed(relationship, settings):
             return {
                 "ok": False,
                 "action": action_key,
                 "errors": ["Relationship is not eligible for hardware preview."],
             }
-        if not is_contact_hardware_pair(relationship):
+        if not is_hardware_eligible(relationship, settings):
             return {
                 "ok": False,
                 "action": action_key,
                 "errors": [
-                    "Only contact hardware pairs support preview "
-                    "(edge_to_surface/structural_butt_joint or surface_to_surface/face_contact)."
+                    "Only contact hardware pairs (or enabled gap joints) support preview."
                 ],
             }
         roles = relationship.get("roles") or {}
@@ -126,13 +230,12 @@ def evaluate_connect_action(action: str, relationship: Optional[Dict[str, Any]])
         return {"ok": True, "action": action_key, "relationshipId": relationship.get("relationshipId")}
 
     if action_key in ("confirm", "confirm_for_cut"):
-        if not is_contact_hardware_pair(relationship):
+        if not is_hardware_eligible(relationship, settings):
             return {
                 "ok": False,
                 "action": action_key,
                 "errors": [
-                    "Only contact hardware pairs can be confirmed for cut "
-                    "(edge_to_surface/structural_butt_joint or surface_to_surface/face_contact)."
+                    "Only contact hardware pairs (or enabled gap joints) can be confirmed for cut."
                 ],
             }
         roles = relationship.get("roles") or {}
@@ -341,8 +444,10 @@ def build_connect_view_model(
     *,
     filters: Optional[Dict[str, Any]] = None,
     selected_relationship_id: Optional[str] = None,
+    gap_settings: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     filters = dict(filters or {})
+    settings = normalize_gap_joints_settings(gap_settings)
     relationships = list(scan_result.get("relationships") or [])
     scoped = filter_relationships(
         relationships,
@@ -369,9 +474,9 @@ def build_connect_view_model(
     verification_levels = sorted({relationship_verification_level(rel) for rel in relationships})
 
     actions = {
-        "preview": evaluate_connect_action("preview", selected),
-        "confirm": evaluate_connect_action("confirm", selected),
-        "cut": evaluate_connect_action("cut", selected),
+        "preview": evaluate_connect_action("preview", selected, settings),
+        "confirm": evaluate_connect_action("confirm", selected, settings),
+        "cut": evaluate_connect_action("cut", selected, settings),
     }
 
     return {

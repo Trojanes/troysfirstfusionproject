@@ -195,6 +195,47 @@ def _is_thickness_on_axis(snapshot: PanelSnapshot, axis: str, tolerance_mm: floa
     return False
 
 
+def _assign_gap_parallel_roles(
+    panel_a: PanelSnapshot,
+    panel_b: PanelSnapshot,
+    roles: RelationshipRoles,
+    warnings: List[str],
+    audit_notes: List[str],
+) -> None:
+    """host = door-like side if any; else thinner panel; tie → smaller panelId."""
+    door_a = _looks_like_door(panel_a)
+    door_b = _looks_like_door(panel_b)
+    if door_a and not door_b:
+        host, target = panel_a, panel_b
+    elif door_b and not door_a:
+        host, target = panel_b, panel_a
+    else:
+        thick_a = float(panel_a.thicknessMm) if panel_a.thicknessMm is not None else min(
+            float(panel_a.sizeX), float(panel_a.sizeY), float(panel_a.sizeZ)
+        )
+        thick_b = float(panel_b.thicknessMm) if panel_b.thicknessMm is not None else min(
+            float(panel_b.sizeX), float(panel_b.sizeY), float(panel_b.sizeZ)
+        )
+        if abs(thick_a - thick_b) < 1e-6:
+            if panel_a.panelId <= panel_b.panelId:
+                host, target = panel_a, panel_b
+            else:
+                host, target = panel_b, panel_a
+        elif thick_a <= thick_b:
+            host, target = panel_a, panel_b
+        else:
+            host, target = panel_b, panel_a
+    roles.hostPanelId = host.panelId
+    roles.targetPanelId = target.panelId
+    warnings.append("host/target inferred by gap face-thickness rule")
+    audit_notes.append(
+        "host/target inferred by gap face-thickness rule: host={} target={}.".format(
+            host.panelId,
+            target.panelId,
+        )
+    )
+
+
 def _looks_like_door(snapshot: PanelSnapshot) -> bool:
     tokens = " ".join(
         str(value or "")
@@ -386,6 +427,7 @@ def classify_pair(
                 else:
                     relationship_type = "unknown"
                     audit_notes.append("Parallel gap detected without strong semantic role hints.")
+                _assign_gap_parallel_roles(panel_a, panel_b, roles, warnings, audit_notes)
             else:
                 geometry_type = "none"
                 relationship_type = "unknown"

@@ -78,6 +78,7 @@ def evaluate_hardware_rule(
     relationship: Optional[Dict[str, Any]],
     *,
     action: str = "preview",
+    rule: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     action_key = str(action or "preview").strip().lower()
     hw_type = str(hardware_type or HARDWARE_TYPE_SCREW_HOLE).strip().lower()
@@ -85,7 +86,7 @@ def evaluate_hardware_rule(
         return {"ok": False, "hardwareType": hw_type, "action": action_key, "errors": ["No relationship selected."]}
 
     if hw_type in IMPLEMENTED_TYPES:
-        from connect_formal_ui import evaluate_connect_action
+        from connect_formal_ui import evaluate_connect_action, gap_settings_from_rule
 
         mapped = "preview" if action_key in (
             "preview",
@@ -107,7 +108,7 @@ def evaluate_hardware_rule(
             mapped = "cut"
         if action_key in ("confirm", "confirm_for_cut"):
             mapped = "confirm"
-        gate = evaluate_connect_action(mapped, relationship)
+        gate = evaluate_connect_action(mapped, relationship, gap_settings_from_rule(rule))
         gate["hardwareType"] = hw_type
         return gate
 
@@ -124,9 +125,9 @@ def evaluate_hardware_rule(
                 "cutReady": False,
             }
         if hw_type in PREVIEW_READY_TYPES:
-            from connect_formal_ui import evaluate_connect_action
+            from connect_formal_ui import evaluate_connect_action, gap_settings_from_rule
 
-            gate = evaluate_connect_action("preview", relationship)
+            gate = evaluate_connect_action("preview", relationship, gap_settings_from_rule(rule))
             gate["hardwareType"] = hw_type
             gate["previewOnly"] = True
             gate["cutReady"] = False
@@ -154,7 +155,7 @@ def dispatch_hardware_preview(
     panel_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     hw_type = normalize_hardware_type(rule)
-    gate = evaluate_hardware_rule(hw_type, relationship, action="preview")
+    gate = evaluate_hardware_rule(hw_type, relationship, action="preview", rule=rule)
     if not gate.get("ok"):
         return {
             "ok": False,
@@ -203,7 +204,7 @@ def dispatch_hardware_cut_plan(
     panel_snapshots: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     hw_type = normalize_hardware_type(rule)
-    gate = evaluate_hardware_rule(hw_type, relationship, action="cut")
+    gate = evaluate_hardware_rule(hw_type, relationship, action="cut", rule=rule)
     if not gate.get("ok"):
         return {
             "ok": False,

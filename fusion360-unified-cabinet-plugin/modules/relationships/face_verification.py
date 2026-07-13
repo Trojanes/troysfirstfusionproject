@@ -13,7 +13,7 @@ from relationship_geometry import CONTACT_TOLERANCE_MM
 FACE_CLASS_SURFACE = "SURFACE"
 FACE_CLASS_EDGE = "EDGE"
 
-SUPPORTED_GEOMETRY_TYPES = ("edge_to_surface", "surface_to_surface")
+SUPPORTED_GEOMETRY_TYPES = ("edge_to_surface", "surface_to_surface", "gap_parallel")
 MIN_PROJECTED_OVERLAP_MM = 1.0
 MIN_CONTACT_AREA_MM2 = 1.0
 NORMAL_AXIS_DOT = 0.99
@@ -152,7 +152,7 @@ def _plane_distance_mm(face_a: Dict[str, Any], face_b: Dict[str, Any]) -> float:
 def _face_classes_allowed(geometry_type: str) -> Optional[Tuple[str, str]]:
     if geometry_type == "edge_to_surface":
         return (FACE_CLASS_EDGE, FACE_CLASS_SURFACE)
-    if geometry_type == "surface_to_surface":
+    if geometry_type in ("surface_to_surface", "gap_parallel"):
         return (FACE_CLASS_SURFACE, FACE_CLASS_SURFACE)
     return None
 
@@ -183,14 +183,22 @@ def verify_pair_faces(
     tolerance_mm: float = CONTACT_TOLERANCE_MM,
     min_projected_overlap_mm: float = MIN_PROJECTED_OVERLAP_MM,
     min_contact_area_mm2: float = MIN_CONTACT_AREA_MM2,
+    gap_settings: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    from connect_formal_ui import normalize_gap_joints_settings
+
     geometry_type = str(relationship.get("geometryType") or "none")
     relationship_id = str(relationship.get("relationshipId") or "")
     contact = relationship.get("contact") or {}
     contact_axis = str(contact.get("axis") or "NONE")
+    gap = normalize_gap_joints_settings(gap_settings)
 
     errors: List[str] = []
     warnings: List[str] = []
+
+    if geometry_type == "gap_parallel" and not gap["enabled"]:
+        errors.append("Gap joint face verification is disabled (enable Connect gap joints).")
+        return _build_verify_report(False, relationship_id, geometry_type, contact_axis, errors=errors)
 
     if geometry_type not in SUPPORTED_GEOMETRY_TYPES:
         errors.append(
@@ -211,11 +219,18 @@ def verify_pair_faces(
         errors.append("Could not find contact-axis faces on one or both panels.")
         return _build_verify_report(False, relationship_id, geometry_type, contact_axis, errors=errors)
 
+    is_gap = geometry_type == "gap_parallel"
+    min_distance = float(gap["minGapMm"]) if is_gap else 0.0
+    max_distance = float(gap["maxGapMm"]) if is_gap else float(tolerance_mm)
+
     best: Optional[Dict[str, Any]] = None
     for face_a in candidates_a:
         for face_b in candidates_b:
             distance_mm = _plane_distance_mm(face_a, face_b)
-            if distance_mm > tolerance_mm:
+            if is_gap:
+                if distance_mm < min_distance or distance_mm > max_distance:
+                    continue
+            elif distance_mm > max_distance:
                 continue
             overlap_a, overlap_b, overlap_area = _projected_overlap_mm(face_a, face_b, contact_axis)
             if overlap_a < min_projected_overlap_mm or overlap_b < min_projected_overlap_mm:
@@ -226,7 +241,7 @@ def verify_pair_faces(
             class_b = str(face_b.get("faceClass") or "")
             if not _classes_match(geometry_type, class_a, class_b):
                 continue
-            score = overlap_area - distance_mm
+            score = overlap_area - abs(distance_mm)
             if best is None or score > best["score"]:
                 best = {
                     "score": score,
@@ -310,6 +325,7 @@ def verify_fixture_pair_offline(
     relationship: Dict[str, Any],
     *,
     tolerance_mm: float = CONTACT_TOLERANCE_MM,
+    gap_settings: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     faces_a = extract_axis_aligned_faces_from_panel(panel_a)
     faces_b = extract_axis_aligned_faces_from_panel(panel_b)
@@ -320,6 +336,7 @@ def verify_fixture_pair_offline(
         faces_a,
         faces_b,
         tolerance_mm=tolerance_mm,
+        gap_settings=gap_settings,
     )
 
 
@@ -340,9 +357,10 @@ def _relationship_panel_ids(relationship: Dict[str, Any]) -> Tuple[str, str]:
 
 def filter_face_verifiable_candidates(
     relationships: List[Dict[str, Any]],
+    gap_settings: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """Phase-1 batch filter: bbox_candidate + contact hardware pairs."""
-    from connect_formal_ui import is_contact_hardware_pair
+    """Phase-1 batch filter: bbox_candidate + contact pairs (+ optional gap joints)."""
+    from connect_formal_ui import is_hardware_eligible
 
     accepted: List[Dict[str, Any]] = []
     for relationship in relationships or []:
@@ -352,7 +370,7 @@ def filter_face_verifiable_candidates(
         level = str(verification.get("level") or "bbox_candidate")
         if level != "bbox_candidate":
             continue
-        if not is_contact_hardware_pair(relationship):
+        if not is_hardware_eligible(relationship, gap_settings, for_batch=True):
             continue
         accepted.append(relationship)
     return accepted
@@ -384,7 +402,7 @@ def _reminder_lines(verified_count: int, skipped: List[Dict[str, Any]], *, cappe
     if capped:
         lines.append("已达本批上限，请缩小装配范围后重试。")
     if not verified_count and not skipped:
-        lines.append("没有可自动面验证的 bbox 候选（需接触类接头：边对面或面对面）。")
+        lines.append("没有可自动面验证的 bbox 候选（需接触类接头，或已启用缝隙接头）。")
     return lines
 
 
@@ -395,6 +413,7 @@ def verify_all_bbox_candidates(
     tolerance_mm: float = CONTACT_TOLERANCE_MM,
     max_pairs: int = DEFAULT_BATCH_MAX_PAIRS,
     extract_faces=None,
+    gap_settings: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Offline/batch core: verify filtered bbox candidates; skip failures; never relax cut gate.
 
@@ -403,7 +422,7 @@ def verify_all_bbox_candidates(
     """
     extract = extract_faces or extract_axis_aligned_faces_from_panel
     panels = panel_snapshots if isinstance(panel_snapshots, dict) else {}
-    candidates = filter_face_verifiable_candidates(list(relationships or []))
+    candidates = filter_face_verifiable_candidates(list(relationships or []), gap_settings)
     limit = max(0, int(max_pairs if max_pairs is not None else DEFAULT_BATCH_MAX_PAIRS))
     capped = len(candidates) > limit
     to_process = candidates[:limit] if limit else []
@@ -458,6 +477,7 @@ def verify_all_bbox_candidates(
             faces_a,
             faces_b,
             tolerance_mm=tolerance_mm,
+            gap_settings=gap_settings,
         )
         if not report.get("ok"):
             errors = list(report.get("errors") or [])

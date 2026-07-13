@@ -153,6 +153,9 @@ def main() -> int:
         'id="connectBatchCutBtn"',
         "connectUiBatchCutHardware",
         "hardware.createHardwareForCutSafeRelationships",
+        'id="connectGapJointsEnabled"',
+        "connectUiReadGapJoints",
+        "cabinetnc.connect.gapJoints.v1",
     ):
         if token not in palette:
             return _fail("palette missing", token)

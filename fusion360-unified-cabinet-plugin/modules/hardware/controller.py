@@ -417,6 +417,10 @@ class HardwareController:
                     "errors": ["Missing create payload."],
                 }
             rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            if isinstance(payload.get("gapJoints"), dict):
+                rule = dict(rule)
+                rule["gapJoints"] = payload.get("gapJoints")
+            payload = dict(payload, rule=rule)
             hw_type = normalize_hardware_type(rule)
             if hw_type == HARDWARE_TYPE_SCREW_HOLE:
                 event, report = self.create_screw_holes_from_relationship(payload, palette)
@@ -479,6 +483,9 @@ class HardwareController:
 
             rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {"type": "screw_hole"}
             hw_type = normalize_hardware_type(rule)
+            if "gapJoints" in payload and isinstance(payload.get("gapJoints"), dict):
+                rule = dict(rule)
+                rule["gapJoints"] = payload.get("gapJoints")
             try:
                 max_pairs = int(payload.get("maxPairs", DEFAULT_BATCH_CUT_MAX_PAIRS))
             except Exception:
@@ -527,7 +534,10 @@ class HardwareController:
                     rel_dicts = hydrate_relationships_from_panel_metadata(rel_dicts, meta_by_id)
                 relationships = rel_dicts
 
-            candidates = filter_cut_safe_hardware_candidates(list(relationships or []))
+            candidates = filter_cut_safe_hardware_candidates(
+                list(relationships or []),
+                gap_settings=rule.get("gapJoints") or payload.get("gapJoints"),
+            )
             capped = len(candidates) > max_pairs
             to_process = candidates[:max_pairs] if max_pairs else []
             overflow = candidates[max_pairs:] if capped else []
