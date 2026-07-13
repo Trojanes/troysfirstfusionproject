@@ -145,6 +145,12 @@ Configurable gap joints (2026-07-13):
   ✅ gap_parallel host/target at scan; optional 3a/3c + face verify band
   ✅ not door-specialized; offline: test_gap_joints.py
   📄 docs/connect-gap-joints-checklist.md
+
+Auto hardware type (2026-07-13):
+  ✅ default off; allowedHardware → gap/hinge → contact/screw
+  ✅ batch per-relationship type + hardwareTypeCounts
+  ✅ offline: test_suggest_hardware.py
+  📄 docs/connect-auto-hardware-checklist.md
 ```
 
 Current relationship layer is **not production-truth**. It is currently:

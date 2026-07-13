@@ -156,6 +156,9 @@ def main() -> int:
         'id="connectGapJointsEnabled"',
         "connectUiReadGapJoints",
         "cabinetnc.connect.gapJoints.v1",
+        'id="connectAutoHardwareEnabled"',
+        "connectUiReadAutoHardware",
+        "cabinetnc.connect.autoHardware.v1",
     ):
         if token not in palette:
             return _fail("palette missing", token)

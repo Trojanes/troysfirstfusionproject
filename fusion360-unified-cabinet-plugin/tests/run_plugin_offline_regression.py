@@ -109,6 +109,7 @@ def main() -> int:
             "tests.test_face_verification",
             "tests.test_face_verification_batch",
             "tests.test_gap_joints",
+            "tests.test_suggest_hardware",
             "tests.test_relationship_verification_store",
             "tests.test_panel_metadata_writeback",
             "tests.test_relationship_visual_overlay",

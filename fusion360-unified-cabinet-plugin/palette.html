@@ -2320,6 +2320,18 @@
                 </div>
                 <div class="connect-detail-item"><strong>状态</strong><span id="connectHardwareCutReady">可切削</span></div>
               </div>
+              <div class="connect-detail-grid" style="margin-bottom: 10px;">
+                <div class="connect-detail-item" style="grid-column:1/-1;">
+                  <label style="display:flex;align-items:center;gap:8px;margin:0;">
+                    <input id="connectAutoHardwareEnabled" type="checkbox" style="width:auto;">
+                    <strong>自动选型</strong>
+                  </label>
+                  <div class="hardware-section-note" style="margin-top:4px;">
+                    默认关闭。开启后按关系建议类型：声明 allowedHardware → 缝隙用铰链 → 接触用螺丝；批量可混类型。
+                  </div>
+                  <div class="hardware-section-note" id="connectAutoHardwareHint" style="margin-top:4px;">建议：-</div>
+                </div>
+              </div>
               <div class="connect-detail-grid" id="connectHardwareParams" style="margin-bottom: 10px;"></div>
               <div class="hardware-section-note" id="connectVerifyHint" style="margin-bottom:8px;">
                 验证优先：生成器声明（检查后自动同步）→ 面验证 /「验证全部候选」→（调试）手动确认。≤1mm 近接触视为可切接触。面验证通过后会写入板件元数据，重新扫描可恢复可切状态。
@@ -11425,8 +11437,9 @@
       const hostId = relationship?.roles?.hostPanelId;
       const targetId = relationship?.roles?.targetPanelId;
       const gapJoints = connectUiReadGapJoints();
-      const rule = Object.assign({}, connectUiActiveHardwareRule(), { gapJoints });
-      const payload = { relationship, rule, gapJoints };
+      const autoHardware = connectUiReadAutoHardware();
+      const rule = Object.assign({}, connectUiActiveHardwareRule(), { gapJoints, autoHardware });
+      const payload = { relationship, rule, gapJoints, autoHardware };
       if (hostId && targetId && panels[hostId] && panels[targetId]) {
         payload.panels = { [hostId]: panels[hostId], [targetId]: panels[targetId] };
       }
@@ -11536,6 +11549,7 @@
       if (cutBtn && !String(cutBtn.textContent || "").startsWith("已创建")) {
         cutBtn.textContent = hwMeta.cutReady ? `创建 ${hwMeta.label}` : `${hwMeta.label}（不可切）`;
       }
+      connectUiRefreshAutoHardwareHint();
     }
 
     function connectUiScan() {
@@ -11749,6 +11763,74 @@
       connectUiSyncGapJointsControls();
     }
 
+    const CONNECT_AUTO_HW_STORAGE_KEY = "cabinetnc.connect.autoHardware.v1";
+    const CONNECT_AUTO_HW_LABELS = {
+      screw_hole: "螺丝孔",
+      tongue_groove: "榫槽",
+      hinge_hole: "铰链杯孔",
+      lock_cutout: "锁孔口袋",
+      drawer_runner_hole: "抽屉滑轨孔",
+    };
+
+    function connectUiDefaultAutoHardware() {
+      return { enabled: false };
+    }
+
+    function connectUiLoadAutoHardwareFromStorage() {
+      try {
+        const raw = localStorage.getItem(CONNECT_AUTO_HW_STORAGE_KEY);
+        if (!raw) return connectUiDefaultAutoHardware();
+        const parsed = JSON.parse(raw);
+        return { enabled: !!parsed.enabled };
+      } catch (_err) {
+        return connectUiDefaultAutoHardware();
+      }
+    }
+
+    function connectUiReadAutoHardware() {
+      return { enabled: !!connectUiEl("connectAutoHardwareEnabled")?.checked };
+    }
+
+    function connectUiPersistAutoHardware() {
+      try {
+        localStorage.setItem(CONNECT_AUTO_HW_STORAGE_KEY, JSON.stringify(connectUiReadAutoHardware()));
+      } catch (_err) {
+        /* ignore */
+      }
+      connectUiRefreshAutoHardwareHint();
+    }
+
+    function connectUiSuggestHardwareType(relationship) {
+      if (!relationship) return { type: "screw_hole", reason: "none" };
+      const allowed = Array.isArray(relationship.allowedHardware) ? relationship.allowedHardware : [];
+      for (const item of allowed) {
+        const key = String(item || "").toLowerCase();
+        if (CONNECT_HW_RULES[key]) return { type: key, reason: "declaration" };
+      }
+      const geometry = String(relationship.geometryType || "");
+      if (geometry === "gap_parallel") return { type: "hinge_hole", reason: "gap" };
+      if (geometry === "edge_to_surface" || geometry === "surface_to_surface") {
+        return { type: "screw_hole", reason: "contact" };
+      }
+      return { type: "screw_hole", reason: "default" };
+    }
+
+    function connectUiRefreshAutoHardwareHint() {
+      const hint = connectUiEl("connectAutoHardwareHint");
+      if (!hint) return;
+      const auto = connectUiReadAutoHardware();
+      const rel = connectUiActiveRelationship();
+      if (!auto.enabled) {
+        hint.textContent = "建议：关闭（使用上方类型）";
+        return;
+      }
+      const suggestion = connectUiSuggestHardwareType(rel);
+      const label = CONNECT_AUTO_HW_LABELS[suggestion.type] || suggestion.type;
+      hint.textContent = rel
+        ? `建议：${label}（${suggestion.reason}）`
+        : `建议：开启后按关系自动选类型`;
+    }
+
     function connectUiVerifyAllBboxCandidates() {
       const gapJoints = connectUiReadGapJoints();
       connectUiPersistGapJoints();
@@ -11798,17 +11880,21 @@
 
     function connectUiBatchCutHardware() {
       const rule = connectUiActiveHardwareRule();
+      const autoHardware = connectUiReadAutoHardware();
       const meta = connectUiHardwareMeta(rule?.type || connectUiSelectedHardwareType());
-      if (!meta.cutReady) {
+      if (!autoHardware.enabled && !meta.cutReady) {
         connectUiSetMessage(`${meta.label} 仅预览，不可批量切削。`, "error");
         return;
       }
-      connectUiSetMessage(`正在对所有已验证接头批量创建 ${meta.label}…`);
+      connectUiPersistAutoHardware();
+      const label = autoHardware.enabled ? "自动选型" : meta.label;
+      connectUiSetMessage(`正在对所有已验证接头批量创建 ${label}…`);
       connectUiSetOperation("批量创建五金计算中…", "warn");
       fusionSend("hardware.createHardwareForCutSafeRelationships", {
         rule,
         maxPairs: 50,
         gapJoints: connectUiReadGapJoints(),
+        autoHardware,
       });
     }
 
@@ -11821,8 +11907,11 @@
         return;
       }
       const reminders = (parsed?.reminders || []).filter(Boolean);
-      const summary = `批量创建：成功 ${parsed.createdCount || 0} · 跳过 ${parsed.skippedCount || 0}`
-        + (parsed.hardwareType ? ` · ${parsed.hardwareType}` : "");
+      const typeCounts = parsed?.hardwareTypeCounts || {};
+      const typeSummary = Object.keys(typeCounts).length
+        ? ` · ${Object.entries(typeCounts).map(([k, v]) => `${k}:${v}`).join(", ")}`
+        : (parsed.hardwareType ? ` · ${parsed.hardwareType}` : "");
+      const summary = `批量创建：成功 ${parsed.createdCount || 0} · 跳过 ${parsed.skippedCount || 0}${typeSummary}`;
       const tone = (parsed.skippedCount || 0) > 0 ? "warn" : "ok";
       connectUiSetOperation(summary, tone);
       connectUiSetMessage(reminders.length ? reminders.join(" ") : summary, tone);
@@ -12136,6 +12225,12 @@
       ["connectGapJointsEnabled", "connectGapMinMm", "connectGapMaxMm", "connectGapIncludeBatch"].forEach((id) => {
         connectUiEl(id)?.addEventListener("change", connectUiPersistGapJoints);
       });
+      const autoEl = connectUiEl("connectAutoHardwareEnabled");
+      if (autoEl) {
+        autoEl.checked = !!connectUiLoadAutoHardwareFromStorage().enabled;
+        autoEl.addEventListener("change", connectUiPersistAutoHardware);
+      }
+      connectUiRefreshAutoHardwareHint();
       connectUiEl("connectProbeSelectionBtn")?.addEventListener("click", connectUiProbeSelection);
       connectUiEl("connectScanBtn")?.addEventListener("click", connectUiScan);
       connectUiEl("connectVerifyAllBtn")?.addEventListener("click", connectUiVerifyAllBboxCandidates);

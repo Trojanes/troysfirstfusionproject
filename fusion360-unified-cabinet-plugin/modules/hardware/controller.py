@@ -366,6 +366,21 @@ class HardwareController:
                     "features": [],
                 }
             rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {}
+            if isinstance(payload.get("gapJoints"), dict):
+                rule = dict(rule)
+                rule["gapJoints"] = payload.get("gapJoints")
+            if isinstance(payload.get("autoHardware"), dict):
+                rule = dict(rule)
+                rule["autoHardware"] = payload.get("autoHardware")
+            from suggest_hardware_from_relationship import resolve_hardware_rule_for_relationship
+
+            relationship = payload.get("relationship") if isinstance(payload.get("relationship"), dict) else {}
+            rule = resolve_hardware_rule_for_relationship(
+                relationship,
+                rule,
+                rule.get("autoHardware"),
+            )
+            payload = dict(payload, rule=rule)
             hw_type = normalize_hardware_type(rule)
             if hw_type == HARDWARE_TYPE_SCREW_HOLE:
                 event, report = self.preview_screw_holes_from_relationship(payload, palette)
@@ -420,6 +435,17 @@ class HardwareController:
             if isinstance(payload.get("gapJoints"), dict):
                 rule = dict(rule)
                 rule["gapJoints"] = payload.get("gapJoints")
+            if isinstance(payload.get("autoHardware"), dict):
+                rule = dict(rule)
+                rule["autoHardware"] = payload.get("autoHardware")
+            from suggest_hardware_from_relationship import resolve_hardware_rule_for_relationship
+
+            relationship = payload.get("relationship") if isinstance(payload.get("relationship"), dict) else {}
+            rule = resolve_hardware_rule_for_relationship(
+                relationship,
+                rule,
+                rule.get("autoHardware"),
+            )
             payload = dict(payload, rule=rule)
             hw_type = normalize_hardware_type(rule)
             if hw_type == HARDWARE_TYPE_SCREW_HOLE:
@@ -482,10 +508,20 @@ class HardwareController:
                 }
 
             rule = payload.get("rule") if isinstance(payload.get("rule"), dict) else {"type": "screw_hole"}
-            hw_type = normalize_hardware_type(rule)
             if "gapJoints" in payload and isinstance(payload.get("gapJoints"), dict):
                 rule = dict(rule)
                 rule["gapJoints"] = payload.get("gapJoints")
+            auto_settings = payload.get("autoHardware")
+            if isinstance(auto_settings, dict):
+                rule = dict(rule)
+                rule["autoHardware"] = auto_settings
+            from suggest_hardware_from_relationship import (
+                normalize_auto_hardware_settings,
+                resolve_hardware_rule_for_relationship,
+            )
+
+            auto = normalize_auto_hardware_settings(rule.get("autoHardware") or auto_settings)
+            hw_type = normalize_hardware_type(rule)
             try:
                 max_pairs = int(payload.get("maxPairs", DEFAULT_BATCH_CUT_MAX_PAIRS))
             except Exception:
@@ -544,11 +580,17 @@ class HardwareController:
 
             created = []
             skipped = [summarize_cut_skip(rel, "cap_reached", ["Batch maxPairs={} exceeded.".format(max_pairs)]) for rel in overflow]
+            type_counts: Dict[str, int] = {}
 
             for rel in to_process:
+                per_rule = resolve_hardware_rule_for_relationship(rel, rule, auto)
                 try:
                     _event, cut_report = self.create_hardware_from_relationship(
-                        {"relationship": rel, "rule": dict(rule)},
+                        {
+                            "relationship": rel,
+                            "rule": per_rule,
+                            "gapJoints": per_rule.get("gapJoints") or payload.get("gapJoints"),
+                        },
                         palette,
                     )
                 except Exception as ex:
@@ -558,14 +600,17 @@ class HardwareController:
                     errors = list((cut_report or {}).get("errors") or ["Cut failed."])
                     skipped.append(summarize_cut_skip(rel, "cut_failed", errors))
                     continue
+                used_type = str(cut_report.get("hardwareType") or per_rule.get("type") or hw_type)
+                type_counts[used_type] = int(type_counts.get(used_type) or 0) + 1
                 created.append(
                     {
                         "relationshipId": str(rel.get("relationshipId") or ""),
-                        "hardwareType": cut_report.get("hardwareType") or hw_type,
+                        "hardwareType": used_type,
                         "cutFeatureName": cut_report.get("cutFeatureName")
                         or cut_report.get("tongueFeatureName")
                         or "",
                         "panelWriteback": cut_report.get("panelWriteback"),
+                        "autoSuggestion": (per_rule.get("autoSuggestion") if auto.get("enabled") else None),
                     }
                 )
 
@@ -574,6 +619,8 @@ class HardwareController:
                 "action": BATCH_CUT_ACTION,
                 "cutGateUnchanged": True,
                 "hardwareType": hw_type,
+                "autoHardware": auto,
+                "hardwareTypeCounts": type_counts,
                 "rule": dict(rule),
                 "maxPairs": max_pairs,
                 "candidateCount": len(candidates),
