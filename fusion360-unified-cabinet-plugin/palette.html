@@ -35,7 +35,8 @@
     }
     .brand { font-weight: 700; font-size: 15px; margin-right: 18px; }
     .tabbar-close {
-      margin-left: auto;
+      /* lang-switch already has margin-left:auto; keep × flush after it */
+      margin-left: 4px;
       width: 28px;
       height: 28px;
       border: 0;
@@ -3630,14 +3631,10 @@
     </div>
   </div>
   <div class="attributes-page page" id="page-nesting" hidden>
-    <div class="page-purpose">
-      <div class="page-purpose-title" data-i18n="nest.purpose.title">排版</div>
-      <div class="page-purpose-desc" data-i18n="nest.purpose.desc">检查板件是否排版就绪，再生成排料布局。需先完成柜体生成与属性。</div>
-    </div>
     <div class="attributes-shell">
       <div class="attributes-main">
         <div class="card">
-          <h3 data-i18n="nest.ready.title">排料准备检查</h3>
+          <h3>Nesting Ready Check / 排料准备检查</h3>
           <div class="card-body">
             <div class="attr-section-note">Fast body-attribute check only (does not re-read every face). While Nesting runs, open <code>fusion360-unified-cabinet-plugin/nesting/nesting_runtime_profile.json</code> to see live phase timings (scan / prepare / create) even if the UI is still spinning.</div>
             <div class="actions" style="margin-top:10px;">
@@ -3663,7 +3660,7 @@
           <div class="card-body">
             <div class="attr-section-note">Step 2: copies Nesting Ready panels using cached outlines + <strong>sheet_pack_poly_v2</strong> (BLF + short local search). Optional <strong>Deepnest</strong> only for small jobs (&le;60 parts). Sheet size / border / spacing / rotation come from <strong>Sheet Parameters</strong> below. Previous layout is preserved if validation fails.</div>
             <div class="actions" style="margin-top:10px;">
-              <button type="button" class="primary" id="nestingCreateLayoutBtn">创建或替换排版区布局</button>
+              <button type="button" class="primary" id="nestingCreateLayoutBtn">Create / Replace Nesting Zone Layout</button>
               <button type="button" class="ghost" id="nestingCreateSketchBtn">Create Nesting Sketch / 生成投影草图</button>
             </div>
             <div id="nestingCreateLayoutSummary" class="message" style="margin-top:10px;">Set Work Zones, build outlines, then create the layout.</div>
@@ -3713,7 +3710,7 @@
         </div>
       </div>
       <aside class="card" style="margin-bottom:0;">
-        <h3>未就绪板件</h3>
+        <h3>Not Nesting Ready / 未就绪板件</h3>
         <div class="card-body">
           <div id="nestingNotReadyList" class="attr-section-note" style="max-height:520px;overflow:auto;">No check result yet.</div>
         </div>

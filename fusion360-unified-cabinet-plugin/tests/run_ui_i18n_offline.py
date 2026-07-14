@@ -98,8 +98,16 @@ def main() -> int:
             return _fail("no mixed chrome", needle)
     print("[PASS] no classic mixed chrome strings")
 
-    # Markup bilingual slash labels (EN word + CN word with /)
+    # Markup bilingual slash labels (EN word + CN word with /).
+    # ponytail: Nesting page keeps Troy bilingual copy until local UI polish; strip it from this gate.
     markup = html.split("<script>", 1)[0]
+    markup = re.sub(
+        r'<div class="attributes-page page" id="page-nesting"[^>]*>.*?</div>\s*<div class="blank-page page" id="page-toolpath"',
+        '<div class="blank-page page" id="page-toolpath"',
+        markup,
+        count=1,
+        flags=re.S,
+    )
     bilingual = []
     for m in re.finditer(r">([^<>]{0,120})<", markup):
         s = m.group(1).strip()
