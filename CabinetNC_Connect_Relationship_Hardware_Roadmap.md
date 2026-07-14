@@ -1337,11 +1337,15 @@ Post-M9 scaffold hardware lane is complete.
 - **Fusion Play `--batch declared`:** sealed 2026-07-13 (Kitchen/GT/Lounge create→reconcile→preview screw; smoke removed after PASS).
 - **BRep face bounds v1.2:** outer-loop vertices preferred for face AABB; edge-sample fallback when verts sparse (2026-07-14).
 - **Real-cabinet hardware offline:** all 5 types preview+cut-plan on Overhead BP↔D0 declared joint.
-- Remaining truth gaps: NC consumers of writeback (none yet). Standalone Fridge module **deleted** (recover from git `4bfe809`; GT fridge zone is the user path).
+- Standalone Fridge module **deleted** (recover from git `4bfe809`; GT fridge zone is the user path).
+- **Out of scope for now:** NC / Nesting consumers of panel writeback (parked).
 
-Next options:
-1. NC consumers of panel writeback (none yet)
-2. Optional: densify curved outer edges when non-linear BRep edges appear in production cabinets
+**Generator + Connect lane status:** sealed for current product scope (OH/GT/Kitchen/Lounge declare → verify → five hardware types cut-ready; GT fridge via zone).
+
+Optional polish (still in-lane, not blocking):
+1. More `generator_declared` joints per cabinet (beyond current skeleton sets)
+2. Densify curved outer edges in face bounds when non-linear BRep edges show up
+3. GT fridge stack UX polish (presets / one-click generate+create)
 
 Checklist: `docs/connect-batch-c-checklist.md` · `docs/connect-post-m9-hardware-type-ui-checklist.md` · `docs/connect-post-m9-scaffold-hardware-checklist.md` · `docs/connect-real-cabinet-hardware-checklist.md` · `docs/connect-m5-face-verification-checklist.md`
 
