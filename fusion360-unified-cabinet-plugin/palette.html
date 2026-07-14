@@ -29,11 +29,28 @@
       display: flex;
       align-items: center;
       gap: 4px;
-      padding: 0 12px;
+      padding: 0 8px 0 12px;
       background: #102033;
       color: #fff;
     }
     .brand { font-weight: 700; font-size: 15px; margin-right: 18px; }
+    .tabbar-close {
+      margin-left: auto;
+      width: 28px;
+      height: 28px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: #9fb0c7;
+      font-size: 18px;
+      line-height: 1;
+      cursor: pointer;
+      flex: 0 0 auto;
+    }
+    .tabbar-close:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+    }
     .tab {
       height: 34px;
       border: 0;
@@ -1289,6 +1306,7 @@
     <button class="tab" data-page-tab="attributes">Attributes</button>
     <button class="tab" data-page-tab="nesting">Nesting</button>
     <button class="tab" data-page-tab="toolpath">Toolpath / Post Processing</button>
+    <button type="button" class="tabbar-close" id="paletteCloseBtn" title="Close CabinetNC" aria-label="Close">×</button>
   </div>
 
   <div class="commandbar">
@@ -2325,10 +2343,10 @@
               <div class="actions" style="margin-top:12px;margin-bottom:0;">
                 <label style="font-size:12px;display:inline-flex;align-items:center;gap:4px;">Scan zone
                   <select id="attrScanZoneFilter">
-                    <option value="all" selected>All zones (default)</option>
+                    <option value="all" selected>All source zones (exclude Nesting)</option>
                     <option value="assembly">Assembly only</option>
                     <option value="generation">Generation</option>
-                    <option value="nesting">Nesting</option>
+                    <option value="nesting">Nesting only</option>
                   </select>
                 </label>
                 <button type="button" class="primary" id="attrOverviewScanAllBtn">Scan All Metadata</button>
@@ -2757,7 +2775,7 @@
           <div class="card">
             <h3>2. Auto Analyze — Door Orientation / 门板朝向</h3>
             <div class="card-body">
-              <div class="attr-section-note"><strong>Orient writes unlocked doors immediately.</strong> Hinge/slot evidence wins, then assembly/view votes. <strong>Select Colour Faces</strong> is read-only. <strong>Revert Panel Surface</strong> is a manual override and locks that body's face-up until Reset to Auto.</div>
+              <div class="attr-section-note"><strong>Orient</strong> writes unlocked doors (hinge/slot first, then assembly/view; otherwise EITHER). <strong>Revert Panel Surface</strong> is a manual override on any selected panel — with or without hinge cups, symmetric or not — and always replaces EITHER with definite MILLING/NON_MILLING, then locks face-up until Reset to Auto. <strong>Select Colour Faces</strong> is read-only.</div>
               <div style="margin-top:8px;font-size:12px;">
                 <label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;">
                   <input type="radio" name="attrOrientPointMode" value="auto" checked> Auto — centre of selection
@@ -3045,22 +3063,67 @@
           </div>
         </div>
         <div class="card">
+          <h3>Build Nesting Outlines / 生成排料轮廓</h3>
+          <div class="card-body">
+            <div class="attr-section-note">Step 1: flatten Ready panels, extract true-shape outlines, and store <code>nestingFlatOutline</code> on each body. Re-run after geometry edits. Fresh caches are skipped unless you force rebuild. Create Layout will refuse stale or missing outlines.</div>
+            <div class="actions" style="margin-top:10px;">
+              <button type="button" class="primary" id="nestingBuildOutlinesBtn">Build Nesting Outlines</button>
+              <button type="button" class="ghost" id="nestingRebuildOutlinesBtn">Force Rebuild All</button>
+            </div>
+            <div id="nestingBuildOutlinesSummary" class="message" style="margin-top:10px;">Build outlines before Create Layout.</div>
+          </div>
+        </div>
+        <div class="card">
           <h3>Arrange Ready Panels in Nesting Zone / 分组排列</h3>
           <div class="card-body">
-            <div class="attr-section-note">Copies only Nesting Ready source panels (Board Type + Color + Cutting Face). Generator boards without Attributes are listed as Not Ready instead of being dropped. Nesting Zone expands automatically when needed. Live timings: <code>nesting/nesting_runtime_profile.json</code>.</div>
-            <div style="display:grid;grid-template-columns:repeat(2,minmax(120px,1fr));gap:10px;margin-top:10px;">
-              <label style="font-size:12px;">Panel gap X (mm)
-                <input type="number" id="nestingPartGapMm" value="50" min="0" step="10" style="width:100%;">
-              </label>
-              <label style="font-size:12px;">Group row gap Y (mm)
-                <input type="number" id="nestingGroupGapMm" value="300" min="0" step="10" style="width:100%;">
-              </label>
-            </div>
+            <div class="attr-section-note">Step 2: copies Nesting Ready panels using cached outlines + <strong>sheet_pack_poly_v2</strong> (BLF + short local search). Optional <strong>Deepnest</strong> only for small jobs (&le;60 parts). Sheet size / border / spacing / rotation come from <strong>Sheet Parameters</strong> below. Previous layout is preserved if validation fails.</div>
             <div class="actions" style="margin-top:10px;">
               <button type="button" class="primary" id="nestingCreateLayoutBtn">Create / Replace Nesting Zone Layout</button>
+              <button type="button" class="ghost" id="nestingCreateSketchBtn">Create Nesting Sketch / 生成投影草图</button>
             </div>
-            <div id="nestingCreateLayoutSummary" class="message" style="margin-top:10px;">Set Work Zones first, then create the layout.</div>
+            <div id="nestingCreateLayoutSummary" class="message" style="margin-top:10px;">Set Work Zones, build outlines, then create the layout.</div>
             <div id="nestingCreateLayoutGroups" style="margin-top:8px;"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Sheet Parameters / 板材参数</h3>
+          <div class="card-body">
+            <div class="attr-section-note">Used by <strong>Create / Replace Nesting Zone Layout</strong>. Each Board Type has its own sheet size. Rows follow Board Types from Thickness rules. Parts-in-part uses validated <strong>through-holes only</strong>; blind pockets and hinge cups are never treated as empty material.</div>
+            <div style="display:grid;grid-template-columns:minmax(90px,120px) 1fr 1fr auto;gap:8px;align-items:center;margin-top:8px;font-size:11px;color:#64748b;">
+              <span>Board Type</span>
+              <span>Sheet width (mm)</span>
+              <span>Sheet height (mm)</span>
+              <span></span>
+            </div>
+            <div id="nestingSheetSizeRows" style="display:grid;gap:8px;margin-top:6px;"></div>
+            <div class="actions" style="margin-top:8px;">
+              <input type="text" id="nestingSheetNewType" placeholder="add type e.g. drawer_front" style="min-width:160px;flex:1;">
+              <button type="button" class="ghost" id="nestingSheetAddTypeBtn">Add Type</button>
+              <button type="button" class="ghost" id="nestingSheetSyncTypesBtn">Sync From Board Types</button>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(120px,1fr));gap:10px;margin-top:12px;">
+              <label style="font-size:12px;">Border inset / 边框距离 (mm)
+                <input type="number" id="nestingSheetBorderMm" value="15" min="0" step="1" style="width:100%;">
+              </label>
+              <label style="font-size:12px;">Panel spacing / 板件间距 (mm)
+                <input type="number" id="nestingSheetSpacingMm" value="12" min="0" step="1" style="width:100%;">
+              </label>
+            </div>
+            <div style="display:grid;gap:8px;margin-top:12px;">
+              <label style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                <input type="checkbox" id="nestingAllowPartsInPart">
+                Allow parts in part / 允许套料进孔洞
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;font-size:12px;">
+                <input type="checkbox" id="nestingAllowRotation" checked>
+                Allow rotation / 允许旋转
+              </label>
+              <label id="nestingRotationIncrementWrap" style="display:none;font-size:12px;margin-left:24px;">
+                Rotation increment / 旋转步进 (°)
+                <input type="number" id="nestingRotationIncrementDeg" value="90" min="1" max="180" step="1" style="width:100px;margin-left:8px;">
+              </label>
+            </div>
+            <div id="nestingSheetParamsSummary" class="message" style="margin-top:10px;">Sheet parameters are local UI state only.</div>
           </div>
         </div>
       </div>
@@ -10514,33 +10577,294 @@
       }
     }
 
+    const NESTING_DEFAULT_SHEET_WIDTH_MM = 2440;
+    const NESTING_DEFAULT_SHEET_HEIGHT_MM = 1220;
+    const NESTING_SHEET_PARAMS_STORAGE_KEY = "cabinetnc.nesting.sheetParams.v1";
+    const nestingSheetSizeByType = {};
+    let nestingSheetParamsHydrating = false;
+
+    function nestingLoadSheetParamsDefaults() {
+      nestingSheetParamsHydrating = true;
+      try {
+        const raw = window.localStorage?.getItem(NESTING_SHEET_PARAMS_STORAGE_KEY);
+        if (!raw) return;
+        const saved = JSON.parse(raw);
+        (Array.isArray(saved?.sheets) ? saved.sheets : []).forEach((sheet) => {
+          const tag = attrNormalizeBoardTypeTag(sheet?.boardTypeTag);
+          const widthMm = Number(sheet?.widthMm);
+          const heightMm = Number(sheet?.heightMm);
+          if (!attrIsValidBoardTypeTag(tag)) return;
+          nestingSheetSizeByType[tag] = {
+            boardTypeTag: tag,
+            widthMm: Number.isFinite(widthMm) && widthMm > 0 ? widthMm : NESTING_DEFAULT_SHEET_WIDTH_MM,
+            heightMm: Number.isFinite(heightMm) && heightMm > 0 ? heightMm : NESTING_DEFAULT_SHEET_HEIGHT_MM,
+          };
+        });
+        const border = document.getElementById("nestingSheetBorderMm");
+        const spacing = document.getElementById("nestingSheetSpacingMm");
+        const partsInPart = document.getElementById("nestingAllowPartsInPart");
+        const rotation = document.getElementById("nestingAllowRotation");
+        const increment = document.getElementById("nestingRotationIncrementDeg");
+        if (border && Number.isFinite(Number(saved?.borderMm))) border.value = Math.max(0, Number(saved.borderMm));
+        if (spacing && Number.isFinite(Number(saved?.spacingMm))) spacing.value = Math.max(0, Number(saved.spacingMm));
+        if (partsInPart) partsInPart.checked = Boolean(saved?.allowPartsInPart);
+        if (rotation) rotation.checked = saved?.allowRotation !== false;
+        if (increment && Number.isFinite(Number(saved?.rotationIncrementDeg))) {
+          increment.value = Math.max(1, Number(saved.rotationIncrementDeg));
+        }
+      } catch (ignore) {
+        // Invalid/blocked local storage falls back to UI defaults.
+      } finally {
+        nestingSheetParamsHydrating = false;
+      }
+    }
+
+    function nestingSaveSheetParamsDefaults(params) {
+      if (nestingSheetParamsHydrating) return;
+      try {
+        window.localStorage?.setItem(
+          NESTING_SHEET_PARAMS_STORAGE_KEY,
+          JSON.stringify(params || nestingCollectSheetParams()),
+        );
+      } catch (ignore) {
+        // Palette remains usable when local storage is unavailable.
+      }
+    }
+
+    function nestingDefaultSheetSize(tag) {
+      const existing = nestingSheetSizeByType[tag];
+      if (existing) return existing;
+      return {
+        boardTypeTag: tag,
+        widthMm: NESTING_DEFAULT_SHEET_WIDTH_MM,
+        heightMm: NESTING_DEFAULT_SHEET_HEIGHT_MM,
+      };
+    }
+
+    function nestingRememberSheetSizeInputs() {
+      document.querySelectorAll("[data-nesting-sheet-tag]").forEach((row) => {
+        const tag = attrNormalizeBoardTypeTag(row.getAttribute("data-nesting-sheet-tag"));
+        if (!attrIsValidBoardTypeTag(tag)) return;
+        const widthMm = Number(row.querySelector("[data-nesting-sheet-width]")?.value);
+        const heightMm = Number(row.querySelector("[data-nesting-sheet-height]")?.value);
+        nestingSheetSizeByType[tag] = {
+          boardTypeTag: tag,
+          widthMm: Number.isFinite(widthMm) && widthMm > 0 ? widthMm : NESTING_DEFAULT_SHEET_WIDTH_MM,
+          heightMm: Number.isFinite(heightMm) && heightMm > 0 ? heightMm : NESTING_DEFAULT_SHEET_HEIGHT_MM,
+        };
+      });
+    }
+
+    function nestingBoardTypeTagsFromThicknessRules() {
+      const payload = attrCollectThicknessRulesPayload();
+      const tags = (payload.rules || [])
+        .map((rule) => attrNormalizeBoardTypeTag(rule.boardTypeTag))
+        .filter((tag) => attrIsValidBoardTypeTag(tag));
+      return tags.length
+        ? tags
+        : ATTR_DEFAULT_THICKNESS_RULES.map((rule) => attrNormalizeBoardTypeTag(rule.boardTypeTag));
+    }
+
+    function nestingUpdateRotationIncrementUi() {
+      const allow = Boolean(document.getElementById("nestingAllowRotation")?.checked);
+      const wrap = document.getElementById("nestingRotationIncrementWrap");
+      if (wrap) wrap.style.display = allow ? "block" : "none";
+      nestingUpdateSheetParamsSummary();
+    }
+
+    function nestingUpdateSheetParamsSummary() {
+      const summary = document.getElementById("nestingSheetParamsSummary");
+      if (!summary) return;
+      const params = nestingCollectSheetParams();
+      const sheetBits = (params.sheets || []).map((sheet) => (
+        `${sheet.boardTypeTag} ${sheet.widthMm}×${sheet.heightMm}`
+      ));
+      const rot = params.allowRotation
+        ? `rotation yes · ${params.rotationIncrementDeg}°`
+        : "rotation no";
+      const pip = params.allowPartsInPart ? "parts-in-part yes" : "parts-in-part no";
+      summary.textContent = `sheet_pack_poly_v1 · saved default · border ${params.borderMm} mm · spacing ${params.spacingMm} mm · ${pip} · ${rot} · sheets: ${sheetBits.join(" · ") || "none"}.`;
+      summary.className = "message ok";
+      nestingSaveSheetParamsDefaults(params);
+    }
+
+    function nestingRenderSheetSizeRows(tags) {
+      const host = document.getElementById("nestingSheetSizeRows");
+      if (!host) return;
+      nestingRememberSheetSizeInputs();
+      const list = (Array.isArray(tags) && tags.length
+        ? tags
+        : nestingBoardTypeTagsFromThicknessRules()
+      ).map((tag) => attrNormalizeBoardTypeTag(tag)).filter((tag) => attrIsValidBoardTypeTag(tag));
+      const unique = [];
+      const seen = new Set();
+      list.forEach((tag) => {
+        if (seen.has(tag)) return;
+        seen.add(tag);
+        unique.push(tag);
+      });
+      host.innerHTML = unique.map((tag) => {
+        const size = nestingDefaultSheetSize(tag);
+        const label = attrThicknessRuleLabel({ boardTypeTag: tag });
+        nestingSheetSizeByType[tag] = size;
+        return `<div class="nesting-sheet-size-row" data-nesting-sheet-tag="${escapeHtml(tag)}" style="display:grid;grid-template-columns:minmax(90px,120px) 1fr 1fr auto;gap:8px;align-items:center;">
+          <strong style="font-size:13px;" title="${escapeHtml(tag)}">${escapeHtml(label)}</strong>
+          <input type="number" data-nesting-sheet-width value="${size.widthMm}" min="1" step="1" style="width:100%;">
+          <input type="number" data-nesting-sheet-height value="${size.heightMm}" min="1" step="1" style="width:100%;">
+          <button type="button" class="ghost nesting-sheet-delete-btn" data-nesting-sheet-delete="${escapeHtml(tag)}" title="Remove row" style="padding:2px 8px;font-size:11px;min-height:0;">Delete</button>
+        </div>`;
+      }).join("");
+      nestingUpdateSheetParamsSummary();
+    }
+
+    function nestingSyncSheetSizesFromBoardTypes() {
+      nestingRenderSheetSizeRows(nestingBoardTypeTagsFromThicknessRules());
+    }
+
+    function nestingAddSheetBoardType() {
+      const input = document.getElementById("nestingSheetNewType");
+      const tag = attrNormalizeBoardTypeTag(input?.value || "");
+      if (!attrIsValidBoardTypeTag(tag)) {
+        const summary = document.getElementById("nestingSheetParamsSummary");
+        if (summary) {
+          summary.textContent = "Board type must start with a letter and use only a–z, 0–9, underscore (max 32).";
+          summary.className = "message error";
+        }
+        return;
+      }
+      nestingRememberSheetSizeInputs();
+      const current = Array.from(document.querySelectorAll("[data-nesting-sheet-tag]"))
+        .map((row) => attrNormalizeBoardTypeTag(row.getAttribute("data-nesting-sheet-tag")));
+      if (current.includes(tag)) {
+        const summary = document.getElementById("nestingSheetParamsSummary");
+        if (summary) {
+          summary.textContent = `Sheet row for "${tag}" already exists.`;
+          summary.className = "message warn";
+        }
+        return;
+      }
+      if (!nestingSheetSizeByType[tag]) {
+        nestingSheetSizeByType[tag] = nestingDefaultSheetSize(tag);
+      }
+      nestingRenderSheetSizeRows(current.concat([tag]));
+      if (input) input.value = "";
+    }
+
+    function nestingDeleteSheetBoardType(tag) {
+      const normalized = attrNormalizeBoardTypeTag(tag);
+      nestingRememberSheetSizeInputs();
+      const current = Array.from(document.querySelectorAll("[data-nesting-sheet-tag]"))
+        .map((row) => attrNormalizeBoardTypeTag(row.getAttribute("data-nesting-sheet-tag")))
+        .filter((item) => item !== normalized);
+      if (!current.length) {
+        const summary = document.getElementById("nestingSheetParamsSummary");
+        if (summary) {
+          summary.textContent = "Keep at least one sheet Board Type row.";
+          summary.className = "message warn";
+        }
+        return;
+      }
+      delete nestingSheetSizeByType[normalized];
+      nestingRenderSheetSizeRows(current);
+    }
+
+    function nestingCollectSheetParams() {
+      nestingRememberSheetSizeInputs();
+      const sheets = Array.from(document.querySelectorAll("[data-nesting-sheet-tag]")).map((row) => {
+        const tag = attrNormalizeBoardTypeTag(row.getAttribute("data-nesting-sheet-tag"));
+        const widthMm = Number(row.querySelector("[data-nesting-sheet-width]")?.value);
+        const heightMm = Number(row.querySelector("[data-nesting-sheet-height]")?.value);
+        return {
+          boardTypeTag: tag,
+          widthMm: Number.isFinite(widthMm) && widthMm > 0 ? widthMm : NESTING_DEFAULT_SHEET_WIDTH_MM,
+          heightMm: Number.isFinite(heightMm) && heightMm > 0 ? heightMm : NESTING_DEFAULT_SHEET_HEIGHT_MM,
+        };
+      }).filter((sheet) => attrIsValidBoardTypeTag(sheet.boardTypeTag));
+      const borderMm = Math.max(0, Number(document.getElementById("nestingSheetBorderMm")?.value || 15));
+      const spacingMm = Math.max(0, Number(document.getElementById("nestingSheetSpacingMm")?.value || 12));
+      const allowPartsInPart = Boolean(document.getElementById("nestingAllowPartsInPart")?.checked);
+      const allowRotation = Boolean(document.getElementById("nestingAllowRotation")?.checked);
+      let rotationIncrementDeg = Number(document.getElementById("nestingRotationIncrementDeg")?.value || 90);
+      if (!Number.isFinite(rotationIncrementDeg) || rotationIncrementDeg < 1) rotationIncrementDeg = 90;
+      return {
+        sheets,
+        borderMm,
+        spacingMm,
+        allowPartsInPart,
+        allowRotation,
+        rotationIncrementDeg: allowRotation ? rotationIncrementDeg : null,
+      };
+    }
+
+    function nestingBuildOutlines(forceRebuild) {
+      const summary = document.getElementById("nestingBuildOutlinesSummary");
+      const buildBtn = document.getElementById("nestingBuildOutlinesBtn");
+      const rebuildBtn = document.getElementById("nestingRebuildOutlinesBtn");
+      const sheetParams = nestingCollectSheetParams();
+      if (buildBtn) buildBtn.disabled = true;
+      if (rebuildBtn) rebuildBtn.disabled = true;
+      if (summary) {
+        summary.textContent = forceRebuild
+          ? "Force-rebuilding nesting outlines for all Ready panels..."
+          : "Building nesting outlines (skipping fresh caches)...";
+        summary.className = "message warn";
+      }
+      if (!attrFusionAvailable()) {
+        if (buildBtn) buildBtn.disabled = false;
+        if (rebuildBtn) rebuildBtn.disabled = false;
+        if (summary) {
+          summary.textContent = "Preview only: Build Nesting Outlines requires an active Fusion design.";
+          summary.className = "message warn";
+        }
+        return;
+      }
+      fusionSend("panelAttributes.buildNestingOutlines", {
+        sheetParams,
+        forceRebuild: !!forceRebuild,
+      });
+    }
+
     function nestingCreateZoneLayout() {
       const summary = document.getElementById("nestingCreateLayoutSummary");
       const groupsHost = document.getElementById("nestingCreateLayoutGroups");
-      const partGapMm = Math.max(
-        0,
-        Number(document.getElementById("nestingPartGapMm")?.value || 50),
-      );
-      const groupGapMm = Math.max(
-        0,
-        Number(document.getElementById("nestingGroupGapMm")?.value || 300),
-      );
+      const createBtn = document.getElementById("nestingCreateLayoutBtn");
+      const sheetParams = nestingCollectSheetParams();
+      if (createBtn) createBtn.disabled = true;
       if (summary) {
-        summary.textContent = "Preparing flat workpiece copies and replacing the previous Nesting layout...";
+        summary.textContent = "Sheet-packing flat workpiece copies (cached outlines) and replacing the previous Nesting layout...";
         summary.className = "message warn";
       }
       if (groupsHost) groupsHost.innerHTML = "";
       if (!attrFusionAvailable()) {
+        if (createBtn) createBtn.disabled = false;
         if (summary) {
-          summary.textContent = `Preview only: panel gap ${partGapMm} mm · group gap ${groupGapMm} mm.`;
+          summary.textContent = `Preview only: sheet_pack · border ${sheetParams.borderMm} mm · spacing ${sheetParams.spacingMm} mm · ${sheetParams.sheets.length} sheet type(s).`;
           summary.className = "message warn";
         }
         return;
       }
       fusionSend("panelAttributes.createNestingZoneLayout", {
-        partGapMm,
-        groupGapMm,
+        sheetParams,
       });
+    }
+
+    function nestingCreateLayoutSketch() {
+      const summary = document.getElementById("nestingCreateLayoutSummary");
+      const sketchBtn = document.getElementById("nestingCreateSketchBtn");
+      if (sketchBtn) sketchBtn.disabled = true;
+      if (summary) {
+        summary.textContent = "Building top-down nesting projection sketch...";
+        summary.className = "message warn";
+      }
+      if (!attrFusionAvailable()) {
+        if (sketchBtn) sketchBtn.disabled = false;
+        if (summary) {
+          summary.textContent = "Sketch export requires an active Fusion design with a Nesting layout.";
+          summary.className = "message error";
+        }
+        return;
+      }
+      fusionSend("panelAttributes.createNestingLayoutSketch", {});
     }
 
     function attrMetadataRecordToPanel(record) {
@@ -10860,6 +11184,8 @@
         summary.textContent = `Rules: ${parts.join(" · ") || "none"} (±${Number(payload?.toleranceMm || tol?.value || 0.6)} mm)${sourceNote}.`;
         summary.className = "message ok";
       }
+      // Keep Nesting sheet-size rows aligned with Board Types (UI only).
+      try { nestingSyncSheetSizesFromBoardTypes(); } catch (ignore) { /* nesting UI optional */ }
     }
 
     function attrCollectThicknessRulesPayload() {
@@ -13125,9 +13451,34 @@
         );
         return;
       }
+      if (parsed.action === "buildNestingOutlines") {
+        const summary = document.getElementById("nestingBuildOutlinesSummary");
+        const buildBtn = document.getElementById("nestingBuildOutlinesBtn");
+        const rebuildBtn = document.getElementById("nestingRebuildOutlinesBtn");
+        if (buildBtn) buildBtn.disabled = false;
+        if (rebuildBtn) rebuildBtn.disabled = false;
+        const msg = parsed.message
+          || (parsed.ok
+            ? `Built ${Number(parsed.builtCount || 0)} outline(s); reused fresh ${Number(parsed.skippedFreshCount || 0)}.`
+            : (parsed.errors || ["Could not build nesting outlines."]).join(" "));
+        const kind = parsed.ok
+          ? (Number(parsed.failedCount || 0) ? "warn" : "ok")
+          : "error";
+        if (summary) {
+          summary.textContent = msg;
+          summary.className = `message ${kind}`;
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "buildNestingOutlines",
+          details: attrBuildCommandDetails(parsed),
+        });
+        return;
+      }
       if (parsed.action === "createNestingZoneLayout") {
         const summary = document.getElementById("nestingCreateLayoutSummary");
         const groupsHost = document.getElementById("nestingCreateLayoutGroups");
+        const createBtn = document.getElementById("nestingCreateLayoutBtn");
+        if (createBtn) createBtn.disabled = false;
         if (parsed.ok && parsed.layout) {
           panelAttrMock.workZoneLayout = parsed.layout;
           attrSyncZoneInputsFromLayout(parsed.layout);
@@ -13145,18 +13496,63 @@
         }
         if (groupsHost) {
           const groups = Array.isArray(parsed.groups) ? parsed.groups : [];
+          const sheets = Array.isArray(parsed.sheets) ? parsed.sheets : [];
+          const validation = parsed.collisionValidation || {};
+          const workers = Array.isArray(parsed.bridgeHealth?.workers)
+            ? parsed.bridgeHealth.workers
+            : [];
+          const runningWorkers = workers.filter((worker) => worker?.running).length;
+          const primaryValidation = parsed.primaryCollisionValidation || {};
+          const primaryCollisions = Array.isArray(primaryValidation.collisions)
+            ? primaryValidation.collisions
+            : [];
+          const primaryCollisionNames = primaryCollisions.slice(0, 3).map((entry) => {
+            const a = entry?.a?.bodyName || entry?.a?.panelId || "?";
+            const b = entry?.b?.bodyName || entry?.b?.panelId || "?";
+            return `${a} ↔ ${b}`;
+          }).join(", ");
           const zoneLine = parsed.ok
-            ? `<div class="muted" style="margin-top:6px;">Nesting Zone ${Number(parsed.nestingWidthMm || 0).toFixed(0)} × ${Number(parsed.nestingDepthMm || 0).toFixed(0)} mm${parsed.zoneGrown ? " (expanded to fit layout)" : ""} · required ${Number(parsed.requiredWidthMm || 0).toFixed(0)} × ${Number(parsed.requiredDepthMm || 0).toFixed(0)} mm</div>`
+            ? `<div class="muted" style="margin-top:6px;">Engine ${escapeHtml(parsed.engine || "sheet_pack_v1")} · ${Number(parsed.sheetCount || sheets.length || 0)} sheet(s) · Nesting Zone ${Number(parsed.nestingWidthMm || 0).toFixed(0)} × ${Number(parsed.nestingDepthMm || 0).toFixed(0)} mm${parsed.zoneGrown ? " (expanded to fit layout)" : ""} · required ${Number(parsed.requiredWidthMm || 0).toFixed(0)} × ${Number(parsed.requiredDepthMm || 0).toFixed(0)} mm${Number(parsed.unplacedCount || 0) ? ` · unplaced ${Number(parsed.unplacedCount)}` : ""}</div>`
+            : `<div class="message error" style="margin-top:6px;">Collision validation stopped this layout. Previous Nesting layout preserved.</div>`;
+          const safetyLine = `<div class="muted" style="margin-top:4px;">Validation ${escapeHtml(validation.status || (parsed.ok ? "safe" : "failed"))} · collisions ${Number(parsed.collisionCount || 0)}${parsed.validationFallback ? " · sheet_pack safety fallback used" : ""} · through holes ${Number(parsed.holeOutlineCount || 0)} · nested in holes ${Number(parsed.nestedInHoleCount || 0)}${workers.length ? ` · persistent workers ${runningWorkers}/${workers.length}` : ""}</div>`;
+          const fallbackDetail = parsed.validationFallback
+            ? `<div class="message warn" style="margin-top:4px;">${escapeHtml(parsed.validationFallbackReason || "Deepnest result was rejected by safety validation.")}${primaryCollisionNames ? ` ${escapeHtml(primaryCollisionNames)}` : ""}</div>`
             : "";
-          groupsHost.innerHTML = zoneLine + groups.map((group) => (
+          const sheetLines = sheets.map((sheet) => (
             `<div class="attr-tag-pending-item" style="margin-top:6px;">
-              <strong>${escapeHtml(group.boardTypeTag || "?")} + ${escapeHtml(group.colorTag || "?")}</strong>
-              <div class="muted">${Number(group.count || 0)} panel(s) · row ${Number(group.widthMm || 0).toFixed(0)} × ${Number(group.depthMm || 0).toFixed(0)} mm</div>
+              <strong>Sheet ${Number(sheet.sheetIndex || 0) + 1}: ${escapeHtml(sheet.boardTypeTag || "?")} + ${escapeHtml(sheet.colorTag || "?")}</strong>
+              <div class="muted">${Number(sheet.count || 0)} panel(s) · ${Number(sheet.widthMm || 0).toFixed(0)} × ${Number(sheet.heightMm || 0).toFixed(0)} mm · util ${(100 * Number(sheet.utilization || 0)).toFixed(0)}%</div>
             </div>`
           )).join("");
+          const groupLines = (!sheets.length ? groups : []).map((group) => (
+            `<div class="attr-tag-pending-item" style="margin-top:6px;">
+              <strong>${escapeHtml(group.boardTypeTag || "?")} + ${escapeHtml(group.colorTag || "?")}</strong>
+              <div class="muted">${Number(group.count || 0)} panel(s) · ${Number(group.widthMm || 0).toFixed(0)} × ${Number(group.depthMm || 0).toFixed(0)} mm</div>
+            </div>`
+          )).join("");
+          groupsHost.innerHTML = zoneLine + safetyLine + fallbackDetail + sheetLines + groupLines;
         }
         attrShowFormMessage(msg, kind, {
           action: "createNestingZoneLayout",
+          details: attrBuildCommandDetails(parsed),
+        });
+        return;
+      }
+      if (parsed.action === "createNestingLayoutSketch") {
+        const summary = document.getElementById("nestingCreateLayoutSummary");
+        const sketchBtn = document.getElementById("nestingCreateSketchBtn");
+        if (sketchBtn) sketchBtn.disabled = false;
+        const msg = parsed.message
+          || (parsed.ok
+            ? `Created sketch ${parsed.sketchName || "NESTING_DXF_PROJECTION"} (${Number(parsed.ringCount || 0)} rings).`
+            : (parsed.errors || ["Could not create nesting sketch."]).join(" "));
+        const kind = parsed.ok ? "ok" : "error";
+        if (summary) {
+          summary.textContent = msg;
+          summary.className = `message ${kind}`;
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "createNestingLayoutSketch",
           details: attrBuildCommandDetails(parsed),
         });
         return;
@@ -13535,7 +13931,32 @@
       document.getElementById("attrTagSelectAttributeReadyBtn").addEventListener("click", () => attrTagSelectMissing("attributeReady"));
       document.getElementById("nestingCheckReadyBtn").addEventListener("click", nestingCheckAllPanels);
       document.getElementById("nestingSelectNotReadyBtn").addEventListener("click", nestingSelectAllNotReady);
+      document.getElementById("nestingBuildOutlinesBtn").addEventListener("click", () => nestingBuildOutlines(false));
+      document.getElementById("nestingRebuildOutlinesBtn").addEventListener("click", () => nestingBuildOutlines(true));
       document.getElementById("nestingCreateLayoutBtn").addEventListener("click", nestingCreateZoneLayout);
+      document.getElementById("nestingCreateSketchBtn").addEventListener("click", nestingCreateLayoutSketch);
+      document.getElementById("nestingSheetAddTypeBtn").addEventListener("click", nestingAddSheetBoardType);
+      document.getElementById("nestingSheetSyncTypesBtn").addEventListener("click", nestingSyncSheetSizesFromBoardTypes);
+      document.getElementById("nestingSheetNewType").addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          nestingAddSheetBoardType();
+        }
+      });
+      document.getElementById("nestingSheetSizeRows").addEventListener("click", (event) => {
+        const btn = event.target.closest("[data-nesting-sheet-delete]");
+        if (!btn) return;
+        nestingDeleteSheetBoardType(btn.getAttribute("data-nesting-sheet-delete"));
+      });
+      document.getElementById("nestingSheetSizeRows").addEventListener("change", nestingUpdateSheetParamsSummary);
+      document.getElementById("nestingSheetBorderMm").addEventListener("change", nestingUpdateSheetParamsSummary);
+      document.getElementById("nestingSheetSpacingMm").addEventListener("change", nestingUpdateSheetParamsSummary);
+      document.getElementById("nestingAllowPartsInPart").addEventListener("change", nestingUpdateSheetParamsSummary);
+      document.getElementById("nestingAllowRotation").addEventListener("change", nestingUpdateRotationIncrementUi);
+      document.getElementById("nestingRotationIncrementDeg").addEventListener("change", nestingUpdateSheetParamsSummary);
+      nestingLoadSheetParamsDefaults();
+      nestingSyncSheetSizesFromBoardTypes();
+      nestingUpdateRotationIncrementUi();
       attrTagPopulateMissingFilters();
       document.getElementById("attrTagScanResult").addEventListener("click", attrTagScanHandleEditEvent);
       document.getElementById("attrTagScanResult").addEventListener("change", attrTagScanHandleEditEvent);
@@ -13877,6 +14298,12 @@
     renderGeneralTallZones();
     updateGeneralTallFusionButtonState(null);
     syncCabinetWidthFromFridge();
+    const paletteCloseBtn = document.getElementById("paletteCloseBtn");
+    if (paletteCloseBtn) {
+      paletteCloseBtn.addEventListener("click", () => {
+        fusionSend("palette.close", {});
+      });
+    }
     calculate();
   </script>
 </body>

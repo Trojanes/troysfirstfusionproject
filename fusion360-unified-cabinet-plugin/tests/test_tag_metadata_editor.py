@@ -14,6 +14,29 @@ import tag_metadata_editor as editor  # noqa: E402
 
 
 class TagMetadataEditorTests(unittest.TestCase):
+    def test_normalize_complementary_rejects_same_face(self):
+        face = object()
+        with self.assertRaises(ValueError):
+            editor.normalize_complementary_surface_roles(
+                "MILLING", "NON_MILLING", face, face
+            )
+
+    def test_normalize_complementary_coerces_dual_milling(self):
+        role_a, role_b = editor.normalize_complementary_surface_roles(
+            "MILLING", "MILLING"
+        )
+        self.assertEqual((role_a, role_b), ("MILLING", "NON_MILLING"))
+
+    def test_normalize_manual_overrides_either_to_definite(self):
+        role_a, role_b = editor.normalize_complementary_surface_roles(
+            "EITHER", "EITHER", require_definite=True
+        )
+        self.assertEqual((role_a, role_b), ("MILLING", "NON_MILLING"))
+        kept_a, kept_b = editor.normalize_complementary_surface_roles(
+            "EITHER", "EITHER", require_definite=False
+        )
+        self.assertEqual((kept_a, kept_b), ("EITHER", "EITHER"))
+
     def test_apply_body_field_patch_updates_nested_paths(self):
         metadata = {
             "schemaVersion": 1,

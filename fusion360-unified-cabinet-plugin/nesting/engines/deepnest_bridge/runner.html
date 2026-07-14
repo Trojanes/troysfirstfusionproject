@@ -1,0 +1,363 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <script>
+      const nodePath = require("node:path");
+      const NodeModule = require("node:module");
+      process.env.NODE_PATH = nodePath.resolve(
+        __dirname,
+        "../../vendor/deepnest-next/node_modules",
+      );
+      NodeModule.Module._initPaths();
+      window.addEventListener("error", (event) => {
+        require("electron").ipcRenderer.send(
+          "cabinetnc-error",
+          event.error?.stack || event.message || "Deepnest renderer failed to load.",
+        );
+      });
+    </script>
+    <script src="../../vendor/deepnest-next/main/util/clipper.js"></script>
+    <script src="../../vendor/deepnest-next/main/util/parallel.js"></script>
+    <script src="../../vendor/deepnest-next/main/util/geometryutil.js"></script>
+  </head>
+  <body>
+    <script type="module">
+      import { DeepNest } from "../../vendor/deepnest-next/main/deepnest.js";
+
+      const { ipcRenderer } = require("electron");
+      window.SvgParser = { config() {} };
+      let activeJob = null;
+
+      // Match deepnest-next defaults so our pre-offset matches its Clipper setup.
+      const CLIPPER_SCALE = 10000000;
+      const CURVE_TOLERANCE = 0.3;
+
+      function finite(value, fallback = 0) {
+        const number = Number(value);
+        return Number.isFinite(number) ? number : fallback;
+      }
+
+      function polygon(points) {
+        if (!Array.isArray(points)) {
+          throw new Error("Part points must be an array.");
+        }
+        const result = points.map((point) => {
+          if (!Array.isArray(point) || point.length < 2) {
+            throw new Error("Each point must be [x, y].");
+          }
+          return { x: finite(point[0]), y: finite(point[1]) };
+        });
+        if (
+          result.length > 1 &&
+          result[0].x === result[result.length - 1].x &&
+          result[0].y === result[result.length - 1].y
+        ) {
+          result.pop();
+        }
+        if (result.length < 3) {
+          throw new Error("Each Deepnest polygon needs at least three points.");
+        }
+        return result;
+      }
+
+      function clipperOffset(points, delta) {
+        if (!delta || !points || points.length < 3) {
+          return points ? points.map((p) => ({ x: p.x, y: p.y })) : null;
+        }
+        const path = points.map((p) => ({
+          X: p.x * CLIPPER_SCALE,
+          Y: p.y * CLIPPER_SCALE,
+        }));
+        const co = new ClipperLib.ClipperOffset(
+          4,
+          CURVE_TOLERANCE * CLIPPER_SCALE,
+        );
+        co.AddPath(
+          path,
+          ClipperLib.JoinType.jtMiter,
+          ClipperLib.EndType.etClosedPolygon,
+        );
+        const solution = new ClipperLib.Paths();
+        co.Execute(solution, delta * CLIPPER_SCALE);
+        if (!solution.length) return null;
+        let best = solution[0];
+        let bestArea = Math.abs(ClipperLib.Clipper.Area(best));
+        for (let i = 1; i < solution.length; i++) {
+          const area = Math.abs(ClipperLib.Clipper.Area(solution[i]));
+          if (area > bestArea) {
+            best = solution[i];
+            bestArea = area;
+          }
+        }
+        if (bestArea <= 1e-6) return null;
+        return best.map((p) => ({
+          x: p.X / CLIPPER_SCALE,
+          y: p.Y / CLIPPER_SCALE,
+        }));
+      }
+
+      function polygonTree(outer, holes) {
+        const tree = outer.map((p) => ({ x: p.x, y: p.y }));
+        tree.children = (Array.isArray(holes) ? holes : []).map((hole) =>
+          hole.map((p) => ({ x: p.x, y: p.y })),
+        );
+        return tree;
+      }
+
+      function rotatePoints(points, degrees) {
+        const rad = (finite(degrees) * Math.PI) / 180;
+        const cos = Math.cos(rad);
+        const sin = Math.sin(rad);
+        return points.map((p) => ({
+          x: p.x * cos - p.y * sin,
+          y: p.x * sin + p.y * cos,
+        }));
+      }
+
+      function aabbCenter(points) {
+        let minX = Infinity;
+        let minY = Infinity;
+        let maxX = -Infinity;
+        let maxY = -Infinity;
+        for (const p of points) {
+          minX = Math.min(minX, p.x);
+          minY = Math.min(minY, p.y);
+          maxX = Math.max(maxX, p.x);
+          maxY = Math.max(maxY, p.y);
+        }
+        return { x: (minX + maxX) * 0.5, y: (minY + maxY) * 0.5 };
+      }
+
+      function rotationsFor(job) {
+        if (!job.options?.allowRotation) return 1;
+        const increment = Math.max(finite(job.options.rotationIncrementDeg, 90), 1);
+        const rotations = Math.round(360 / increment);
+        return Math.max(rotations, 1);
+      }
+
+      /**
+       * Deepnest expands parts by spacing/2 internally, then returns (x,y)
+       * relative to the *expanded* polygon. Applying that translation to the
+       * original outline causes real overlaps on concave parts. We therefore:
+       *   1. expand ourselves,
+       *   2. nest with Deepnest spacing=0,
+       *   3. remap (x,y) onto the original via AABB-center alignment.
+       */
+      function makeParts(job) {
+        const halfSpacing = Math.max(finite(job.options?.spacingMm), 0) * 0.5;
+        // Extra Clipper margin so remapped true-shapes keep >= spacingMm after
+        // AABB-center remap error on concave/asymmetric parts (validator slack
+        // is 1.0 mm; nest a matching extra on each half-side).
+        const nestHalfSpacing = halfSpacing > 0 ? halfSpacing + 1.0 : 0;
+        const originals = new Map();
+        const expandeds = new Map();
+        const parts = (job.parts || []).map((part, index) => {
+          const id = String(part.id ?? index);
+          const outer = polygon(part.points);
+          const holes = (Array.isArray(part.holes) ? part.holes : []).map((hole) =>
+            polygon(hole),
+          );
+          originals.set(id, outer);
+
+          let nestOuter = outer;
+          let nestHoles = holes;
+          if (nestHalfSpacing > 0) {
+            const expandedOuter = clipperOffset(outer, nestHalfSpacing);
+            if (expandedOuter && expandedOuter.length >= 3) {
+              nestOuter = expandedOuter;
+            }
+            nestHoles = holes
+              .map((hole) => clipperOffset(hole, -nestHalfSpacing) || hole)
+              .filter((hole) => hole && hole.length >= 3);
+          }
+          expandeds.set(id, nestOuter);
+          return {
+            quantity: 1,
+            sheet: false,
+            filename: id,
+            polygontree: polygonTree(nestOuter, nestHoles),
+          };
+        });
+        if (!parts.length) throw new Error("Deepnest job has no parts.");
+
+        const width = finite(job.sheet?.widthMm);
+        const height = finite(job.sheet?.heightMm);
+        const border = Math.max(finite(job.sheet?.borderMm), 0);
+        if (width <= border * 2 || height <= border * 2) {
+          throw new Error("Sheet border leaves no usable nesting area.");
+        }
+        // Expanded parts can reach the true border when the sheet is inflated
+        // by the same half-spacing used on the parts.
+        const sheetMin = border - halfSpacing;
+        const sheetMaxX = width - border + halfSpacing;
+        const sheetMaxY = height - border + halfSpacing;
+        parts.push({
+          quantity: Math.max(Number(job.sheet?.quantity) || parts.length, 1),
+          sheet: true,
+          filename: "__cabinetnc_sheet__",
+          polygontree: polygon([
+            [sheetMin, sheetMin],
+            [sheetMaxX, sheetMin],
+            [sheetMaxX, sheetMaxY],
+            [sheetMin, sheetMaxY],
+          ]),
+        });
+        return { parts, originals, expandeds, halfSpacing };
+      }
+
+      function remapPlacement(placement, original, expanded) {
+        const rotation = finite(placement.rotation);
+        const rotatedExpanded = rotatePoints(expanded, rotation);
+        const rotatedOriginal = rotatePoints(original, rotation);
+        const expandedCenter = aabbCenter(rotatedExpanded);
+        const originalCenter = aabbCenter(rotatedOriginal);
+        // Deepnest: world = rotatedExpanded + (x, y). Put original AABB center
+        // on the same world point so the unexpanded part sits concentrically.
+        return {
+          ...placement,
+          x: finite(placement.x) + expandedCenter.x - originalCenter.x,
+          y: finite(placement.y) + expandedCenter.y - originalCenter.y,
+        };
+      }
+
+      function remapResult(best, originals, expandeds) {
+        if (!best || !Array.isArray(best.placements)) return best;
+        return {
+          ...best,
+          spacingRemap: "aabbCenterFromExpanded",
+          placements: best.placements.map((sheet) => ({
+            ...sheet,
+            sheetplacements: (sheet.sheetplacements || []).map((placement) => {
+              const id = String(placement.filename ?? "");
+              const original = originals.get(id);
+              const expanded = expandeds.get(id);
+              if (!original || !expanded) return placement;
+              return remapPlacement(placement, original, expanded);
+            }),
+          })),
+        };
+      }
+
+      function sendError(requestId, error) {
+        ipcRenderer.send("cabinetnc-error", {
+          requestId,
+          error: error?.stack || String(error),
+        });
+      }
+
+      ipcRenderer.on("cabinetnc-run-job", (_event, job) => {
+        const requestId = job?.requestId;
+        if (activeJob) {
+          sendError(requestId, "Deepnest runner already has an active job.");
+          return;
+        }
+        try {
+          const deepNest = new DeepNest(ipcRenderer);
+          const prepared = makeParts(job);
+          deepNest.parts = prepared.parts;
+          // Spacing is applied by our Clipper pre-offset + remap, not Deepnest.
+          deepNest.config({
+            scale: 1,
+            spacing: 0,
+            rotations: rotationsFor(job),
+            populationSize: Math.max(Number(job.options?.populationSize) || 10, 3),
+            mutationRate: Math.max(Number(job.options?.mutationRate) || 10, 1),
+            threads: 1,
+            placementType: job.options?.placementType || "gravity",
+            mergeLines: false,
+            simplify: false,
+            timeRatio: 0,
+          });
+
+          // Fixed eval count: keep best fitness among N placements, then stop.
+          // timeBudgetMs is only a safety net if Deepnest never emits.
+          const maxResults = Math.max(Number(job.options?.maxResults) || 2, 1);
+          const timeBudgetMs = Math.max(Number(job.options?.timeBudgetMs) || 90000, 1000);
+          let resultCount = 0;
+          let best = null;
+          let done = false;
+          let deadline = null;
+
+          const cleanup = () => {
+            if (deadline !== null) {
+              clearTimeout(deadline);
+              deadline = null;
+            }
+            deepNest.stop();
+            ipcRenderer.removeListener("background-response", onBackgroundResponse);
+            // DeepNest.start() installs its own anonymous listener. Removing all
+            // listeners here prevents old instances from processing later jobs.
+            ipcRenderer.removeAllListeners("background-response");
+            activeJob = null;
+          };
+
+          const finish = () => {
+            if (done) return;
+            done = true;
+            cleanup();
+            if (!best) {
+              sendError(
+                requestId,
+                "Deepnest did not produce a placement within "
+                  + maxResults + " eval(s) / " + timeBudgetMs + " ms safety "
+                  + "(parts=" + String((job.parts || []).length) + ").",
+              );
+              return;
+            }
+            const remapped = remapResult(
+              best,
+              prepared.originals,
+              prepared.expandeds,
+            );
+            ipcRenderer.send("cabinetnc-result", {
+              requestId,
+              result: {
+                ...remapped,
+                evaluatedResults: resultCount,
+                requestedTimeBudgetMs: timeBudgetMs,
+                requestedMaxResults: maxResults,
+                halfSpacingMm: prepared.halfSpacing,
+              },
+            });
+          };
+
+          const onBackgroundResponse = (_responseEvent, payload) => {
+            if (done) return;
+            // Accept null tagged responses (queue desync) as belonging to the
+            // active job; only drop clearly foreign request IDs.
+            const taggedId = payload?.__cabinetncRequestId;
+            if (taggedId != null && taggedId !== requestId) return;
+            resultCount += 1;
+            if (!best || finite(payload.fitness, Infinity) < finite(best.fitness, Infinity)) {
+              best = payload;
+            }
+            // Good enough: fixed N evals → keep best → stop. No optimality hunt.
+            if (resultCount >= maxResults) finish();
+          };
+
+          activeJob = { requestId, deepNest, finish };
+          deepNest.start(null, null);
+          // Register after DeepNest's own listener so result processing updates
+          // its state before this callback can stop it.
+          ipcRenderer.on("background-response", onBackgroundResponse);
+          deadline = setTimeout(finish, timeBudgetMs);
+        } catch (error) {
+          if (activeJob?.requestId === requestId) {
+            try {
+              activeJob.deepNest.stop();
+            } catch (_stopError) {}
+            activeJob = null;
+            ipcRenderer.removeAllListeners("background-response");
+          }
+          sendError(requestId, error);
+        }
+      });
+
+      window.addEventListener("unload", () => {
+        if (activeJob) activeJob.finish();
+      });
+      ipcRenderer.send("cabinetnc-runner-ready");
+    </script>
+  </body>
+</html>

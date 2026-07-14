@@ -130,7 +130,10 @@ class UnifiedCabinetPluginApp:
             "panelAttributes.scanMetadata": panel_attributes.scan_metadata,
             "panelAttributes.scanSelectedMetadata": panel_attributes.scan_selected_metadata,
             "panelAttributes.checkNestingReady": panel_attributes.check_nesting_ready,
+            "panelAttributes.buildNestingOutlines": panel_attributes.build_nesting_outlines,
             "panelAttributes.createNestingZoneLayout": panel_attributes.create_nesting_zone_layout,
+            "panelAttributes.createNestingLayoutSketch": panel_attributes.create_nesting_layout_sketch,
+            "panelAttributes.exportNestingLayoutDxf": panel_attributes.export_nesting_layout_dxf,
             "panelAttributes.tagScanSelected": panel_attributes.tag_scan_selected,
             "panelAttributes.applyTagScanDrafts": panel_attributes.apply_tag_scan_drafts,
             "panelAttributes.resetAttributeToAuto": panel_attributes.reset_attribute_to_auto,
@@ -152,6 +155,7 @@ class UnifiedCabinetPluginApp:
             "panelAttributes.setThicknessRulesAsDefault": panel_attributes.set_thickness_rules_as_default,
             "panelAttributes.applyThicknessClassification": panel_attributes.apply_thickness_classification,
             "pingPython": self._ping,
+            "palette.close": self._close_palette,
         }
         self.palette_controller = PaletteController(
             self.fusion,
@@ -196,6 +200,12 @@ class UnifiedCabinetPluginApp:
     def stop(self):
         _app, ui = self.fusion.get_app_ui() if self.fusion else (None, None)
         try:
+            from nesting.engines.deepnest_bridge_client import shutdown_pool
+
+            shutdown_pool()
+        except Exception:
+            pass
+        try:
             if self.control:
                 self.control.deleteMe()
                 self.control = None
@@ -227,6 +237,16 @@ class UnifiedCabinetPluginApp:
                 "pythonBuild": "unified-plugin-mvp-001",
             },
         )
+
+    def _close_palette(self, _payload, palette_controller):
+        # Hide only — avoid deleteMe() while still inside the HTML event handler.
+        palette = getattr(palette_controller, "palette", None)
+        if palette:
+            try:
+                palette.isVisible = False
+            except Exception:
+                pass
+        return None
 
 
 class _CommandCreatedHandler(adsk.core.CommandCreatedEventHandler):

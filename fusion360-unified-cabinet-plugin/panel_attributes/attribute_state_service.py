@@ -194,9 +194,16 @@ def _ensure_field_state(state, default_source="legacy"):
     return state
 
 
-def migrate_metadata(metadata):
-    """Return a v2-compatible copy without destroying generator semantics."""
-    working = copy.deepcopy(metadata) if isinstance(metadata, dict) else {}
+def migrate_metadata(metadata, inplace=False):
+    """Return a v2-compatible copy without destroying generator semantics.
+
+    Pass ``inplace=True`` when the caller already owns a disposable deep copy
+    (e.g. Scan All after face overlay) to avoid a second deepcopy.
+    """
+    if inplace and isinstance(metadata, dict):
+        working = metadata
+    else:
+        working = copy.deepcopy(metadata) if isinstance(metadata, dict) else {}
     working.setdefault("schemaVersion", 1)
     classification = _ensure_dict(working, "classification")
 
@@ -302,6 +309,18 @@ def migrate_metadata(metadata):
             cutting["value"] = recovered
             if cutting.get("source") in ("", "legacy", "default"):
                 cutting["source"] = face_state.get("source") or "legacy"
+    elif (
+        _clean_cutting_face(cutting.get("value")) == "EITHER"
+        and not bool(cutting.get("locked"))
+    ):
+        # Live face overlay may have replaced EITHER/EITHER with definite
+        # MILLING/NON_MILLING; promote unlocked cuttingFace so nest face-up
+        # follows the updated milling side.
+        recovered = derive_cutting_face_from_registry(working)
+        if recovered == "MILLING":
+            cutting["value"] = "MILLING"
+            if cutting.get("source") in ("", "legacy", "default", "geometry", "assembly"):
+                cutting["source"] = face_state.get("source") or "geometry"
 
     # Keep faceUpState as a compatibility mirror of cuttingFace provenance.
     registry["faceUpState"] = {
