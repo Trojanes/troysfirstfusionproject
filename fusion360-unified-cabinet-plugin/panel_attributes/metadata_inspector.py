@@ -1,3 +1,4 @@
+import copy
 import json
 
 from panel_body_resolver import list_solid_bodies, resolve_occurrence_path_for_body
@@ -513,15 +514,23 @@ def _derived_tags(metadata, summary):
     }
 
 
-def _overlay_face_registry_from_entities(body, metadata):
+def _overlay_face_registry_from_entities(body, metadata, collect_face_records=False):
     """Read-only reconciliation: face attributes are canonical, registry is index.
 
     No Fusion attributes are written. This keeps Attribute Ready stable even
     for legacy bodies whose face payloads were updated without a registry sync.
+
+    When ``collect_face_records`` is True, also build the face-summary rows in
+    the same pass so Scan All does not call ``read_face_metadata`` twice.
+    Returns ``(metadata, face_records_or_None)``. Does not migrate — callers
+    should migrate once afterward.
     """
     if body is None or not isinstance(metadata, dict) or not callable(read_face_metadata):
-        return metadata
-    working = json.loads(json.dumps(metadata))
+        return metadata, ([] if collect_face_records else None)
+    # Caller may pass a disposable copy; only clone when we still share the
+    # original stored dict (identity check via collect path always clones once
+    # upstream).
+    working = metadata
     registry = working.get("faceRegistry")
     if not isinstance(registry, dict):
         registry = {}
@@ -540,6 +549,7 @@ def _overlay_face_registry_from_entities(body, metadata):
         for item in entries
         if isinstance(item, dict) and item.get("entityToken")
     }
+    face_records = [] if collect_face_records else None
     try:
         faces = body.faces
         count = faces.count if faces else 0
@@ -548,9 +558,73 @@ def _overlay_face_registry_from_entities(body, metadata):
     for index in range(count):
         try:
             face = faces.item(index)
-            payload, _error = read_face_metadata(face)
+            payload, error = read_face_metadata(face)
         except Exception:
             continue
+        token = _safe_entity_token(face)
+        if collect_face_records:
+            face_id = str((payload or {}).get("faceId") or "") if isinstance(payload, dict) else ""
+            registry_entry = by_id.get(face_id) or {}
+            finish = (
+                (payload or {}).get("finish")
+                if isinstance((payload or {}).get("finish"), dict)
+                else {}
+            )
+            edge_banding = (
+                (payload or {}).get("edgeBanding")
+                if isinstance((payload or {}).get("edgeBanding"), dict)
+                else {}
+            )
+            face_records.append(
+                {
+                    "faceId": face_id,
+                    "entityToken": token,
+                    "faceClass": str(
+                        (payload or {}).get("faceClass")
+                        or registry_entry.get("faceClass")
+                        or "unknown"
+                    ),
+                    "faceRole": str(
+                        (payload or {}).get("faceRole")
+                        or registry_entry.get("faceRole")
+                        or "unknown"
+                    ),
+                    "millingSurface": str(
+                        (payload or {}).get("millingSurface")
+                        or registry_entry.get("millingSurface")
+                        or "UNASSIGNED"
+                    ),
+                    "millingSource": str(
+                        (payload or {}).get("millingSource")
+                        or registry_entry.get("millingSource")
+                        or "legacy"
+                    ),
+                    "millingLocked": bool(
+                        (payload or {}).get(
+                            "millingLocked",
+                            registry_entry.get("millingLocked", False),
+                        )
+                    ),
+                    "edgeGroupId": str(
+                        (payload or {}).get("edgeGroupId")
+                        or registry_entry.get("edgeGroupId")
+                        or ""
+                    ),
+                    "edgeId": str(
+                        (payload or {}).get("edgeId") or registry_entry.get("edgeId") or ""
+                    ),
+                    "classificationStatus": str(
+                        (payload or {}).get("classificationStatus")
+                        or registry_entry.get("classificationStatus")
+                        or ""
+                    ),
+                    "finishId": finish.get("finishId") or "",
+                    "finishName": finish.get("finishName") or "",
+                    "edgeBandingRequired": edge_banding.get("required"),
+                    "metadataStatus": "defined" if payload else "missing",
+                    "warnings": [error] if error else [],
+                }
+            )
         if not isinstance(payload, dict):
             continue
         if str(payload.get("faceClass") or "").upper() != "SURFACE":
@@ -559,7 +633,6 @@ def _overlay_face_registry_from_entities(body, metadata):
         if not role:
             continue
         face_id = str(payload.get("faceId") or "")
-        token = _safe_entity_token(face)
         entry = by_id.get(face_id) or by_token.get(token)
         if entry is None:
             entry = {
@@ -574,9 +647,21 @@ def _overlay_face_registry_from_entities(body, metadata):
             if token:
                 by_token[token] = entry
         entry["millingSurface"] = role
-        entry["millingSource"] = str(payload.get("millingSource") or entry.get("millingSource") or "legacy")
-        entry["millingLocked"] = bool(payload.get("millingLocked", entry.get("millingLocked", False)))
-    return attribute_state_service.migrate_metadata(working)
+        entry["millingSource"] = str(
+            payload.get("millingSource") or entry.get("millingSource") or "legacy"
+        )
+        entry["millingLocked"] = bool(
+            payload.get("millingLocked", entry.get("millingLocked", False))
+        )
+        # Keep face-summary milling columns in sync with the registry overlay.
+        if face_records is not None and face_records:
+            last = face_records[-1]
+            if last.get("entityToken") == token or last.get("faceId") == face_id:
+                last["millingSurface"] = role
+                last["millingSource"] = entry["millingSource"]
+                last["millingLocked"] = entry["millingLocked"]
+                last["faceClass"] = "SURFACE"
+    return working, face_records
 
 
 def _validate_metadata(metadata, parse_error, fallback_panel_id):
@@ -728,37 +813,21 @@ def _entity_record(entity, entity_kind, occurrence_path, component_name="", body
         isinstance(stored_metadata, dict)
         and not isinstance(stored_metadata.get("classification"), dict)
     )
-    normalized_metadata = (
-        attribute_state_service.migrate_metadata(metadata)
-        if isinstance(metadata, dict)
-        else metadata
-    )
-    # Full Attributes scan always reconciles live face attributes into the
-    # registry. Nesting/light keeps the fast path, but if Cutting Face would
-    # otherwise be UNASSIGNED we still overlay SURFACE milling roles — those
-    # often live only on face attributes after Analyze/Orient.
-    if (
-        entity_kind in ("body", "selected_body")
-        and isinstance(normalized_metadata, dict)
-    ):
-        needs_overlay = not light
-        if light and callable(evaluate_attribute_ready):
-            try:
-                preview = evaluate_attribute_ready(normalized_metadata, None)
-                needs_overlay = str(
-                    (preview or {}).get("requiredFaceUp") or "UNASSIGNED"
-                ).upper() == "UNASSIGNED"
-            except Exception:
-                needs_overlay = True
-        if needs_overlay:
-            normalized_metadata = _overlay_face_registry_from_entities(
-                entity, normalized_metadata
+    face_records = None
+    if isinstance(metadata, dict):
+        # One disposable copy → live face overlay → single migrate.
+        working = copy.deepcopy(metadata)
+        if entity_kind in ("body", "selected_body"):
+            working, face_records = _overlay_face_registry_from_entities(
+                entity,
+                working,
+                collect_face_records=not light,
             )
-            # Overlay may recover SURFACE milling roles that migrate missed.
-            # Re-migrate so classification.cuttingFace is filled in-memory.
-            normalized_metadata = attribute_state_service.migrate_metadata(
-                normalized_metadata
-            )
+        normalized_metadata = attribute_state_service.migrate_metadata(
+            working, inplace=True
+        )
+    else:
+        normalized_metadata = metadata
     summary = _metadata_summary(normalized_metadata, fallback_panel_id)
     derived = _derived_tags(normalized_metadata, summary)
     attribute_readiness = None
@@ -777,8 +846,10 @@ def _entity_record(entity, entity_kind, occurrence_path, component_name="", body
         "entityToken": _safe_entity_token(entity),
         "status": status,
         "warnings": warnings if not light else [],
-        "rawMetadata": raw_metadata if not light else None,
-        "storedMetadata": stored_metadata if not light else None,
+        # Full scan used to ship raw+stored+normalized (often with large SVG).
+        # Palette never reads raw/stored; keep only normalized metadata.
+        "rawMetadata": None,
+        "storedMetadata": None,
         "metadata": normalized_metadata,
         "metadataSource": "synthesized" if synthesized else ("stored" if stored_metadata else "missing"),
         "scanDetail": detail_mode,
@@ -822,7 +893,9 @@ def _entity_record(entity, entity_kind, occurrence_path, component_name="", body
                     record["requiredFaceUp"] = cutting_value
     if light:
         return record
-    return _attach_geometry_fields(record, entity_kind, entity, normalized_metadata)
+    return _attach_geometry_fields(
+        record, entity_kind, entity, normalized_metadata, face_records=face_records
+    )
 
 
 def _apply_thickness_classification(record, rules_payload):
@@ -861,24 +934,26 @@ def _apply_thickness_classification(record, rules_payload):
     return record
 
 
-def _attach_geometry_fields(record, entity_kind, entity, metadata):
+def _attach_geometry_fields(record, entity_kind, entity, metadata, face_records=None):
     if entity_kind not in ("body", "selected_body"):
         return record
-    if callable(list_body_face_records):
+    if face_records is None and callable(list_body_face_records):
         face_records = list_body_face_records(entity, metadata)
-        if face_records:
-            registry = (metadata or {}).get("faceRegistry") or {}
-            record["faceSummary"] = {
-                "surfaceMode": registry.get("surfaceMode") or "",
-                "faceCount": len(face_records),
-                "definedFaceCount": sum(1 for item in face_records if item.get("metadataStatus") == "defined"),
-                "edgeCount": len(registry.get("edges") or []),
-                "faces": face_records,
-                "edges": registry.get("edges") or [],
-                "edgeGroups": registry.get("edgeGroups") or [],
-                "featureFaceCount": len(registry.get("featureFaces") or []),
-                "featureFaces": registry.get("featureFaces") or [],
-            }
+    if face_records:
+        registry = (metadata or {}).get("faceRegistry") or {}
+        record["faceSummary"] = {
+            "surfaceMode": registry.get("surfaceMode") or "",
+            "faceCount": len(face_records),
+            "definedFaceCount": sum(
+                1 for item in face_records if item.get("metadataStatus") == "defined"
+            ),
+            "edgeCount": len(registry.get("edges") or []),
+            "faces": face_records,
+            "edges": registry.get("edges") or [],
+            "edgeGroups": registry.get("edgeGroups") or [],
+            "featureFaceCount": len(registry.get("featureFaces") or []),
+            "featureFaces": registry.get("featureFaces") or [],
+        }
     meta = metadata or {}
     dimensions = meta.get("dimensions")
     if isinstance(dimensions, dict):
@@ -891,6 +966,7 @@ def _attach_geometry_fields(record, entity_kind, entity, metadata):
         record["features"] = features
     milling_svg = meta.get("millingSurfaceSvg")
     if isinstance(milling_svg, dict):
+        # Keep SVG preview for detail pane; avoid shipping duplicate raw/stored.
         record["millingSurfaceSvg"] = {
             "viewBox": milling_svg.get("viewBox"),
             "widthMm": milling_svg.get("widthMm"),
@@ -1007,13 +1083,18 @@ def _walk_component(component, occurrence_path, sink, zone_context=None, root_co
             continue
 
         profiler = (zone_context or {}).get("profiler")
-        # Nesting light scan skips createForAssemblyContext proxies — they are
-        # extremely expensive across deep assemblies and are not needed when we
-        # resolve later by occurrencePath + bodyName.
-        if light:
-            scan_body = body
+        # Always resolve an occurrence proxy when the body lives under an
+        # occurrence path. Light/nesting scans used to skip this for speed, but
+        # then:
+        # 1) body attributes written via selection proxies were often invisible
+        #    on the bare component body → false "unmarked solids skipped"
+        # 2) Nesting-zone exclusion used wrong world centres without the
+        #    assembly transform → assembly boards could be misclassified.
+        # Scan All (full) already used proxies; Nesting Ready must match.
+        if occurrence_path:
+            scan_body = _body_proxy_in_root(body, root, occurrence_path) or body
         else:
-            scan_body = _body_proxy_in_root(body, root, occurrence_path)
+            scan_body = body
 
         body_t0 = None
         if profiler is not None:
@@ -1038,6 +1119,26 @@ def _walk_component(component, occurrence_path, sink, zone_context=None, root_co
             if profiler is not None:
                 profiler.add("bodiesSkippedNoAttrs", 1)
             continue
+        # Accumulate solid diagnostics during the main walk so Scan All does not
+        # pay for a second full-tree metadata pass via _count_solid_bodies.
+        diag = None
+        if isinstance(zone_context, dict) and not light:
+            diag = zone_context.setdefault(
+                "solidDiag",
+                {
+                    "solidBodies": 0,
+                    "withModuleOrPanelId": 0,
+                    "withPanelMetadata": 0,
+                    "withoutAttrs": 0,
+                },
+            )
+            diag["solidBodies"] = int(diag.get("solidBodies") or 0) + 1
+            if body_record.get("metadata"):
+                diag["withPanelMetadata"] = int(diag.get("withPanelMetadata") or 0) + 1
+            if str(body_record.get("metadataSource") or "") in ("stored", "synthesized"):
+                diag["withModuleOrPanelId"] = int(diag.get("withModuleOrPanelId") or 0) + 1
+            else:
+                diag["withoutAttrs"] = int(diag.get("withoutAttrs") or 0) + 1
         if profiler is not None:
             profiler.add("bodiesRecorded", 1)
             if body_t0 is not None:
@@ -1068,20 +1169,28 @@ def _walk_component(component, occurrence_path, sink, zone_context=None, root_co
             body_record["selectionProxy"] = True
         layout = (zone_context or {}).get("layout")
         zone_filter = (zone_context or {}).get("filter") if layout is not None else None
-        # Nesting light scans use zoneFilter=all and do not need per-body zone
-        # classification (world bbox probes are costly on large assemblies).
-        need_zone = bool(layout is not None and work_zones is not None and (
-            not light or (zone_filter and zone_filter != "all")
-        ))
+        # When work zones exist, classify every body so Nesting-zone workpieces
+        # can be excluded from source scans (Scan All / Ready / layout sources).
+        need_zone = bool(layout is not None and work_zones is not None)
         if need_zone:
             zone = work_zones.zone_of_body(scan_body, layout)
             body_record["zone"] = zone
             role = work_zones.instance_role_of_body(scan_body) or work_zones.instance_role_of_body(body)
             if role:
                 body_record["instanceRole"] = role
+            # Nesting Zone holds layout copies. Never treat them as source panels
+            # unless the user explicitly chose the Nesting zone filter.
+            if zone == work_zones.ZONE_NESTING and zone_filter != work_zones.ZONE_NESTING:
+                if isinstance(zone_context, dict):
+                    zone_context["skippedNestingZone"] = int(
+                        zone_context.get("skippedNestingZone") or 0
+                    ) + 1
+                if profiler is not None:
+                    profiler.add("bodiesSkippedNestingZone", 1)
+                continue
             if zone == work_zones.ZONE_NESTING and not light:
                 body_record.setdefault("warnings", []).append(
-                    "Body sits in the nesting zone but is not marked as a nested instance."
+                    "Body sits in the Nesting zone (explicit Nesting-zone scan)."
                 )
             if zone_filter and zone_filter != "all" and zone != zone_filter:
                 continue
@@ -1176,6 +1285,7 @@ def scan_panel_metadata(root_component, zone_filter=None, detail="full", profile
         "layout": layout,
         "filter": zone_filter if layout else None,
         "profiler": profiler,
+        "skippedNestingZone": 0,
     }
     if not light and thickness_rules is not None:
         try:
@@ -1194,7 +1304,20 @@ def scan_panel_metadata(root_component, zone_filter=None, detail="full", profile
         profiler.end("scanWalk")
         profiler.begin("scanFinalize")
     records, counts = _finalize_records(records)
-    diagnostics = _count_solid_bodies(root_component) if not light else {}
+    # Prefer walk-time solid counts (full scan). Fall back to a second walk only
+    # when diagnostics were not collected (should not happen for detail=full).
+    walk_diag = zone_context.get("solidDiag") if isinstance(zone_context, dict) else None
+    if light:
+        diagnostics = {}
+    elif isinstance(walk_diag, dict) and int(walk_diag.get("solidBodies") or 0) > 0:
+        diagnostics = {
+            "solidBodies": int(walk_diag.get("solidBodies") or 0),
+            "withModuleOrPanelId": int(walk_diag.get("withModuleOrPanelId") or 0),
+            "withPanelMetadata": int(walk_diag.get("withPanelMetadata") or 0),
+            "withoutAttrs": int(walk_diag.get("withoutAttrs") or 0),
+        }
+    else:
+        diagnostics = _count_solid_bodies(root_component)
     body_records = [r for r in records if "body" in str(r.get("entityKind") or "").lower()]
     diagnostics["scannedRecords"] = len(records)
     diagnostics["scannedBodies"] = len(body_records)
@@ -1202,10 +1325,22 @@ def scan_panel_metadata(root_component, zone_filter=None, detail="full", profile
     diagnostics["workZonesPresent"] = bool(layout)
     diagnostics["scanDetail"] = detail_mode
     diagnostics["elapsedMs"] = int((_time.perf_counter() - started) * 1000)
+    skipped_nesting = int(zone_context.get("skippedNestingZone") or 0)
+    if profiler is not None:
+        skipped_nesting = max(
+            skipped_nesting,
+            int(profiler.counters.get("bodiesSkippedNestingZone") or 0),
+        )
+    diagnostics["bodiesSkippedNestingZone"] = skipped_nesting
     if profiler is not None:
         profiler.end("scanFinalize")
         profiler.add("scannedBodies", len(body_records))
-        profiler.mark("scanDone", bodies=len(body_records), elapsedMs=diagnostics["elapsedMs"])
+        profiler.mark(
+            "scanDone",
+            bodies=len(body_records),
+            skippedNestingZone=skipped_nesting,
+            elapsedMs=diagnostics["elapsedMs"],
+        )
     if not light:
         diagnostics["missingBodies"] = sum(1 for r in body_records if r.get("status") == "Missing")
         if layout and zone_filter and zone_filter != "all":

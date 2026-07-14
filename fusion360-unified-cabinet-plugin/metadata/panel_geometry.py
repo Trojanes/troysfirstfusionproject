@@ -288,6 +288,46 @@ def _faces_share_edge(face_a, face_b):
     return False
 
 
+def _faces_share_edge_any(face, candidates):
+    for candidate in candidates or []:
+        if candidate is None:
+            continue
+        if _faces_share_edge(face, candidate):
+            return True
+    return False
+
+
+def _coplanar_same_side_faces(body, reference, offset_tol_mm=0.75):
+    """Other body faces on the same broad side as ``reference`` (split skins)."""
+    if body is None or reference is None:
+        return []
+    try:
+        ref_normal = _face_normal_local(reference, body)
+        ref_centroid = _face_centroid_local_mm(reference, body)
+    except Exception:
+        return []
+    ref_offset = dot3(ref_normal, ref_centroid)
+    ref_key = _face_key(reference)
+    siblings = []
+    for face in _iter_body_faces(body):
+        if _face_key(face) == ref_key:
+            continue
+        try:
+            normal = _face_normal_local(face, body)
+        except Exception:
+            continue
+        if abs(dot3(normal, ref_normal)) < PARALLEL_DOT:
+            continue
+        try:
+            centroid = _face_centroid_local_mm(face, body)
+        except Exception:
+            continue
+        if abs(dot3(ref_normal, centroid) - ref_offset) > offset_tol_mm:
+            continue
+        siblings.append(face)
+    return siblings
+
+
 _BODY_FRAME_CACHE = {"key": None, "frame": None}
 
 
@@ -507,12 +547,17 @@ def _half_feature_open_surface(
     offset_b,
     axis_unit,
     debug=None,
+    body=None,
 ):
     """Pick the broad face a blind feature opens onto.
 
     Prefer topology: a pocket/cup wall shares an edge with the floor and with
     exactly one broad surface — that surface is the opening. Do not use
     nearest-surface (deep hinge cups sit closer to the closed face).
+
+    When the milled skin is split into coplanar fragments, walls often touch a
+    remnant rather than the single largest SURFACE face — so also treat
+    coplanar same-side faces as that opening side.
 
     Normal fallback: BRep face normals point out of the solid. On a pocket
     floor that is into the cavity, toward the open face. If topology cannot
@@ -525,17 +570,21 @@ def _half_feature_open_surface(
     # are the same underlying BRepFace.
     votes_a = 0
     votes_b = 0
+    side_a = [surface_a] + _coplanar_same_side_faces(body, surface_a)
+    side_b = [surface_b] + _coplanar_same_side_faces(body, surface_b)
+    side_a_keys = {_face_key(face) for face in side_a if face is not None}
+    side_b_keys = {_face_key(face) for face in side_b if face is not None}
     try:
         floor_key = _face_key(floor_face)
-        key_a = _face_key(surface_a)
-        key_b = _face_key(surface_b)
         for edge in _iter_collection(floor_face.edges):
             for neighbour in _iter_collection(edge.faces):
                 neighbour_key = _face_key(neighbour)
-                if neighbour_key == floor_key or neighbour_key in (key_a, key_b):
+                if neighbour_key == floor_key:
                     continue
-                adj_a = _faces_share_edge(neighbour, surface_a)
-                adj_b = _faces_share_edge(neighbour, surface_b)
+                if neighbour_key in side_a_keys or neighbour_key in side_b_keys:
+                    continue
+                adj_a = _faces_share_edge_any(neighbour, side_a)
+                adj_b = _faces_share_edge_any(neighbour, side_b)
                 if adj_a and not adj_b:
                     votes_a += 1
                 elif adj_b and not adj_a:
@@ -545,6 +594,8 @@ def _half_feature_open_surface(
     if isinstance(debug, dict):
         debug["votesA"] = votes_a
         debug["votesB"] = votes_b
+        debug["sideACount"] = len(side_a)
+        debug["sideBCount"] = len(side_b)
     if votes_a > votes_b:
         if isinstance(debug, dict):
             debug["method"] = "topology"
@@ -617,6 +668,7 @@ def extract_features(body, surface_a, surface_b, thickness_axis, offset_a, offse
         open_surface = _half_feature_open_surface(
             face, normal, offset, surface_a, surface_b, offset_a, offset_b, axis_unit,
             debug=open_debug,
+            body=body,
         )
         open_offset = offset_a if open_surface is surface_a else offset_b
         depth = round(abs(offset - open_offset), 3)

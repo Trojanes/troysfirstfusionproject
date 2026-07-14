@@ -228,26 +228,85 @@ def detect_surface_milling_roles(surface_faces, edge_faces, panel_context=None):
     broad faces (it spans the full panel thickness). So a perpendicular face
     adjacent to exactly one surface marks that surface as the milled side.
 
+    After Extrude-Cut the milled skin may split into coplanar remnants that are
+    classified as EDGE. Walls often touch those remnants, so treat coplanar
+    same-side EDGE faces as part of that broad side.
+
     Returns a list aligned to ``surface_faces``. With no half-slot on either
     side both surfaces are EITHER; with a half-slot on one side that side is
-    MILLING and the opposite NON_MILLING; with half-slots on both sides both
-    are MILLING.
+    MILLING and the opposite NON_MILLING.
+
+    Half-slots on both sides still return complementary roles (prefer A as
+    MILLING / B as NON_MILLING). Colour face (NON_MILLING) and milling face
+    must never be the same role pair or the same entity.
     """
     if len(surface_faces) < 2:
         return [MILLING_SURFACE_EITHER for _ in surface_faces]
 
     surface_a, surface_b = surface_faces[0], surface_faces[1]
     ref_normal = _normalize_vector(_face_normal(surface_a, panel_context))
+    body = None
+    if isinstance(panel_context, dict):
+        body = panel_context.get("body")
+
+    def _same_side_group(reference):
+        group = [reference]
+        ref_n = _normalize_vector(_face_normal(reference, panel_context))
+        try:
+            ref_c = _face_centroid(reference, panel_context)
+        except Exception:
+            ref_c = None
+        if ref_c is None:
+            return group
+        ref_offset = _dot(ref_n, ref_c)
+        for face in edge_faces or []:
+            normal = _normalize_vector(_face_normal(face, panel_context))
+            if abs(_dot(normal, ref_n)) < 0.85:
+                continue
+            try:
+                centroid = _face_centroid(face, panel_context)
+            except Exception:
+                continue
+            if abs(_dot(ref_n, centroid) - ref_offset) > 0.75:
+                continue
+            group.append(face)
+        return group
+
+    # Optional body-wide coplanar remnants when panel_context carries the body.
+    if body is not None:
+        try:
+            from panel_geometry import _coplanar_same_side_faces
+        except Exception:
+            try:
+                from metadata.panel_geometry import _coplanar_same_side_faces
+            except Exception:
+                _coplanar_same_side_faces = None
+        if callable(_coplanar_same_side_faces):
+            side_a = [surface_a] + list(_coplanar_same_side_faces(body, surface_a) or [])
+            side_b = [surface_b] + list(_coplanar_same_side_faces(body, surface_b) or [])
+        else:
+            side_a = _same_side_group(surface_a)
+            side_b = _same_side_group(surface_b)
+    else:
+        side_a = _same_side_group(surface_a)
+        side_b = _same_side_group(surface_b)
+
+    side_a_ids = {_face_key(face) for face in side_a}
+    side_b_ids = {_face_key(face) for face in side_b}
 
     opens_on_a = False
     opens_on_b = False
     for face in edge_faces or []:
+        face_key = _face_key(face)
+        if face_key in side_a_ids or face_key in side_b_ids:
+            # Coplanar skin remnant — not a slot wall.
+            continue
         normal = _normalize_vector(_face_normal(face, panel_context))
         if abs(_dot(normal, ref_normal)) > SURFACE_PERPENDICULAR_DOT:
             # Parallel-ish faces (groove floors / steps) are not slot walls.
             continue
-        adj_a = _faces_share_edge(face, surface_a)
-        adj_b = _faces_share_edge(face, surface_b)
+        adj_a = any(_faces_share_edge(face, candidate) for candidate in side_a)
+        adj_b = any(_faces_share_edge(face, candidate) for candidate in side_b)
         if adj_a and adj_b:
             # Spans full thickness -> genuine outer edge band, not a half-slot.
             continue
@@ -257,7 +316,8 @@ def detect_surface_milling_roles(surface_faces, edge_faces, panel_context=None):
             opens_on_b = True
 
     if opens_on_a and opens_on_b:
-        return [MILLING_SURFACE, MILLING_SURFACE]
+        # Never MILLING/MILLING: colour face must remain the opposite side.
+        return [MILLING_SURFACE, NON_MILLING_SURFACE]
     if opens_on_a:
         return [MILLING_SURFACE, NON_MILLING_SURFACE]
     if opens_on_b:

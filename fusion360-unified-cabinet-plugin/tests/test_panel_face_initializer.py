@@ -247,6 +247,19 @@ class PanelFaceInitializerTests(unittest.TestCase):
         roles = detect_surface_milling_roles([surface_a, surface_b], [slot_wall])
         self.assertEqual(roles, [NON_MILLING_SURFACE, MILLING_SURFACE])
 
+    def test_milling_roles_both_sides_never_dual_milling(self):
+        surface_a = AdjFace("A", [0, 0, 1])
+        surface_b = AdjFace("B", [0, 0, -1])
+        wall_a = AdjFace("wallA", [0, 1, 0])
+        wall_b = AdjFace("wallB", [0, -1, 0])
+        _connect(wall_a, surface_a)
+        _connect(wall_b, surface_b)
+        roles = detect_surface_milling_roles(
+            [surface_a, surface_b], [wall_a, wall_b]
+        )
+        self.assertEqual(roles, [MILLING_SURFACE, NON_MILLING_SURFACE])
+        self.assertNotEqual(roles[0], roles[1])
+
     def test_split_true_edges_from_feature_faces(self):
         e_top = KeyEdge("eTop")
         e_bot = KeyEdge("eBot")

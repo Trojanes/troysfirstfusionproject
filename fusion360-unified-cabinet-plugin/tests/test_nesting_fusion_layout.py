@@ -17,6 +17,47 @@ if "adsk" not in sys.modules:
     sys.modules["adsk.fusion"] = adsk.fusion
 
 from nesting.fusion_layout import rotation_from_to  # noqa: E402
+from nesting.brep_loops import (  # noqa: E402
+    directed_coedge_points,
+    inner_loop_is_full_through,
+)
+
+
+class _Collection:
+    def __init__(self, values):
+        self._values = values
+        self.count = len(values)
+
+    def item(self, index):
+        return self._values[index]
+
+
+class _Point:
+    def __init__(self, x, y, z=0):
+        self.x, self.y, self.z = x, y, z
+
+
+class _Bounds:
+    def __init__(self, min_z, max_z):
+        self.minPoint = _Point(0, 0, min_z)
+        self.maxPoint = _Point(0, 0, max_z)
+
+
+class _Evaluator:
+    def __init__(self, points):
+        self.points = points
+        self.stroke_args = None
+
+    def getParameterExtents(self):
+        return True, 2.0, 8.0
+
+    def getStrokes(self, start, end, tolerance):
+        self.stroke_args = (start, end, tolerance)
+        return True, self.points
+
+
+class _Entity:
+    pass
 
 
 class NestingFusionLayoutMathTests(unittest.TestCase):
@@ -34,6 +75,55 @@ class NestingFusionLayoutMathTests(unittest.TestCase):
         angle, axis = rotation_from_to([0, 0, -1], [0, 0, 1])
         self.assertAlmostEqual(angle, math.pi)
         self.assertAlmostEqual(sum(v * v for v in axis), 1.0)
+
+    def test_coedge_strokes_follow_reversed_loop_direction(self):
+        evaluator = _Evaluator([_Point(0, 0), _Point(0.5, 0.2), _Point(1, 0)])
+        edge = _Entity()
+        edge.evaluator = evaluator
+        coedge = _Entity()
+        coedge.edge = edge
+        coedge.isOpposedToEdge = True
+        points = directed_coedge_points(coedge)
+        self.assertEqual(points[0], (1.0, 0.0, 0.0))
+        self.assertEqual(points[-1], (0.0, 0.0, 0.0))
+        self.assertEqual(evaluator.stroke_args, (2.0, 8.0, 0.01))
+
+    def test_coedge_reverses_after_opposite_evaluator_direction_is_normalized(self):
+        evaluator = _Evaluator([_Point(1, 0), _Point(0.5, 0.2), _Point(0, 0)])
+        edge = _Entity()
+        edge.evaluator = evaluator
+        edge.startVertex = _Entity()
+        edge.startVertex.geometry = _Point(0, 0)
+        edge.endVertex = _Entity()
+        edge.endVertex.geometry = _Point(1, 0)
+        coedge = _Entity()
+        coedge.edge = edge
+        coedge.isOpposedToEdge = True
+
+        points = directed_coedge_points(coedge)
+
+        self.assertEqual(points[0], (1.0, 0.0, 0.0))
+        self.assertEqual(points[1], (0.5, 0.2, 0.0))
+        self.assertEqual(points[-1], (0.0, 0.0, 0.0))
+
+    def test_full_through_wall_reaches_opposite_extent_but_blind_does_not(self):
+        body = _Entity()
+        body.boundingBox = _Bounds(0.0, 2.0)
+        top = _Entity()
+
+        def loop_with_wall(min_z):
+            wall = _Entity()
+            wall.boundingBox = _Bounds(min_z, 2.0)
+            edge = _Entity()
+            edge.faces = _Collection([top, wall])
+            coedge = _Entity()
+            coedge.edge = edge
+            loop = _Entity()
+            loop.coEdges = _Collection([coedge])
+            return loop
+
+        self.assertTrue(inner_loop_is_full_through(loop_with_wall(0.0), top, body))
+        self.assertFalse(inner_loop_is_full_through(loop_with_wall(1.5), top, body))
 
 
 if __name__ == "__main__":

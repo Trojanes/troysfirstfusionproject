@@ -7,7 +7,7 @@ import adsk.fusion
 
 from geometry_ops import ATTRIBUTE_GROUP, MODEL_Z_OFFSET_MM, mm_to_cm, offset_matching_bodies_z_mm, sanitize_token
 
-ADAPTER_REVISION = "loungeWorldAlignedAssembly_v23"
+ADAPTER_REVISION = "loungeWorldAlignedAssembly_v24"
 
 
 def _num(value, fallback=0.0):
@@ -357,6 +357,7 @@ def _add_placement_box_body(component, item, preview_mode="assembly"):
 
 
 def _rounded_rect_points(x0, y0, x1, y1, radius, segments=10):
+    """Tessellated ring for area estimates / SVG only — not for Fusion sketches."""
     r = max(0.0, min(float(radius or 0.0), (x1 - x0) / 2.0, (y1 - y0) / 2.0))
     if r <= 0:
         return [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]
@@ -375,6 +376,89 @@ def _rounded_rect_points(x0, y0, x1, y1, radius, segments=10):
     return pts
 
 
+def _sketch_xy_point(sketch, x_mm, y_mm, offset_x=0.0, offset_y=0.0, plane_z_mm=None):
+    if plane_z_mm is None:
+        return adsk.core.Point3D.create(
+            mm_to_cm(_num(x_mm) + offset_x),
+            mm_to_cm(_num(y_mm) + offset_y),
+            0,
+        )
+    world = adsk.core.Point3D.create(
+        mm_to_cm(_num(x_mm) + offset_x),
+        mm_to_cm(_num(y_mm) + offset_y),
+        mm_to_cm(plane_z_mm),
+    )
+    return sketch.modelToSketchSpace(world)
+
+
+def _draw_rounded_rect(
+    sketch, x0, y0, x1, y1, radius, offset_x=0.0, offset_y=0.0, plane_z_mm=None
+):
+    """Draw a rounded rectangle with true sketch arcs (not polyline facets).
+
+    Uses a sharp rectangle + corner fillets so line/arc endpoints stay coincident
+    and Fusion can form a closed profile for extrude/cut.
+    """
+    if x1 <= x0 or y1 <= y0:
+        return False
+    r = max(0.0, min(float(radius or 0.0), (x1 - x0) / 2.0, (y1 - y0) / 2.0))
+    lines = sketch.sketchCurves.sketchLines
+    arcs = sketch.sketchCurves.sketchArcs
+
+    def pt(x, y):
+        return _sketch_xy_point(sketch, x, y, offset_x, offset_y, plane_z_mm)
+
+    # Full circle when the rounded rect collapses to a disk.
+    if (
+        r > 1e-6
+        and abs((x1 - x0) - 2.0 * r) <= 1e-6
+        and abs((y1 - y0) - 2.0 * r) <= 1e-6
+    ):
+        center = pt((x0 + x1) * 0.5, (y0 + y1) * 0.5)
+        sketch.sketchCurves.sketchCircles.addByCenterRadius(center, mm_to_cm(r))
+        return True
+
+    p00 = pt(x0, y0)
+    p10 = pt(x1, y0)
+    p11 = pt(x1, y1)
+    p01 = pt(x0, y1)
+    bottom = lines.addByTwoPoints(p00, p10)
+    right = lines.addByTwoPoints(p10, p11)
+    top = lines.addByTwoPoints(p11, p01)
+    left = lines.addByTwoPoints(p01, p00)
+    if r <= 1e-6:
+        return True
+
+    r_cm = mm_to_cm(r)
+    try:
+        arcs.addFillet(bottom, right, r_cm)
+        arcs.addFillet(right, top, r_cm)
+        arcs.addFillet(top, left, r_cm)
+        arcs.addFillet(left, bottom, r_cm)
+        return True
+    except Exception:
+        pass
+
+    # Fallback: explicit quarter arcs (delete failed sharp rect first).
+    try:
+        bottom.deleteMe()
+        right.deleteMe()
+        top.deleteMe()
+        left.deleteMe()
+    except Exception:
+        return False
+    quarter = math.pi * 0.5
+    lines.addByTwoPoints(pt(x0 + r, y0), pt(x1 - r, y0))
+    arcs.addByCenterStartSweep(pt(x1 - r, y0 + r), pt(x1 - r, y0), quarter)
+    lines.addByTwoPoints(pt(x1, y0 + r), pt(x1, y1 - r))
+    arcs.addByCenterStartSweep(pt(x1 - r, y1 - r), pt(x1, y1 - r), quarter)
+    lines.addByTwoPoints(pt(x1 - r, y1), pt(x0 + r, y1))
+    arcs.addByCenterStartSweep(pt(x0 + r, y1 - r), pt(x0 + r, y1), quarter)
+    lines.addByTwoPoints(pt(x0, y1 - r), pt(x0, y0 + r))
+    arcs.addByCenterStartSweep(pt(x0 + r, y0 + r), pt(x0, y0 + r), quarter)
+    return True
+
+
 def _draw_loop(sketch, points, offset_x=0.0, offset_y=0.0, plane_z_mm=None):
     if not isinstance(points, list) or len(points) < 3:
         return False
@@ -387,22 +471,12 @@ def _draw_loop(sketch, points, offset_x=0.0, offset_y=0.0, plane_z_mm=None):
     for idx in range(len(clean) - 1):
         p0 = clean[idx]
         p1 = clean[idx + 1]
-        if plane_z_mm is None:
-            a = adsk.core.Point3D.create(mm_to_cm(_num(p0[0]) + offset_x), mm_to_cm(_num(p0[1]) + offset_y), 0)
-            b = adsk.core.Point3D.create(mm_to_cm(_num(p1[0]) + offset_x), mm_to_cm(_num(p1[1]) + offset_y), 0)
-        else:
-            a = adsk.core.Point3D.create(
-                mm_to_cm(_num(p0[0]) + offset_x),
-                mm_to_cm(_num(p0[1]) + offset_y),
-                mm_to_cm(plane_z_mm),
-            )
-            b = adsk.core.Point3D.create(
-                mm_to_cm(_num(p1[0]) + offset_x),
-                mm_to_cm(_num(p1[1]) + offset_y),
-                mm_to_cm(plane_z_mm),
-            )
-            a = sketch.modelToSketchSpace(a)
-            b = sketch.modelToSketchSpace(b)
+        a = _sketch_xy_point(
+            sketch, p0[0], p0[1], offset_x, offset_y, plane_z_mm
+        )
+        b = _sketch_xy_point(
+            sketch, p1[0], p1[1], offset_x, offset_y, plane_z_mm
+        )
         lines.addByTwoPoints(a, b)
     return True
 
@@ -503,9 +577,10 @@ def _cut_rounded_rect_from_top(component, body, item_id, x0, y0, x1, y1, radius,
     plane = construction.add(plane_input)
     sketch = component.sketches.add(plane)
     sketch.name = "LOUNGE_CUT_{}".format(sanitize_token(item_id, limit=60))
-    loop = _rounded_rect_points(x0, y0, x1, y1, radius)
-    if not _draw_loop(sketch, loop, offset_x, offset_y, plane_z_mm=plane_z):
-        return {"id": item_id, "status": "failed", "reason": "draw_loop_failed"}
+    if not _draw_rounded_rect(
+        sketch, x0, y0, x1, y1, radius, offset_x, offset_y, plane_z_mm=plane_z
+    ):
+        return {"id": item_id, "status": "failed", "reason": "draw_rounded_rect_failed"}
     profile = _largest_profile(sketch)
     if profile is None:
         return {"id": item_id, "status": "failed", "reason": "no_profile"}
@@ -546,9 +621,21 @@ def _cut_rounded_rect_ring_from_top(component, body, item_id, x0, y0, x1, y1, ra
     plane = component.constructionPlanes.add(plane_input)
     sketch = component.sketches.add(plane)
     sketch.name = "LOUNGE_CUT_{}".format(sanitize_token(item_id, limit=60))
-    if not _draw_loop(sketch, _rounded_rect_points(x0, y0, x1, y1, radius), offset_x, offset_y, plane_z_mm=plane_z):
+    if not _draw_rounded_rect(
+        sketch, x0, y0, x1, y1, radius, offset_x, offset_y, plane_z_mm=plane_z
+    ):
         return {"id": item_id, "status": "failed", "reason": "draw_outer_failed"}
-    if not _draw_loop(sketch, _rounded_rect_points(ix0, iy0, ix1, iy1, inner_radius), offset_x, offset_y, plane_z_mm=plane_z):
+    if not _draw_rounded_rect(
+        sketch,
+        ix0,
+        iy0,
+        ix1,
+        iy1,
+        inner_radius,
+        offset_x,
+        offset_y,
+        plane_z_mm=plane_z,
+    ):
         return {"id": item_id, "status": "failed", "reason": "draw_inner_failed"}
     outer_area = _rounded_rect_area_mm2(x0, y0, x1, y1, radius)
     inner_area = _rounded_rect_area_mm2(ix0, iy0, ix1, iy1, inner_radius)
@@ -738,6 +825,96 @@ def _draw_loop_oriented(sketch, points, plane, placement):
     return True
 
 
+def _draw_rounded_rect_oriented(sketch, x0, y0, x1, y1, radius, plane, placement):
+    """Oriented rounded rectangle using true arcs in the profile plane."""
+    if x1 <= x0 or y1 <= y0:
+        return False
+    r = max(0.0, min(float(radius or 0.0), (x1 - x0) / 2.0, (y1 - y0) / 2.0))
+    lines = sketch.sketchCurves.sketchLines
+    arcs = sketch.sketchCurves.sketchArcs
+
+    def to_sketch(local_xy):
+        world = _profile_world_point(plane, placement, local_xy)
+        if world is None:
+            return None
+        model = adsk.core.Point3D.create(
+            mm_to_cm(world[0]), mm_to_cm(world[1]), mm_to_cm(world[2])
+        )
+        return sketch.modelToSketchSpace(model)
+
+    if (
+        r > 1e-6
+        and abs((x1 - x0) - 2.0 * r) <= 1e-6
+        and abs((y1 - y0) - 2.0 * r) <= 1e-6
+    ):
+        center = to_sketch([(x0 + x1) * 0.5, (y0 + y1) * 0.5])
+        if center is None:
+            return False
+        sketch.sketchCurves.sketchCircles.addByCenterRadius(center, mm_to_cm(r))
+        return True
+
+    p00 = to_sketch([x0, y0])
+    p10 = to_sketch([x1, y0])
+    p11 = to_sketch([x1, y1])
+    p01 = to_sketch([x0, y1])
+    if any(value is None for value in (p00, p10, p11, p01)):
+        return False
+    bottom = lines.addByTwoPoints(p00, p10)
+    right = lines.addByTwoPoints(p10, p11)
+    top = lines.addByTwoPoints(p11, p01)
+    left = lines.addByTwoPoints(p01, p00)
+    if r <= 1e-6:
+        return True
+
+    r_cm = mm_to_cm(r)
+    try:
+        arcs.addFillet(bottom, right, r_cm)
+        arcs.addFillet(right, top, r_cm)
+        arcs.addFillet(top, left, r_cm)
+        arcs.addFillet(left, bottom, r_cm)
+        return True
+    except Exception:
+        pass
+
+    try:
+        bottom.deleteMe()
+        right.deleteMe()
+        top.deleteMe()
+        left.deleteMe()
+    except Exception:
+        return False
+    quarter = math.pi * 0.5
+    p = {
+        "br_s": to_sketch([x1 - r, y0]),
+        "br_c": to_sketch([x1 - r, y0 + r]),
+        "tr_s": to_sketch([x1, y1 - r]),
+        "tr_c": to_sketch([x1 - r, y1 - r]),
+        "tl_s": to_sketch([x0 + r, y1]),
+        "tl_c": to_sketch([x0 + r, y1 - r]),
+        "bl_s": to_sketch([x0, y0 + r]),
+        "bl_c": to_sketch([x0 + r, y0 + r]),
+        "bot0": to_sketch([x0 + r, y0]),
+        "bot1": to_sketch([x1 - r, y0]),
+        "right0": to_sketch([x1, y0 + r]),
+        "right1": to_sketch([x1, y1 - r]),
+        "top0": to_sketch([x1 - r, y1]),
+        "top1": to_sketch([x0 + r, y1]),
+        "left0": to_sketch([x0, y1 - r]),
+        "left1": to_sketch([x0, y0 + r]),
+    }
+    if any(value is None for value in p.values()):
+        return False
+    lines.addByTwoPoints(p["bot0"], p["bot1"])
+    arcs.addByCenterStartSweep(p["br_c"], p["br_s"], quarter)
+    lines.addByTwoPoints(p["right0"], p["right1"])
+    arcs.addByCenterStartSweep(p["tr_c"], p["tr_s"], quarter)
+    lines.addByTwoPoints(p["top0"], p["top1"])
+    arcs.addByCenterStartSweep(p["tl_c"], p["tl_s"], quarter)
+    lines.addByTwoPoints(p["left0"], p["left1"])
+    arcs.addByCenterStartSweep(p["bl_c"], p["bl_s"], quarter)
+    return True
+
+
 def _add_oriented_panel_body(component, item, preview_mode="assembly"):
     """Create panels directly in assembly pose (no flat staging + rotation)."""
     item_id = str(item.get("id") or "panel")
@@ -752,7 +929,20 @@ def _add_oriented_panel_body(component, item, preview_mode="assembly"):
         return None, "unsupported_profile_plane"
     sketch = component.sketches.add(sketch_plane)
     sketch.name = "LOUNGE_ORIENT_SK_{}".format(sanitize_token(item_id, limit=60))
-    if not _draw_loop_oriented(sketch, _item_outer_points(item), plane, placement):
+    if item.get("kind") == "lid" and _num(item.get("radius"), 0.0) > 0:
+        drawn = _draw_rounded_rect_oriented(
+            sketch,
+            0,
+            0,
+            _num(item.get("width")),
+            _num(item.get("depth")),
+            _num(item.get("radius"), 0.0),
+            plane,
+            placement,
+        )
+    else:
+        drawn = _draw_loop_oriented(sketch, _item_outer_points(item), plane, placement)
+    if not drawn:
         return None, "invalid_outer"
     profile = _largest_profile(sketch)
     if profile is None:
@@ -797,7 +987,20 @@ def _add_flat_panel_body(component, item, offset_x, offset_y, preview_mode="flat
     thickness = max(0.1, _num(item.get("thickness"), 18))
     sketch = component.sketches.add(component.xYConstructionPlane)
     sketch.name = "LOUNGE_FLAT_SK_{}".format(sanitize_token(item_id, limit=60))
-    if not _draw_loop(sketch, _item_outer_points(item), offset_x, offset_y):
+    if item.get("kind") == "lid" and _num(item.get("radius"), 0.0) > 0:
+        drawn = _draw_rounded_rect(
+            sketch,
+            0,
+            0,
+            _num(item.get("width")),
+            _num(item.get("depth")),
+            _num(item.get("radius"), 0.0),
+            offset_x,
+            offset_y,
+        )
+    else:
+        drawn = _draw_loop(sketch, _item_outer_points(item), offset_x, offset_y)
+    if not drawn:
         return None, "invalid_outer"
     for loop in _item_cut_loops(item):
         _draw_loop(sketch, loop, offset_x, offset_y)

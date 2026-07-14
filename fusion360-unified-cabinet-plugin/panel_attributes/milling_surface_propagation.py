@@ -175,6 +175,52 @@ def classify_body_surfaces(body):
     return surfaces[0], surfaces[1], warnings
 
 
+def ensure_complementary_surface_roles(body, write_pair=None):
+    """If both broad faces share MILLING or NON_MILLING, coerce to opposite roles.
+
+    Colour face (NON_MILLING) and milling face must never be the same role.
+    Returns ``{"repaired": bool, "warning": str|None, "roles": [...]}``.
+    """
+    name = _body_name(body)
+    surface_a, surface_b, _warnings = classify_body_surfaces(body)
+    if surface_a is None or surface_b is None:
+        return {"repaired": False, "warning": None, "roles": []}
+    role_a = _current_milling_role(surface_a)
+    role_b = _current_milling_role(surface_b)
+    if role_a == MILLING_SURFACE and role_b == MILLING_SURFACE:
+        new_a, new_b = MILLING_SURFACE, NON_MILLING_SURFACE
+    elif role_a == NON_MILLING_SURFACE and role_b == NON_MILLING_SURFACE:
+        new_a, new_b = NON_MILLING_SURFACE, MILLING_SURFACE
+    else:
+        return {"repaired": False, "warning": None, "roles": [role_a, role_b]}
+    if callable(write_pair):
+        try:
+            try:
+                write_pair(
+                    body,
+                    surface_a,
+                    new_a,
+                    surface_b,
+                    new_b,
+                    source="repair_complementary",
+                )
+            except TypeError:
+                write_pair(body, surface_a, new_a, surface_b, new_b)
+        except Exception as ex:
+            return {
+                "repaired": False,
+                "warning": "{}: complementary repair failed ({})".format(name, ex),
+                "roles": [role_a, role_b],
+            }
+    return {
+        "repaired": True,
+        "warning": "{}: repaired {}/{} -> {}/{} (colour ≠ milling)".format(
+            name, role_a, role_b, new_a, new_b
+        ),
+        "roles": [new_a, new_b],
+    }
+
+
 def _extract_half_features(body, surface_a, surface_b):
     if not callable(extract_features) or not callable(_face_normal_local) or not callable(_face_centroid_local_mm):
         return []
@@ -236,7 +282,32 @@ def detect_hinge_back_face(body):
 
 
 def _half_slot_surface_roles(body, surface_a, surface_b):
-    """Raw half-slot roles for the two broad faces, or None when unavailable."""
+    """Roles for the two broad faces from half-slot / blind groove evidence.
+
+    Prefer groove-floor open-surface votes (same topology as hinge cups). Plain
+    wall-adjacency against only the largest SURFACE face often picks the wrong
+    side after manual Extrude-Cuts split the milled skin, or after edge-open
+    underside slots leave false one-sided perimeter remnants.
+    """
+    features = _extract_half_features(body, surface_a, surface_b)
+    half_features = [
+        feature
+        for feature in (features or [])
+        if str(feature.get("cutType") or "").upper() == "HALF"
+    ]
+    votes_a = 0
+    votes_b = 0
+    for feature in half_features:
+        which = str(feature.get("openSurfaceIs") or "").upper()
+        if which == "A":
+            votes_a += 1
+        elif which == "B":
+            votes_b += 1
+    if votes_a > votes_b:
+        return [MILLING_SURFACE, NON_MILLING_SURFACE]
+    if votes_b > votes_a:
+        return [NON_MILLING_SURFACE, MILLING_SURFACE]
+
     try:
         from panel_face_initializer import detect_surface_milling_roles
     except Exception:
@@ -250,7 +321,9 @@ def _half_slot_surface_roles(body, surface_a, surface_b):
     try:
         classified = classify_box_faces(body, panel_context)
         edge_faces = classified.get("edgeFaces") or []
-        roles = detect_surface_milling_roles([surface_a, surface_b], edge_faces, panel_context)
+        roles = detect_surface_milling_roles(
+            [surface_a, surface_b], edge_faces, panel_context
+        )
     except Exception:
         return None
     if len(roles) < 2:
@@ -296,20 +369,53 @@ def analyze_milling_surfaces(bodies, write_pair):
                 role_a, role_b = slot_roles[0], slot_roles[1]
                 source = "half_slot"
 
+        # Colour (NON_MILLING) and milling must stay opposite — never same role.
+        if role_a == MILLING_SURFACE and role_b == MILLING_SURFACE:
+            role_b = NON_MILLING_SURFACE
+            warnings.append(
+                "{}: coerced dual-MILLING half-slots to MILLING/NON_MILLING "
+                "(colour face must stay opposite milling).".format(name)
+            )
+        elif role_a == NON_MILLING_SURFACE and role_b == NON_MILLING_SURFACE:
+            role_b = MILLING_SURFACE
+            warnings.append(
+                "{}: coerced dual-NON_MILLING to NON_MILLING/MILLING.".format(name)
+            )
+
         if source == "":
             current_a = _current_milling_role(surface_a)
             current_b = _current_milling_role(surface_b)
             assigned = {MILLING_SURFACE, NON_MILLING_SURFACE}
             if current_a in assigned or current_b in assigned:
-                skipped.append({
-                    "bodyName": name,
-                    "reason": "no machining evidence; kept existing roles ({}/{})".format(
-                        current_a or "UNASSIGNED", current_b or "UNASSIGNED"
-                    ),
-                })
-                continue
-            role_a = role_b = MILLING_SURFACE_EITHER
-            source = "either"
+                # Repair illegal same-face / same-role pairs left from older runs.
+                if (
+                    current_a == MILLING_SURFACE and current_b == MILLING_SURFACE
+                ) or (
+                    current_a == NON_MILLING_SURFACE
+                    and current_b == NON_MILLING_SURFACE
+                ):
+                    role_a = (
+                        MILLING_SURFACE
+                        if current_a == MILLING_SURFACE
+                        else NON_MILLING_SURFACE
+                    )
+                    role_b = (
+                        NON_MILLING_SURFACE
+                        if role_a == MILLING_SURFACE
+                        else MILLING_SURFACE
+                    )
+                    source = "repair_complementary"
+                else:
+                    skipped.append({
+                        "bodyName": name,
+                        "reason": "no machining evidence; kept existing roles ({}/{})".format(
+                            current_a or "UNASSIGNED", current_b or "UNASSIGNED"
+                        ),
+                    })
+                    continue
+            else:
+                role_a = role_b = MILLING_SURFACE_EITHER
+                source = "either"
 
         if callable(write_pair):
             try:
@@ -435,6 +541,9 @@ def collect_milling_faces(bodies):
     - Bodies whose broad faces are both EITHER (or one EITHER + unassigned)
       contribute exactly one face, chosen at random — nesting can flip them,
       so either side is a valid stand-in for selection/preview.
+    - Mirrored occurrence proxies that share one native MILLING attribute are
+      flagged ``sharedMirrorOccurrence``: Select highlights the same native
+      face on both twins; Nesting restores chirality via flatten reflection.
     """
     import random
 
@@ -442,6 +551,14 @@ def collect_milling_faces(bodies):
     either_picked = []
     skipped = []
     warnings = []
+    shared_mirror = []
+    try:
+        from nesting.fusion_layout import _body_has_reflection
+    except Exception:
+        try:
+            from fusion_layout import _body_has_reflection
+        except Exception:
+            _body_has_reflection = None
     for body in bodies or []:
         name = _body_name(body)
         surface_a, surface_b, classify_warnings = classify_body_surfaces(body)
@@ -449,6 +566,20 @@ def collect_milling_faces(bodies):
         if surface_a is None or surface_b is None:
             skipped.append({"bodyName": name, "reason": "no broad surfaces"})
             continue
+
+        reflected = False
+        if callable(_body_has_reflection):
+            try:
+                reflected = bool(_body_has_reflection(body))
+            except Exception:
+                reflected = False
+        if reflected:
+            shared_mirror.append({"bodyName": name})
+            warnings.append(
+                "{}: mirrored occurrence — Select highlights the shared native "
+                "MILLING face; Nesting re-applies XY mirror for opposite chirality."
+                .format(name)
+            )
 
         role_a = _current_milling_role(surface_a)
         role_b = _current_milling_role(surface_b)
@@ -480,6 +611,7 @@ def collect_milling_faces(bodies):
         "faces": faces,
         "eitherPicked": either_picked,
         "skipped": skipped,
+        "sharedMirrorOccurrence": shared_mirror,
         "warnings": warnings[:40],
     }
 
@@ -488,8 +620,9 @@ def swap_decision(role_a, role_b):
     """Which face becomes the new MILLING when swapping ("A"/"B"/None).
 
     Swappable when exactly one face currently holds MILLING — the opposite
-    face takes it over. EITHER / unassigned / double-MILLING pairs have no
-    defined front/back, so there is nothing to swap.
+    face takes it over. Ambiguous pairs (EITHER / dual / empty) return None;
+    ``swap_surface_roles`` then commits a complementary pair instead of
+    skipping.
     """
     role_a = str(role_a or "").strip().upper()
     role_b = str(role_b or "").strip().upper()
@@ -502,16 +635,67 @@ def swap_decision(role_a, role_b):
     return None
 
 
-def swap_surface_roles(bodies, write_roles, is_door_body=None):
-    """Swap MILLING <-> NON_MILLING on selected door panels.
+def _resolve_swap_faces(body, surface_a, surface_b, role_a, role_b, preferred_face=None):
+    """Return ``(new_milling, new_non_milling)`` for Revert Panel Surface.
 
-    Non-door bodies are ignored. Panels without a clear MILLING face are
-    skipped (nothing to swap). ``write_roles(body, milling, non_milling)``
-    performs the Fusion write-back.
+    Manual revert always yields definite MILLING/NON_MILLING. Hinge cups and
+    centreline symmetry are never gates — any panel can be overridden.
+
+    - Already complementary → flip
+    - EITHER / unassigned / dual-same → commit complementary:
+      * selected face (if any) becomes colour (NON_MILLING)
+      * else soft-hint from hinge/half-slot (flipped = revert of auto)
+      * else A=MILLING, B=NON_MILLING (second Revert flips)
+    """
+    decision = swap_decision(role_a, role_b)
+    if decision == "A":
+        return surface_a, surface_b
+    if decision == "B":
+        return surface_b, surface_a
+
+    key_a = _safe_face_key(surface_a)
+    key_b = _safe_face_key(surface_b)
+    pref_key = _safe_face_key(preferred_face) if preferred_face is not None else ""
+    if pref_key and pref_key in (key_a, key_b):
+        # Explicit face pick: that face is the colour (show) side.
+        if pref_key == key_a:
+            return surface_b, surface_a
+        return surface_a, surface_b
+
+    # Soft hints only — missing hinge/slot must still commit definite roles.
+    detected = detect_hinge_back_face(body) if callable(detect_hinge_back_face) else None
+    if detected and detected.get("millingFace") is not None:
+        auto_key = _safe_face_key(detected["millingFace"])
+        if auto_key == key_a:
+            return surface_b, surface_a
+        if auto_key == key_b:
+            return surface_a, surface_b
+
+    try:
+        slot_roles = _half_slot_surface_roles(body, surface_a, surface_b)
+    except Exception:
+        slot_roles = None
+    if slot_roles and MILLING_SURFACE in slot_roles:
+        if slot_roles[0] == MILLING_SURFACE and slot_roles[1] != MILLING_SURFACE:
+            return surface_b, surface_a
+        if slot_roles[1] == MILLING_SURFACE and slot_roles[0] != MILLING_SURFACE:
+            return surface_a, surface_b
+
+    # No machining evidence: still override EITHER → definite A/B.
+    return surface_a, surface_b
+
+
+def swap_surface_roles(bodies, write_roles, is_door_body=None, preferred_faces=None):
+    """Manual front/back override on selected panels.
+
+    Works for doors with or without hinge cups, symmetric or not, and for
+    EITHER/EITHER — always writes definite MILLING/NON_MILLING via
+    ``write_roles``. ``preferred_faces`` maps ``id(body)`` → selected face.
     """
     updated = []
     skipped = []
     warnings = []
+    preferred_faces = preferred_faces or {}
     for body in bodies or []:
         name = _body_name(body)
         if callable(is_door_body) and not is_door_body(body):
@@ -524,15 +708,18 @@ def swap_surface_roles(bodies, write_roles, is_door_body=None):
             continue
         role_a = _current_milling_role(surface_a)
         role_b = _current_milling_role(surface_b)
-        decision = swap_decision(role_a, role_b)
-        if decision is None:
-            reason = "no clear MILLING face to swap (roles: {}/{})".format(
-                role_a or "UNASSIGNED", role_b or "UNASSIGNED"
-            )
-            skipped.append({"bodyName": name, "reason": reason})
+        preferred = preferred_faces.get(id(body))
+        new_milling, new_non = _resolve_swap_faces(
+            body, surface_a, surface_b, role_a, role_b, preferred_face=preferred
+        )
+        if new_milling is None or new_non is None or new_milling is new_non:
+            skipped.append({
+                "bodyName": name,
+                "reason": "could not resolve opposite broad faces (roles: {}/{})".format(
+                    role_a or "UNASSIGNED", role_b or "UNASSIGNED"
+                ),
+            })
             continue
-        new_milling = surface_a if decision == "A" else surface_b
-        new_non = surface_b if decision == "A" else surface_a
         if callable(write_roles):
             try:
                 write_roles(body, new_milling, new_non)
@@ -540,7 +727,14 @@ def swap_surface_roles(bodies, write_roles, is_door_body=None):
                 skipped.append({"bodyName": name, "reason": str(ex)})
                 warnings.append("{}: write failed ({})".format(name, ex))
                 continue
-        updated.append({"bodyName": name})
+        updated.append({
+            "bodyName": name,
+            "fromRoles": [role_a or "UNASSIGNED", role_b or "UNASSIGNED"],
+            "overrodeEither": (
+                str(role_a or "").upper() == MILLING_SURFACE_EITHER
+                and str(role_b or "").upper() == MILLING_SURFACE_EITHER
+            ),
+        })
 
     message = "Swapped door faces: updated {}, skipped {}.".format(len(updated), len(skipped))
     return {
