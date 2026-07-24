@@ -109,14 +109,53 @@ class SwapSurfaceRolesTests(unittest.TestCase):
 
     def test_skips_when_no_clear_milling(self):
         self.roles = {}
-        result = prop.swap_surface_roles(
-            [self.door],
-            write_roles=lambda *args: None,
-            is_door_body=lambda body: True,
-        )
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["updatedCount"], 0)
-        self.assertEqual(len(result["skipped"]), 1)
+        writes = []
+        # Stub geometry helpers so EITHER/empty commits A=milling, B=colour.
+        orig_hinge = prop.detect_hinge_back_face
+        orig_slot = prop._half_slot_surface_roles
+        prop.detect_hinge_back_face = lambda body: None
+        prop._half_slot_surface_roles = lambda body, a, b: None
+        try:
+            result = prop.swap_surface_roles(
+                [self.door],
+                write_roles=lambda body, milling, non_milling: writes.append(
+                    (body, milling, non_milling)
+                ),
+                is_door_body=lambda body: True,
+            )
+        finally:
+            prop.detect_hinge_back_face = orig_hinge
+            prop._half_slot_surface_roles = orig_slot
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["updatedCount"], 1)
+        self.assertEqual(writes, [(self.door, self.face_a, self.face_b)])
+
+    def test_either_with_preferred_face_sets_colour(self):
+        self.roles = {id(self.face_a): "EITHER", id(self.face_b): "EITHER"}
+        writes = []
+        orig_hinge = prop.detect_hinge_back_face
+        orig_slot = prop._half_slot_surface_roles
+        prop.detect_hinge_back_face = lambda body: None
+        prop._half_slot_surface_roles = lambda body, a, b: None
+        # Fake face keys so preferred_face matching works without entityToken.
+        orig_key = prop._safe_face_key
+        prop._safe_face_key = lambda face: "A" if face is self.face_a else ("B" if face is self.face_b else "")
+        try:
+            result = prop.swap_surface_roles(
+                [self.door],
+                write_roles=lambda body, milling, non_milling: writes.append(
+                    (milling, non_milling)
+                ),
+                is_door_body=lambda body: True,
+                preferred_faces={id(self.door): self.face_a},
+            )
+        finally:
+            prop.detect_hinge_back_face = orig_hinge
+            prop._half_slot_surface_roles = orig_slot
+            prop._safe_face_key = orig_key
+        self.assertTrue(result["ok"])
+        # Selected face_a becomes colour (NON_MILLING); milling is face_b.
+        self.assertEqual(writes, [(self.face_b, self.face_a)])
 
 
 class AnalyzeMillingSurfacesTests(unittest.TestCase):
@@ -158,6 +197,31 @@ class AnalyzeMillingSurfacesTests(unittest.TestCase):
         self.assertTrue(result["ok"])
         self.assertEqual(result["updated"][0]["source"], "hinge_cups")
         self.assertEqual(writes, [(self.face_a, "NON_MILLING", self.face_b, "MILLING")])
+
+    def test_half_slot_roles_prefer_feature_open_surface(self):
+        """Groove-floor openSurfaceIs must beat naive wall adjacency."""
+        import milling_surface_propagation as prop
+
+        body = object()
+        surface_a = object()
+        surface_b = object()
+        orig_extract = prop._extract_half_features
+        orig_classify = prop.classify_box_faces
+        prop._extract_half_features = lambda _body, _a, _b: [
+            {"cutType": "HALF", "openSurfaceIs": "B", "kind": "groove"},
+            {"cutType": "HALF", "openSurfaceIs": "B", "kind": "groove"},
+        ]
+        # If floor votes are ignored, wall fallback could mark A — ensure B wins.
+        prop.classify_box_faces = lambda *_args, **_kwargs: {
+            "edgeFaces": [],
+            "warnings": [],
+        }
+        try:
+            roles = self._orig_slot(body, surface_a, surface_b)
+            self.assertEqual(roles, ["NON_MILLING", "MILLING"])
+        finally:
+            prop._extract_half_features = orig_extract
+            prop.classify_box_faces = orig_classify
 
     def test_half_slot_when_no_hinge(self):
         prop._half_slot_surface_roles = lambda body, a, b: ["MILLING", "NON_MILLING"]

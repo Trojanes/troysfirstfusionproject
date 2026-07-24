@@ -29,6 +29,8 @@ export interface OverheadCabinetParams {
   cabinetWidth: number;
   cabinetDepth: number;
   cabinetHeight?: number;
+  /** T3 top-face LED T-groove (opens upward). Default on when omitted. */
+  ledGroove?: boolean;
   topClearanceHeight?: number;
   frontPanelThickness?: number;
   clearance?: number;
@@ -55,6 +57,19 @@ export interface OverheadValidation {
   warnings: string[];
 }
 
+export interface RelationshipDeclaration {
+  declarationId: string;
+  generator: "overhead";
+  panelAId: string;
+  panelBId: string;
+  relationshipType: "structural_butt_joint" | "face_contact";
+  geometryType: "edge_to_surface" | "surface_to_surface";
+  hostPanelId: string;
+  targetPanelId: string;
+  ruleId: string;
+  allowedHardware: string[];
+}
+
 export interface OverheadCabinetResult {
   params: Required<
     Pick<OverheadCabinetParams, "cabinetWidth" | "cabinetDepth"> & {
@@ -76,6 +91,7 @@ export interface OverheadCabinetResult {
   >;
   boards: Board[];
   features: unknown[];
+  relationshipDeclarations: RelationshipDeclaration[];
   validation: OverheadValidation;
   debug: {
     phase: "geometry_v1" | "skeleton_v0";

@@ -19,6 +19,8 @@ export interface KitchenGlobalSettings {
   frontThickness: number;
   bottomClearanceHeight: number;
   bottomClearanceStyle: "style_1" | "style_2" | string;
+  /** Style 1 B3 bottom-face LED T-groove. Default on when omitted. */
+  ledGroove?: boolean;
 }
 
 export interface KitchenZone {
@@ -133,6 +135,7 @@ export interface PanelBodyCutout {
   y1: number;
   slotType?: SlotType;
   side?: SlotSide;
+  grooveDepth?: number;
 }
 
 export interface PanelBodyGeometry {
@@ -242,6 +245,8 @@ export interface SlotRequest {
 export interface ResolvedSlot extends SlotRequest {
   resolvedSlotType: SlotType | "none";
   machiningMode?: VPanelMachiningMode;
+  /** Opposing same-height half tongues share one through groove on the V panel. */
+  sharedOpposingGroove?: boolean;
 }
 
 export interface HingeCupHole {
@@ -296,6 +301,7 @@ export interface KitchenGeometryResult {
   panelDxf: PanelDxfGeometry[];
   slotRequests: SlotRequest[];
   resolvedSlots: ResolvedSlot[];
+  relationshipDeclarations?: import("./relationshipDeclarations.ts").RelationshipDeclaration[];
   warnings: string[];
   errors: string[];
   debug: {

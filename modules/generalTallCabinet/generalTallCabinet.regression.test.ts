@@ -133,6 +133,7 @@ function testFeatureTypeRegression() {
     "zi_groove",
     "h34_clearance_slot",
     "b3_groove",
+    "t3_groove",
     "divider_tongue",
   ]);
   const disallowedFeatureTypes = ["hinge_hole", "lock_cutout", "drawer_slide_hole", "dogbone", "cnc_operation", "toolpath"];

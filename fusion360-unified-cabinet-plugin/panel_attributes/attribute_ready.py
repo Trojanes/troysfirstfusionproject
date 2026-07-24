@@ -8,7 +8,10 @@ classification fields (after migrate); derivedTags are not authoritative.
 try:
     import attribute_state_service
 except Exception:
-    attribute_state_service = None
+    try:
+        from panel_attributes import attribute_state_service
+    except Exception:
+        attribute_state_service = None
 
 
 ATTRIBUTE_READY_STATE = "attribute_ready"

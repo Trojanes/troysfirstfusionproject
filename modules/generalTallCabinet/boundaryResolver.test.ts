@@ -43,7 +43,9 @@ function testDrawerRules() {
   assert.equal(boundaryType("drawer", "drawer"), "half_zi");
   assert.equal(boundaryType("drawer", "side_door"), "full_zi");
   assert.equal(boundaryType("drawer", "open_space"), "full_zi");
-  assert.equal(boundaryType("drawer", "open_appliance"), "full_zi");
+      assert.equal(boundaryType("drawer", "open_appliance"), "full_zi");
+      assert.equal(boundaryType("fridge", "drawer"), "full_zi");
+      assert.equal(boundaryType("drawer", "fridge"), "full_zi");
 }
 
 function testDoorOpenApplianceRules() {
@@ -51,6 +53,8 @@ function testDoorOpenApplianceRules() {
   assert.equal(boundaryType("side_door", "open_space"), "full_zi");
   assert.equal(boundaryType("open_space", "open_appliance"), "full_zi");
   assert.equal(boundaryType("open_appliance", "drawer"), "full_zi");
+  assert.equal(boundaryType("open_space", "fridge"), "full_zi");
+  assert.equal(boundaryType("fridge", "open_appliance"), "full_zi");
 }
 
 function testFlapRules() {

@@ -1,0 +1,18 @@
+{
+  "cabinetHeight": 2000,
+  "cabinetWidth": 600,
+  "cabinetDepth": 584,
+  "panelThickness": 16,
+  "frontFaceAllowance": 16,
+  "sideClearance": 3,
+  "ziThickness": 15,
+  "hThickness": 15,
+  "topSystem": { "style": "style_1", "frontRailHeight": 40 },
+  "bottomSystem": { "style": "style_1", "frontRailHeight": 53 },
+  "avoidance": { "enabled": false, "depth": 200, "height": 400 },
+  "zones": [
+    { "id": "zone-1", "type": "side_door", "height": 550 },
+    { "id": "zone-2", "type": "drawer", "height": 300 },
+    { "id": "zone-3", "type": "double_door", "height": 995, "verticalDivider": true }
+  ]
+}

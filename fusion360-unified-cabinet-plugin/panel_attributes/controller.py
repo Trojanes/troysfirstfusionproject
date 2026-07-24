@@ -15,10 +15,15 @@ import milling_surface_propagation
 import tag_metadata_editor
 import thickness_rules
 import work_zones
+import nesting.collision_validate as nesting_collision_validate
+import nesting.dxf_export as nesting_dxf_export
+import nesting.engine as nesting_engine
 import nesting.fusion_layout as nesting_fusion_layout
 import nesting.layout as nesting_layout
+import nesting.outline_cache as nesting_outline_cache
 import nesting.preflight as nesting_preflight
 import nesting.runtime_profile as nesting_runtime_profile
+import nesting.sheet_pack as nesting_sheet_pack
 from panel_search_service import collect_all_tags, collect_defined_panels, resolve_panel_targets, search_panels
 
 
@@ -28,15 +33,28 @@ milling_surface_propagation = importlib.reload(milling_surface_propagation)
 tag_metadata_editor = importlib.reload(tag_metadata_editor)
 thickness_rules = importlib.reload(thickness_rules)
 work_zones = importlib.reload(work_zones)
+nesting_collision_validate = importlib.reload(nesting_collision_validate)
+nesting_dxf_export = importlib.reload(nesting_dxf_export)
+nesting_engine = importlib.reload(nesting_engine)
 nesting_fusion_layout = importlib.reload(nesting_fusion_layout)
 nesting_layout = importlib.reload(nesting_layout)
+nesting_outline_cache = importlib.reload(nesting_outline_cache)
 nesting_preflight = importlib.reload(nesting_preflight)
 nesting_runtime_profile = importlib.reload(nesting_runtime_profile)
+nesting_sheet_pack = importlib.reload(nesting_sheet_pack)
 
 body_matches_record = panel_body_resolver.body_matches_record
 find_body_in_design = panel_body_resolver.find_body_in_design
 list_solid_bodies = panel_body_resolver.list_solid_bodies
 resolve_main_body = panel_body_resolver.resolve_main_body
+
+
+def _pump_fusion_events():
+    """Keep Fusion responsive while external nesting workers are running."""
+    try:
+        adsk.doEvents()
+    except Exception:
+        pass
 
 
 class PanelAttributesController:
@@ -691,17 +709,36 @@ class PanelAttributesController:
         not_in_scan = int((diagnostics or {}).get("bodiesNotInScan") or 0)
         if solid:
             warnings.append(
-                "Design solids: {} · scanned bodies: {} · missing attrs: {} · not in scan: {}.".format(
-                    solid, scanned_bodies, missing_bodies or without_attrs, not_in_scan
+                "Design solids: {} · scanned bodies: {} · missing attrs: {} · not in scan: {}."
+                "{}".format(
+                    solid,
+                    scanned_bodies,
+                    missing_bodies or without_attrs,
+                    not_in_scan,
+                    (
+                        " Nesting-zone boards skipped: {}.".format(
+                            int((diagnostics or {}).get("bodiesSkippedNestingZone") or 0)
+                        )
+                        if int((diagnostics or {}).get("bodiesSkippedNestingZone") or 0)
+                        else ""
+                    ),
                 )
             )
         if missing_bodies or without_attrs:
             warnings.append(
                 "Some boards have no generator/panel attributes (often older copies or non-plugin bodies). They now appear as Missing."
             )
-        if (diagnostics or {}).get("workZonesPresent") and zone_filter and zone_filter != "all":
+        if (diagnostics or {}).get("workZonesPresent") and zone_filter == "nesting":
             warnings.append(
-                "Scan zone is '{}'. Switch to All zones if boards sit outside Assembly.".format(zone_filter)
+                "Scan zone is Nesting only (layout copies). Switch to All source zones for assembly/generation panels."
+            )
+        elif (diagnostics or {}).get("workZonesPresent") and zone_filter and zone_filter not in ("all", "nesting"):
+            warnings.append(
+                "Scan zone is '{}'. Switch to All source zones if boards sit outside this zone.".format(zone_filter)
+            )
+        elif (diagnostics or {}).get("workZonesPresent"):
+            warnings.append(
+                "Scan All excludes Nesting-zone layout copies by default (use zone filter Nesting to inspect them)."
             )
         return "panelAttributesResult", {
             "ok": True,
@@ -848,20 +885,191 @@ class PanelAttributesController:
                 "missingCounts": missing_counts,
             },
             "profile": profile,
-            "message": (
-                "Nesting Ready: {}/{} panels ready · {} not ready · {} ms."
-                "{}"
-            ).format(
+            "message": "Nesting Ready: {} / {} bodies.{}{}".format(
                 len(ready),
                 len(body_records),
-                len(not_ready),
-                profile.get("elapsedMs"),
+                " {} not ready.".format(len(not_ready)) if not_ready else "",
                 missing_msg,
             ),
         }
 
+    def build_nesting_outlines(self, payload, _palette):
+        """Step 1: flatten + extract outlines and write nestingFlatOutline cache."""
+        import time as _time
+
+        profiler = nesting_runtime_profile.NestingProfiler("buildNestingOutlines")
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "buildNestingOutlines",
+                "errors": ["No active Fusion design."],
+            }
+        sheet_params = nesting_sheet_pack.normalize_sheet_params(
+            (payload or {}).get("sheetParams") or {}
+        )
+        allow_parts_in_part = bool(sheet_params.get("allowPartsInPart"))
+        records, _counts, diagnostics = metadata_inspector.scan_panel_metadata(
+            root, zone_filter="all", detail="nesting", profiler=profiler
+        )
+        body_records = [
+            record
+            for record in records
+            if "body" in str(record.get("entityKind") or "").lower()
+        ]
+        built = []
+        skipped = []
+        failed = []
+        not_ready = []
+        profiler.begin("buildOutlines")
+        profiler.mark("buildBegin", candidates=len(body_records))
+        for index, record in enumerate(body_records):
+            check = nesting_preflight.evaluate_record(record)
+            if not check["ready"]:
+                not_ready.append({
+                    "panelId": record.get("panelId") or "",
+                    "bodyName": record.get("bodyName") or "",
+                    "missing": check["missing"],
+                })
+                continue
+            body, body_warnings = self._body_from_metadata_record(
+                root, record, prefer_path=True
+            )
+            if not body:
+                failed.append({
+                    "panelId": record.get("panelId") or "",
+                    "bodyName": record.get("bodyName") or "",
+                    "reason": "Could not resolve source body.",
+                    "warnings": body_warnings,
+                })
+                continue
+            metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+            signature = nesting_outline_cache.body_geometry_signature(body)
+            reflected = bool(nesting_fusion_layout._body_has_reflection(body))
+            status = nesting_outline_cache.outline_cache_status(
+                metadata,
+                signature,
+                check["cuttingFace"],
+                allow_parts_in_part=allow_parts_in_part,
+                reflected_source=reflected,
+            )
+            force = bool((payload or {}).get("forceRebuild"))
+            if status == "fresh" and not force:
+                skipped.append({
+                    "panelId": record.get("panelId") or "",
+                    "bodyName": record.get("bodyName") or "",
+                    "reason": "fresh",
+                    "reflectedSource": reflected,
+                })
+                profiler.add("outlineCacheFresh", 1)
+                if reflected:
+                    profiler.add("reflectedFresh", 1)
+                continue
+            item_t0 = _time.perf_counter()
+            try:
+                temp_body, dimensions, outline = nesting_fusion_layout.prepare_flat_copy(
+                    body,
+                    metadata,
+                    check["cuttingFace"],
+                    allow_parts_in_part=allow_parts_in_part,
+                )
+                del temp_body
+                reflected = bool((outline or {}).get("reflectedSource"))
+                cache_record = nesting_outline_cache.build_cache_record(
+                    outline,
+                    dimensions,
+                    signature,
+                    check["cuttingFace"],
+                    allow_parts_in_part=allow_parts_in_part,
+                    reflected_source=reflected,
+                )
+                working = tag_metadata_editor._bootstrap_body_metadata(body, metadata)
+                working[nesting_outline_cache.CACHE_KEY] = cache_record
+                tag_metadata_editor._write_body_metadata(body, working)
+                source = str((outline or {}).get("source") or "")
+                built.append({
+                    "panelId": record.get("panelId") or "",
+                    "bodyName": record.get("bodyName") or "",
+                    "source": source,
+                    "pointCount": int((outline or {}).get("pointCount") or 0),
+                    "previousStatus": status,
+                    "reflectedSource": reflected,
+                })
+                profiler.add("outlineBuilt", 1)
+                if reflected:
+                    profiler.add("reflectedBuilt", 1)
+                if source == "flatBody":
+                    profiler.add("outlineFlatBody", 1)
+                elif source == "metadataSvg":
+                    profiler.add("outlineMetadataSvg", 1)
+                else:
+                    profiler.add("outlineRectangle", 1)
+                item_ms = int((_time.perf_counter() - item_t0) * 1000)
+                if item_ms >= 250:
+                    profiler.sample(
+                        "buildOutlineItem",
+                        item_ms,
+                        bodyName=record.get("bodyName") or "",
+                    )
+            except Exception as ex:
+                failed.append({
+                    "panelId": record.get("panelId") or "",
+                    "bodyName": record.get("bodyName") or "",
+                    "reason": str(ex),
+                })
+            if (len(built) + len(skipped)) % 10 == 0:
+                profiler.mark(
+                    "buildProgress",
+                    built=len(built),
+                    skipped=len(skipped),
+                    failed=len(failed),
+                )
+            _pump_fusion_events()
+        build_ms = profiler.end("buildOutlines")
+        profile = profiler.flush(status="done")
+        reflected_count = int(profiler.counters.get("reflectedBuilt") or 0) + int(
+            profiler.counters.get("reflectedFresh") or 0
+        )
+        ok = bool(built) or (bool(skipped) and not failed)
+        if not built and not skipped:
+            ok = False
+        message = (
+            "Nesting outlines: built {} · reused fresh {} · mirrored {} · failed {} · not ready {}."
+        ).format(
+            len(built), len(skipped), reflected_count, len(failed), len(not_ready)
+        )
+        return "panelAttributesResult", {
+            "ok": ok,
+            "action": "buildNestingOutlines",
+            "bodyCount": len(body_records),
+            "builtCount": len(built),
+            "skippedFreshCount": len(skipped),
+            "reflectedCount": reflected_count,
+            "failedCount": len(failed),
+            "notReadyCount": len(not_ready),
+            "built": built[:100],
+            "skippedFresh": skipped[:100],
+            "failed": failed[:100],
+            "notReady": not_ready[:100],
+            "allowPartsInPart": allow_parts_in_part,
+            "diagnostics": {
+                **(diagnostics or {}),
+                "buildMs": build_ms,
+                "profilePath": profile.get("path"),
+                "phasesMs": profile.get("phasesMs"),
+                "reflectedCount": reflected_count,
+            },
+            "profile": profile,
+            "message": message,
+            "errors": [] if ok else (
+                ["No Nesting Ready panels to build outlines for."]
+                if not built and not skipped
+                else [entry.get("reason") or "Build failed." for entry in failed[:5]]
+            ),
+        }
+
     def create_nesting_zone_layout(self, payload, _palette):
-        """Copy Nesting Ready source panels into grouped rows in Nesting Zone."""
+        """Copy Nesting Ready source panels into sheet-packed Nesting Zone layout."""
         import time as _time
 
         profiler = nesting_runtime_profile.NestingProfiler("createNestingZoneLayout")
@@ -893,6 +1101,15 @@ class PanelAttributesController:
                 "action": "createNestingZoneLayout",
                 "errors": ["Part gap and group gap must be valid non-negative numbers."],
             }
+        sheet_params = nesting_sheet_pack.normalize_sheet_params(
+            (payload or {}).get("sheetParams") or {}
+        )
+        # World sheet display wraps within the current Nesting Zone width instead
+        # of expanding every material job into one unbounded horizontal strip.
+        sheet_params["layoutWidthMm"] = max(
+            float(nesting_rect["x1"]) - float(nesting_rect["x0"]),
+            0.0,
+        )
 
         records, _counts, diagnostics = metadata_inspector.scan_panel_metadata(
             root, zone_filter="all", detail="nesting", profiler=profiler
@@ -905,6 +1122,8 @@ class PanelAttributesController:
         prepared = []
         not_ready = []
         failed = []
+        outline_missing = []
+        prepared_hole_outline_count = 0
         profiler.begin("prepare")
         profiler.mark("prepareBegin", candidates=len(body_records))
         for index, record in enumerate(body_records):
@@ -930,14 +1149,44 @@ class PanelAttributesController:
                     "warnings": body_warnings,
                 })
                 continue
+            metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+            signature = nesting_outline_cache.body_geometry_signature(body)
+            reflected = bool(nesting_fusion_layout._body_has_reflection(body))
+            allow_pip = bool(sheet_params.get("allowPartsInPart"))
+            cache_status = nesting_outline_cache.outline_cache_status(
+                metadata,
+                signature,
+                check["cuttingFace"],
+                allow_parts_in_part=allow_pip,
+                reflected_source=reflected,
+            )
+            cached_outline, _cached_dims = nesting_outline_cache.cached_outline_for_prepare(
+                metadata,
+                signature,
+                check["cuttingFace"],
+                allow_parts_in_part=allow_pip,
+                reflected_source=reflected,
+            )
+            if cache_status != "fresh" or not cached_outline:
+                outline_missing.append({
+                    "panelId": record.get("panelId") or "",
+                    "bodyName": record.get("bodyName") or "",
+                    "reason": cache_status or "missing",
+                    "reflectedSource": reflected,
+                })
+                profiler.add("outlineCacheMiss", 1)
+                continue
             try:
                 copy_t0 = _time.perf_counter()
-                temp_body, dimensions = nesting_fusion_layout.prepare_flat_copy(
+                temp_body, dimensions, outline = nesting_fusion_layout.prepare_flat_copy(
                     body,
-                    record.get("metadata") or {},
+                    metadata,
                     check["cuttingFace"],
+                    allow_parts_in_part=bool(sheet_params.get("allowPartsInPart")),
+                    outline_override=cached_outline,
                 )
                 copy_ms = int((_time.perf_counter() - copy_t0) * 1000)
+                profiler.add("outlineCacheHit", 1)
                 prepared.append({
                     "id": "{}|{}|{}".format(
                         record.get("entityToken") or record.get("panelId") or index,
@@ -952,7 +1201,20 @@ class PanelAttributesController:
                     "cuttingFace": check["cuttingFace"],
                     "tempBody": temp_body,
                     "dimensions": dimensions,
+                    "outline": outline,
                 })
+                if isinstance(outline, dict):
+                    hole_count = int(outline.get("holeCount") or 0)
+                    prepared_hole_outline_count += hole_count
+                    if hole_count:
+                        profiler.add("preparedHoleOutlines", hole_count)
+                    source = str(outline.get("source") or "")
+                    if source == "flatBody":
+                        profiler.add("outlineFlatBody", 1)
+                    elif source == "metadataSvg":
+                        profiler.add("outlineMetadataSvg", 1)
+                    else:
+                        profiler.add("outlineRectangle", 1)
                 item_ms = int((_time.perf_counter() - item_t0) * 1000)
                 profiler.add("preparedCount", 1)
                 profiler.add("resolveMsTotal", resolve_ms)
@@ -971,6 +1233,7 @@ class PanelAttributesController:
                         prepared=len(prepared),
                         notReady=len(not_ready),
                         failed=len(failed),
+                        outlineMissing=len(outline_missing),
                     )
             except Exception as ex:
                 failed.append({
@@ -979,6 +1242,37 @@ class PanelAttributesController:
                     "reason": str(ex),
                 })
         prepare_ms = profiler.end("prepare")
+
+        if outline_missing:
+            profile = profiler.flush(status="outlineCacheRequired")
+            sample = ", ".join(
+                str(item.get("bodyName") or item.get("panelId") or "?")
+                for item in outline_missing[:5]
+            )
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "createNestingZoneLayout",
+                "bodyCount": len(body_records),
+                "readyCount": len(prepared),
+                "outlineMissingCount": len(outline_missing),
+                "outlineMissing": outline_missing[:100],
+                "notReady": not_ready[:100],
+                "failed": failed[:100],
+                "diagnostics": {
+                    **(diagnostics or {}),
+                    "prepareMs": prepare_ms,
+                    "profilePath": profile.get("path"),
+                    "phasesMs": profile.get("phasesMs"),
+                },
+                "profile": profile,
+                "errors": [
+                    "Nesting outlines missing or stale for {} Ready panel(s). "
+                    "Run Build Nesting Outlines first. Examples: {}.".format(
+                        len(outline_missing),
+                        sample or "—",
+                    )
+                ],
+            }
 
         if not prepared:
             profile = profiler.flush(status="noPrepared")
@@ -999,22 +1293,197 @@ class PanelAttributesController:
                 "errors": ["No Nesting Ready panel could be prepared."],
             }
 
-        measure = nesting_layout.grouped_row_layout(
-            [
-                {
-                    **item,
-                    "widthMm": item["dimensions"]["widthMm"],
-                    "depthMm": item["dimensions"]["depthMm"],
-                }
-                for item in prepared
-            ],
+        layout_items = [
+            {
+                **item,
+                "widthMm": item["dimensions"]["widthMm"],
+                "depthMm": item["dimensions"]["depthMm"],
+                "outline": item.get("outline"),
+            }
+            for item in prepared
+        ]
+        profiler.begin("pack")
+        profiler.mark("packBegin", parts=len(layout_items))
+        _pump_fusion_events()
+        measure = nesting_engine.create_layout(
+            layout_items,
+            sheet_params,
             nesting_rect["x0"],
             nesting_rect["y0"],
-            part_gap,
-            group_gap,
+            engine_name=(payload or {}).get("nestingEngine"),
+            wait_callback=_pump_fusion_events,
         )
+        pack_ms = profiler.end("pack")
+        profiler.mark("packDone", elapsedMs=pack_ms, engine=(measure or {}).get("engine"))
+        _pump_fusion_events()
+        profiler.begin("validate")
+        collision_validation = nesting_collision_validate.validate_layout(
+            measure, prepared, sheet_params
+        )
+        # Exact Fusion checks dominate large nests; Python outline check is enough.
+        if len(prepared) < 80:
+            collision_validation = nesting_collision_validate.validate_fusion_exact(
+                measure, prepared, sheet_params, collision_validation
+            )
+        profiler.end("validate")
+        primary_collision_validation = collision_validation
+        validation_fallback = False
+        validation_fallback_reason = ""
+        if not collision_validation.get("ok"):
+            validation_fallback = True
+            validation_fallback_reason = (
+                "Primary layout failed collision validation: {} collision(s), "
+                "{} border violation(s), {} mapping error(s), "
+                "{} sheet overlap(s), exact incomplete={}."
+            ).format(
+                int(collision_validation.get("collisionCount") or 0),
+                int(collision_validation.get("borderViolationCount") or 0),
+                int(collision_validation.get("mappingWarningCount") or 0),
+                int(collision_validation.get("sheetOverlapCount") or 0),
+                bool(collision_validation.get("exactValidationIncomplete")),
+            )
+            profiler.mark(
+                "validationFallback",
+                collisions=int(collision_validation.get("collisionCount") or 0),
+                borderViolations=int(
+                    collision_validation.get("borderViolationCount") or 0
+                ),
+                exactChecks=int(collision_validation.get("exactChecks") or 0),
+            )
+            try:
+                import json as _json
+                import os as _os
+
+                dump_path = _os.path.join(
+                    _os.path.dirname(
+                        _os.path.abspath(nesting_runtime_profile.__file__)
+                    ),
+                    "nesting_primary_collision_dump.json",
+                )
+                with open(dump_path, "w", encoding="utf-8") as handle:
+                    _json.dump(
+                        {
+                            "engine": measure.get("engine"),
+                            "requestedEngine": measure.get("requestedEngine"),
+                            "sheetCount": len(measure.get("sheets") or []),
+                            "placementCount": len(measure.get("placements") or []),
+                            "collisionValidation": {
+                                "ok": collision_validation.get("ok"),
+                                "status": collision_validation.get("status"),
+                                "collisionCount": collision_validation.get(
+                                    "collisionCount"
+                                ),
+                                "borderViolationCount": collision_validation.get(
+                                    "borderViolationCount"
+                                ),
+                                "mappingWarningCount": collision_validation.get(
+                                    "mappingWarningCount"
+                                ),
+                                "exactChecks": collision_validation.get("exactChecks"),
+                                "checks": collision_validation.get("checks"),
+                                "collisions": (
+                                    collision_validation.get("collisions") or []
+                                )[:100],
+                                "mappingWarnings": (
+                                    collision_validation.get("mappingWarnings") or []
+                                )[:100],
+                                "borderViolations": (
+                                    collision_validation.get("borderViolations") or []
+                                )[:50],
+                            },
+                        },
+                        handle,
+                        indent=2,
+                        ensure_ascii=False,
+                    )
+                profiler.mark("primaryCollisionDump", path=dump_path)
+            except Exception:
+                pass
+            primary_measure = measure
+            fallback = nesting_sheet_pack.sheet_pack_layout(
+                layout_items,
+                sheet_params,
+                nesting_rect["x0"],
+                nesting_rect["y0"],
+            )
+            # Collision fallback is separate from an engine runtime fallback.
+            # Carry the engine metadata without changing its meaning.
+            for key in (
+                "requestedEngine",
+                "engineFallback",
+                "engineFallbackReason",
+            ):
+                if key in primary_measure:
+                    fallback[key] = primary_measure.get(key)
+            fallback["validationFallback"] = True
+            fallback["validationFallbackReason"] = validation_fallback_reason
+            fallback_validation = nesting_collision_validate.validate_layout(
+                fallback, prepared, sheet_params
+            )
+            fallback_validation = nesting_collision_validate.validate_fusion_exact(
+                fallback, prepared, sheet_params, fallback_validation
+            )
+            if not fallback_validation.get("ok"):
+                profile = profiler.flush(status="collisionValidationFailed")
+                return "panelAttributesResult", {
+                    "ok": False,
+                    "action": "createNestingZoneLayout",
+                    "bodyCount": len(body_records),
+                    "readyCount": len(prepared),
+                    "sheetParams": sheet_params,
+                    "collisionValidation": fallback_validation,
+                    "collisionCount": int(
+                        fallback_validation.get("collisionCount") or 0
+                    ),
+                    "collisions": (fallback_validation.get("collisions") or [])[:100],
+                    "mappingWarnings": (
+                        fallback_validation.get("mappingWarnings") or []
+                    )[:100],
+                    "mappingWarningCount": int(
+                        fallback_validation.get("mappingWarningCount") or 0
+                    ),
+                    "sheetOverlaps": (
+                        fallback_validation.get("sheetOverlaps") or []
+                    )[:50],
+                    "sheetOverlapCount": int(
+                        fallback_validation.get("sheetOverlapCount") or 0
+                    ),
+                    "exactValidationIncomplete": bool(
+                        fallback_validation.get("exactValidationIncomplete")
+                    ),
+                    "exactCheckWarnings": (
+                        fallback_validation.get("exactCheckWarnings") or []
+                    )[:50],
+                    "validationFallback": True,
+                    "validationFallbackReason": validation_fallback_reason,
+                    "primaryCollisionValidation": collision_validation,
+                    "profile": profile,
+                    "errors": [
+                        "Both the primary and fallback layouts failed collision validation; "
+                        "the existing Nesting layout was preserved."
+                    ],
+                }
+            measure = fallback
+            collision_validation = fallback_validation
         required_w = float(measure.get("requiredWidthMm") or 0.0)
         required_d = float(measure.get("requiredDepthMm") or 0.0)
+        unplaced = list(measure.get("unplaced") or [])
+        if unplaced and not measure.get("placements"):
+            profile = profiler.flush(status="unplacedOnly")
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "createNestingZoneLayout",
+                "bodyCount": len(body_records),
+                "readyCount": len(prepared),
+                "unplacedCount": len(unplaced),
+                "unplaced": unplaced[:100],
+                "sheetParams": sheet_params,
+                "profile": profile,
+                "errors": [
+                    "No parts fit on the configured sheets. "
+                    "Check Sheet size / border, or enable rotation."
+                ],
+            }
         zone_w = float(nesting_rect["x1"]) - float(nesting_rect["x0"])
         zone_d = float(nesting_rect["y1"]) - float(nesting_rect["y0"])
         previous_nesting_size = (zone_w, zone_d)
@@ -1036,6 +1505,7 @@ class PanelAttributesController:
                     "failed": failed[:100],
                     "requiredWidthMm": required_w,
                     "requiredDepthMm": required_d,
+                    "sheetParams": sheet_params,
                     "profile": profile,
                     "errors": [
                         "Nesting Zone would overlap other zones after expanding "
@@ -1061,6 +1531,10 @@ class PanelAttributesController:
                 part_gap,
                 group_gap,
                 profiler=profiler,
+                layout=measure,
+                sheet_params=sheet_params,
+                wait_callback=_pump_fusion_events,
+                prevalidated_validation=collision_validation,
             )
         except Exception as ex:
             profile = profiler.flush(status="createFailed")
@@ -1072,6 +1546,7 @@ class PanelAttributesController:
                 "notReady": not_ready[:100],
                 "failed": failed[:100],
                 "zoneGrown": zone_grown,
+                "sheetParams": sheet_params,
                 "diagnostics": {
                     "prepareMs": prepare_ms,
                     "profilePath": profile.get("path"),
@@ -1104,6 +1579,60 @@ class PanelAttributesController:
         phases = profile.get("phasesMs") or {}
         counters = profile.get("counters") or {}
         skipped_no_attrs = int(counters.get("bodiesSkippedNoAttrs") or 0)
+        sheet_count = len(result.get("sheets") or measure.get("sheets") or [])
+        unplaced_count = len(result.get("unplaced") or unplaced)
+        outline_counts = measure.get("outlineCounts") or {}
+        true_shape = int(measure.get("trueShapeCount") or 0)
+        rect_fallback = int(measure.get("rectangleFallbackCount") or 0)
+        util_bits = []
+        for sheet in (result.get("sheets") or measure.get("sheets") or [])[:8]:
+            util_bits.append(
+                "{}:{:.0f}%".format(
+                    sheet.get("boardTypeTag") or "?",
+                    100.0 * float(sheet.get("utilization") or 0.0),
+                )
+            )
+        util_msg = (", sheets " + ", ".join(util_bits)) if util_bits else ""
+        unplaced_msg = (
+            " Unplaced {} (oversized for sheet).".format(unplaced_count)
+            if unplaced_count
+            else ""
+        )
+        outline_msg = " Outlines: {} true-shape · {} rectangle fallback.".format(
+            true_shape,
+            rect_fallback,
+        )
+        engine_fallback = bool(
+            result.get("engineFallback") or measure.get("engineFallback")
+        )
+        engine_fallback_reason = (
+            result.get("engineFallbackReason")
+            or measure.get("engineFallbackReason")
+            or ""
+        )
+        fallback_msg = (
+            " Deepnest fallback used: {}.".format(engine_fallback_reason)
+            if engine_fallback
+            else ""
+        )
+        hole_outline_count = int(measure.get("holeOutlineCount") or 0)
+        nested_in_hole_count = int(measure.get("nestedInHoleCount") or 0)
+        parts_in_part_applied = bool(measure.get("partsInPartApplied"))
+        holes_msg = (
+            " Through holes: {} sent · {} nested inside.".format(
+                hole_outline_count, nested_in_hole_count
+            )
+            if parts_in_part_applied
+            else ""
+        )
+        validation_msg = (
+            " Collision validation: {}{}.".format(
+                collision_validation.get("status") or "unknown",
+                " (sheet_pack safety fallback)"
+                if validation_fallback
+                else "",
+            )
+        )
         return "panelAttributesResult", {
             "ok": True,
             "action": "createNestingZoneLayout",
@@ -1111,18 +1640,61 @@ class PanelAttributesController:
             "readyCount": len(prepared),
             "createdCount": int(result.get("created") or 0),
             "groupCount": len(result.get("groups") or []),
+            "sheetCount": sheet_count,
             "deletedPreviousCount": int(result.get("deletedPrevious") or 0),
             "notReadyCount": len(not_ready),
             "failedCount": len(failed),
+            "unplacedCount": unplaced_count,
             "skippedNoAttrsCount": skipped_no_attrs,
+            "trueShapeCount": true_shape,
+            "rectangleFallbackCount": rect_fallback,
+            "outlineCounts": outline_counts,
             "notReady": not_ready[:100],
             "failed": failed[:100],
+            "unplaced": (result.get("unplaced") or unplaced)[:100],
             "groups": result.get("groups") or [],
+            "sheets": result.get("sheets") or measure.get("sheets") or [],
             "placements": result.get("placements") or [],
             "requiredWidthMm": result.get("requiredWidthMm"),
             "requiredDepthMm": result.get("requiredDepthMm"),
             "partGapMm": part_gap,
             "groupGapMm": group_gap,
+            "sheetParams": sheet_params,
+            "engine": result.get("engine") or measure.get("engine") or "sheet_pack_hybrid_v3",
+            "requestedEngine": result.get("requestedEngine")
+            or measure.get("requestedEngine"),
+            "engineFallback": engine_fallback,
+            "engineFallbackReason": engine_fallback_reason,
+            "partsInPartApplied": parts_in_part_applied,
+            "holeOutlineCount": hole_outline_count,
+            "nestedInHoleCount": nested_in_hole_count,
+            "bridgeHealth": measure.get("bridgeHealth") or {},
+            "collisionValidation": collision_validation,
+            "collisionCount": int(collision_validation.get("collisionCount") or 0),
+            "collisions": (collision_validation.get("collisions") or [])[:100],
+            "mappingWarnings": (
+                collision_validation.get("mappingWarnings") or []
+            )[:100],
+            "mappingWarningCount": int(
+                collision_validation.get("mappingWarningCount") or 0
+            ),
+            "sheetOverlaps": (
+                collision_validation.get("sheetOverlaps") or []
+            )[:50],
+            "sheetOverlapCount": int(
+                collision_validation.get("sheetOverlapCount") or 0
+            ),
+            "exactValidationIncomplete": bool(
+                collision_validation.get("exactValidationIncomplete")
+            ),
+            "exactCheckWarnings": (
+                collision_validation.get("exactCheckWarnings") or []
+            )[:50],
+            "validationFallback": validation_fallback,
+            "validationFallbackReason": validation_fallback_reason,
+            "primaryCollisionValidation": (
+                primary_collision_validation if validation_fallback else None
+            ),
             "zoneGrown": zone_grown,
             "previousNestingWidthMm": previous_nesting_size[0],
             "previousNestingDepthMm": previous_nesting_size[1],
@@ -1139,26 +1711,143 @@ class PanelAttributesController:
                 "profilePath": profile.get("path"),
                 "phasesMs": phases,
                 "bodiesSkippedNoAttrs": skipped_no_attrs,
+                "layoutEngine": result.get("engine") or measure.get("engine") or "sheet_pack_hybrid_v3",
+                "engineFallback": engine_fallback,
+                "engineFallbackReason": engine_fallback_reason,
+                "collisionValidation": collision_validation,
+                "validationFallback": validation_fallback,
+                "validationFallbackReason": validation_fallback_reason,
+                "outlineCounts": outline_counts,
+                "preparedHoleOutlineCount": prepared_hole_outline_count,
+                "bridgeHealth": measure.get("bridgeHealth") or {},
             },
             "profile": profile,
             "message": (
-                "Created {} Nesting workpiece(s) in {} Board Type + Color row(s) "
-                "from {} Nesting Ready panel(s); "
-                "not ready {}, failed {}, unmarked solids skipped {}. "
+                "Created {} Nesting workpiece(s) on {} sheet(s) "
+                "from {} Nesting Ready panel(s) via {}; "
+                "not ready {}, failed {}, unmarked solids skipped {}{}{}{}{}{}{}. "
                 "Timing: scan {} ms · prepare {} ms · create {} ms · total {} ms."
                 "{}"
             ).format(
                 int(result.get("created") or 0),
-                len(result.get("groups") or []),
+                sheet_count,
                 len(prepared),
+                result.get("engine") or measure.get("engine") or "sheet_pack_hybrid_v3",
                 len(not_ready),
                 len(failed),
                 skipped_no_attrs,
+                util_msg,
+                unplaced_msg,
+                outline_msg,
+                fallback_msg,
+                holes_msg,
+                validation_msg,
                 int(phases.get("scanWalk") or 0),
                 prepare_ms,
                 create_ms,
                 profile.get("elapsedMs"),
                 grow_msg,
+            ),
+        }
+
+    def create_nesting_layout_sketch(self, _payload, _palette):
+        """Create a top-down projection sketch on NESTING_LAYOUT for manual DXF export."""
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "createNestingLayoutSketch",
+                "errors": ["No active Fusion design."],
+            }
+
+        def _progress(done, total):
+            _pump_fusion_events()
+
+        result = nesting_dxf_export.create_nesting_layout_sketch(
+            root, progress_callback=_progress
+        )
+        if not result.get("ok"):
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "createNestingLayoutSketch",
+                "errors": [result.get("error") or "Could not create nesting sketch."],
+                "bodyCount": int(result.get("bodyCount") or 0),
+                "ringCount": int(result.get("ringCount") or 0),
+            }
+        try:
+            self.fusion.refresh_viewport()
+        except Exception:
+            pass
+        return "panelAttributesResult", {
+            "ok": True,
+            "action": "createNestingLayoutSketch",
+            "sketchName": result.get("sketchName") or "",
+            "componentName": result.get("componentName") or "",
+            "bodyCount": int(result.get("bodyCount") or 0),
+            "ringCount": int(result.get("ringCount") or 0),
+            "lineCount": int(result.get("lineCount") or 0),
+            "deletedPrevious": int(result.get("deletedPrevious") or 0),
+            "message": (
+                "Intersect sketch {} on {} (cut {:.1f} mm): "
+                "{} body(ies), {} curve(s) via {}. "
+                "Right-click the sketch → Save as DXF."
+            ).format(
+                result.get("sketchName") or "NESTING_DXF_PROJECTION",
+                result.get("componentName") or "NESTING_LAYOUT",
+                float(result.get("cutZmm") or 0.0),
+                int(result.get("bodyCount") or 0),
+                int(result.get("projectedCount") or result.get("lineCount") or 0),
+                result.get("method") or "projectMillingFace",
+            ),
+        }
+
+    def export_nesting_layout_dxf(self, payload, _palette):
+        """Export the current NESTING_LAYOUT as one top-down ArtCAM DXF (single layer)."""
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "exportNestingLayoutDxf",
+                "errors": ["No active Fusion design."],
+            }
+        app = adsk.core.Application.get()
+        ui = app.userInterface if app else None
+        default_name = str((payload or {}).get("fileName") or "nesting_layout.dxf")
+        path = nesting_dxf_export.choose_dxf_save_path(ui, default_name=default_name)
+        if not path:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "exportNestingLayoutDxf",
+                "cancelled": True,
+                "errors": ["DXF export cancelled."],
+            }
+        result = nesting_dxf_export.export_nesting_layout_dxf(
+            root,
+            path,
+            layer=str((payload or {}).get("layer") or "0"),
+        )
+        if not result.get("ok"):
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "exportNestingLayoutDxf",
+                "errors": [result.get("error") or "DXF export failed."],
+                "bodyCount": int(result.get("bodyCount") or 0),
+                "ringCount": int(result.get("ringCount") or 0),
+            }
+        return "panelAttributesResult", {
+            "ok": True,
+            "action": "exportNestingLayoutDxf",
+            "path": result.get("path") or path,
+            "bodyCount": int(result.get("bodyCount") or 0),
+            "ringCount": int(result.get("ringCount") or 0),
+            "componentName": result.get("componentName") or "",
+            "layer": result.get("layer") or "0",
+            "message": (
+                "Exported nesting DXF: {} body(ies), {} polyline(s) → {}."
+            ).format(
+                int(result.get("bodyCount") or 0),
+                int(result.get("ringCount") or 0),
+                result.get("path") or path,
             ),
         }
 
@@ -2047,6 +2736,17 @@ class PanelAttributesController:
                     is_door=is_door,
                 )
                 tag_metadata_editor._write_body_metadata(body, patched)
+                if is_door:
+                    repair = milling_surface_propagation.ensure_complementary_surface_roles(
+                        body,
+                        write_pair=lambda b, fa, ra, fb, rb, source="repair_complementary": (
+                            tag_metadata_editor.apply_surface_roles(
+                                b, fa, ra, fb, rb, source=source, lock=False, force=True
+                            )
+                        ),
+                    )
+                    if repair.get("warning"):
+                        warnings.append(repair["warning"])
                 updated += 1
                 updated_names.append(str(getattr(body, "name", "") or "") or "body")
             except Exception as ex:
@@ -2139,11 +2839,11 @@ class PanelAttributesController:
         }
 
     def revert_door_surfaces(self, _payload, _palette):
-        """Swap MILLING/NON_MILLING on targeted panels.
+        """Manual front/back override → definite MILLING/NON_MILLING.
 
-        Face / body / edge selection: swap that owning body immediately
-        (explicit pick). Assembly / component selection: only door panels;
-        other board types are ignored.
+        Face / body / edge selection: that body (any board, hinge or not,
+        EITHER or already oriented). Assembly selection: doors only.
+        Always locks face-up so Orient cannot write EITHER back over it.
         """
         root = self.fusion.get_root_component()
         if not root:
@@ -2163,7 +2863,9 @@ class PanelAttributesController:
 
         # Explicit picks (face/body/edge) → that body, no door filter.
         # Bulk picks (occurrence/component) → doors only.
+        # Face picks also remember the face so EITHER/EITHER can commit colour.
         explicit_bodies = []
+        preferred_faces = {}
         bulk_bodies = []
         expand_warnings = []
         seen_explicit = set()
@@ -2182,9 +2884,13 @@ class PanelAttributesController:
                     continue
                 key = metadata_inspector._body_key(body)
                 if key in seen_explicit:
+                    if kind == "face" and id(body) not in preferred_faces:
+                        preferred_faces[id(body)] = entity
                     continue
                 seen_explicit.add(key)
                 explicit_bodies.append(body)
+                if kind == "face":
+                    preferred_faces[id(body)] = entity
             else:
                 # Defer bulk expansion; collect entities first.
                 pass
@@ -2238,6 +2944,7 @@ class PanelAttributesController:
                 )
             ),
             is_door_body=_should_swap,
+            preferred_faces=preferred_faces,
         )
         skipped = result.get("skipped") or []
         skipped_non_door = sum(1 for item in skipped if item.get("reason") == "not_door")
@@ -2358,10 +3065,17 @@ class PanelAttributesController:
         faces = collected.get("faces") or []
         either_picked = collected.get("eitherPicked") or []
         skipped = collected.get("skipped") or []
+        shared_mirror = collected.get("sharedMirrorOccurrence") or []
         no_role = len(skipped)
         selected_count, select_failures = self._select_faces_and_fit(faces)
         warnings = list(expand_warnings or []) + list(collected.get("warnings") or [])
         warnings.extend(select_failures or [])
+        if shared_mirror:
+            warnings.append(
+                "{} mirrored occurrence(s): Select shows the shared native MILLING "
+                "face; Nesting restores opposite chirality on flatten."
+                .format(len(shared_mirror))
+            )
         if faces and selected_count == 0:
             warnings.append(
                 "Resolved {} milling faces but Fusion selection.add failed "
@@ -2383,8 +3097,14 @@ class PanelAttributesController:
                 warnings.append("Selected {} of {} milling faces.".format(selected_count, len(faces)))
             message = (
                 "Selected {} milling face(s) across {} bodies "
-                "(EITHER stand-ins: {}, without role: {})."
-                .format(selected_count, len(bodies), len(either_picked), no_role)
+                "(EITHER stand-ins: {}, without role: {}, mirrored occurrences: {})."
+                .format(
+                    selected_count,
+                    len(bodies),
+                    len(either_picked),
+                    no_role,
+                    len(shared_mirror),
+                )
             )
         return "panelAttributesResult", {
             "ok": selected_count > 0,
@@ -2392,6 +3112,8 @@ class PanelAttributesController:
             "selectedCount": selected_count,
             "resolvedFaceCount": len(faces),
             "eitherPickedCount": len(either_picked),
+            "sharedMirrorOccurrenceCount": len(shared_mirror),
+            "sharedMirrorOccurrence": shared_mirror[:40],
             "bodyCount": len(bodies),
             "skippedNoMillingCount": no_role,
             "skipped": skipped[:40],

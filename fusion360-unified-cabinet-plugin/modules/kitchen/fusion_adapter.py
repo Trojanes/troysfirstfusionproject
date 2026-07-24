@@ -7,8 +7,9 @@ import adsk.core
 import adsk.fusion
 
 from geometry_ops import avoid_existing_at_origin
+from assembly_cut_face import assembly_cut_face
 
-ADAPTER_REVISION = "spawnAvoidanceWorldBbox_v38"
+ADAPTER_REVISION = "yzHalfCutSide_v39"
 ATTRIBUTE_GROUP = "CabinetNC"
 MODEL_Z_OFFSET_MM = 10000.0
 # Flat bodies are modelled at z=0 inside each panel component (same as Lounge).
@@ -173,15 +174,33 @@ def _profile_plane_for_sketch(component, plane, bbox):
     return construction.add(plane_input)
 
 
-def _cut_face_plane_for_sketch(component, plane, bbox):
+def _cut_face_plane_for_sketch(component, plane, bbox, cutout=None):
+    """Sketch plane on the face the cut enters.
+
+    Half grooves respect cutout.side (left=-min axis, right=+max axis).
+    Through / notches keep the legacy +max face.
+    """
+    face = assembly_cut_face(plane, bbox, cutout or {})
+    origin_mm = face.get("originMm")
+    if origin_mm is None:
+        return None
     construction = component.constructionPlanes
     plane_input = construction.createInput()
     if plane == "YZ":
-        plane_input.setByOffset(component.yZConstructionPlane, adsk.core.ValueInput.createByReal(mm_to_cm(bbox["x1"])))
+        plane_input.setByOffset(
+            component.yZConstructionPlane,
+            adsk.core.ValueInput.createByReal(mm_to_cm(origin_mm)),
+        )
     elif plane == "XY":
-        plane_input.setByOffset(component.xYConstructionPlane, adsk.core.ValueInput.createByReal(mm_to_cm(bbox["z1"])))
+        plane_input.setByOffset(
+            component.xYConstructionPlane,
+            adsk.core.ValueInput.createByReal(mm_to_cm(origin_mm)),
+        )
     elif plane == "XZ":
-        plane_input.setByOffset(component.xZConstructionPlane, adsk.core.ValueInput.createByReal(mm_to_cm(bbox["y1"])))
+        plane_input.setByOffset(
+            component.xZConstructionPlane,
+            adsk.core.ValueInput.createByReal(mm_to_cm(origin_mm)),
+        )
     else:
         return None
     return construction.add(plane_input)
@@ -410,6 +429,9 @@ def _new_assembly_component(root_comp, run_label, component_name=None, origin_x_
     try:
         component.attributes.add(ATTRIBUTE_GROUP, "module", "kitchen")
         component.attributes.add(ATTRIBUTE_GROUP, "assemblyName", component_name)
+        # Connect collect also looks up UnifiedCabinetPlugin.assemblyName.
+        component.attributes.add("UnifiedCabinetPlugin", "module", "kitchen")
+        component.attributes.add("UnifiedCabinetPlugin", "assemblyName", component_name)
     except Exception:
         pass
     return component, component_name, None
@@ -846,25 +868,30 @@ def _cutout_world_points(plane, bbox, cutout):
         return None
     a0, a1 = min(a0, a1), max(a0, a1)
     b0, b1 = min(b0, b1), max(b0, b1)
+    face = assembly_cut_face(plane, bbox, cutout)
+    origin_mm = face.get("originMm")
+    if origin_mm is None:
+        return None
     if plane == "XY":
         return (
-            adsk.core.Point3D.create(mm_to_cm(a0), mm_to_cm(b0), mm_to_cm(bbox["z1"])),
-            adsk.core.Point3D.create(mm_to_cm(a1), mm_to_cm(b1), mm_to_cm(bbox["z1"])),
+            adsk.core.Point3D.create(mm_to_cm(a0), mm_to_cm(b0), mm_to_cm(origin_mm)),
+            adsk.core.Point3D.create(mm_to_cm(a1), mm_to_cm(b1), mm_to_cm(origin_mm)),
         )
     if plane == "XZ":
         return (
-            adsk.core.Point3D.create(mm_to_cm(a0), mm_to_cm(bbox["y1"]), mm_to_cm(b0)),
-            adsk.core.Point3D.create(mm_to_cm(a1), mm_to_cm(bbox["y1"]), mm_to_cm(b1)),
+            adsk.core.Point3D.create(mm_to_cm(a0), mm_to_cm(origin_mm), mm_to_cm(b0)),
+            adsk.core.Point3D.create(mm_to_cm(a1), mm_to_cm(origin_mm), mm_to_cm(b1)),
         )
     return (
-        adsk.core.Point3D.create(mm_to_cm(bbox["x1"]), mm_to_cm(a0), mm_to_cm(b0)),
-        adsk.core.Point3D.create(mm_to_cm(bbox["x1"]), mm_to_cm(a1), mm_to_cm(b1)),
+        adsk.core.Point3D.create(mm_to_cm(origin_mm), mm_to_cm(a0), mm_to_cm(b0)),
+        adsk.core.Point3D.create(mm_to_cm(origin_mm), mm_to_cm(a1), mm_to_cm(b1)),
     )
 
 
 def _cut_panel_cutout(component, body, entry, cutout):
     plane = entry["plane"]
     bbox = entry["bbox"]
+    face = assembly_cut_face(plane, bbox, cutout)
     points = _cutout_world_points(plane, bbox, cutout)
     if points is None:
         return {"id": cutout.get("id"), "status": "skipped", "reason": "invalid cutout bounds"}
@@ -875,7 +902,7 @@ def _cut_panel_cutout(component, body, entry, cutout):
     half_groove_depth = max(0.1, half_groove_depth) if half_groove_depth is not None else max(0.1, thickness / 2.0 - 0.5)
     cut_depth = min(thickness, half_groove_depth) if is_half_groove else thickness
 
-    cut_plane = _cut_face_plane_for_sketch(component, plane, bbox)
+    cut_plane = _cut_face_plane_for_sketch(component, plane, bbox, cutout=cutout)
     if not cut_plane:
         return {"id": cutout.get("id"), "status": "failed", "reason": "unsupported cut plane"}
 
@@ -895,7 +922,11 @@ def _cut_panel_cutout(component, body, entry, cutout):
 
     extrudes = component.features.extrudeFeatures
     ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
-    ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(-mm_to_cm(cut_depth)))
+    extrude_sign = int(face.get("extrudeSign") or -1)
+    ext_input.setDistanceExtent(
+        False,
+        adsk.core.ValueInput.createByReal(mm_to_cm(cut_depth) * extrude_sign),
+    )
     try:
         participants = adsk.core.ObjectCollection.create()
         for participant_body in entry.get("createdFlatBodies") or [body]:
@@ -909,6 +940,10 @@ def _cut_panel_cutout(component, body, entry, cutout):
         "sourceId": cutout.get("sourceId"),
         "kind": "groove" if is_half_groove else cutout.get("kind"),
         "slotType": cutout.get("slotType"),
+        "side": face.get("side"),
+        "cutFace": face.get("side") if is_half_groove else "through",
+        "cutOriginMm": face.get("originMm"),
+        "extrudeSign": extrude_sign,
         "status": "created",
         "depth": cut_depth,
     }
@@ -1327,6 +1362,17 @@ def create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=N
     }
     if container_warning:
         warnings.append(container_warning)
+    declarations = result.get("relationshipDeclarations") if isinstance(result, dict) else None
+    if isinstance(declarations, list) and declarations and component is not root:
+        try:
+            component.attributes.add(
+                ATTRIBUTE_GROUP,
+                "relationshipDeclarations",
+                json.dumps(declarations, ensure_ascii=False, separators=(",", ":")),
+            )
+            placement_debug["relationshipDeclarationCount"] = len(declarations)
+        except Exception as ex:
+            warnings.append("Could not write relationshipDeclarations on assembly: {}".format(ex))
 
     for entry in entries:
         try:

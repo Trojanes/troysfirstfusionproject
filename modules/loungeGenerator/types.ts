@@ -190,4 +190,5 @@ export interface LoungeGeometryResult {
     warnings: string[];
     errors: string[];
   };
+  relationshipDeclarations?: import("./relationshipDeclarations.ts").RelationshipDeclaration[];
 }

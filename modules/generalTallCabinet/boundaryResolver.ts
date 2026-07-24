@@ -63,6 +63,7 @@ export function resolveBoundary(
     aboveZone.type === "drawer" ||
     aboveZone.type === "open_space" ||
     aboveZone.type === "open_appliance" ||
+    aboveZone.type === "fridge" ||
     aboveZone.type === "bottom_flap"
   ) {
     return fullZi(`${aboveZone.type} bottom rule requires full Zi.`);

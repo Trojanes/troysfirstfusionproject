@@ -6,7 +6,7 @@ import adsk.fusion
 
 from geometry_ops import ATTRIBUTE_GROUP, MODEL_Z_OFFSET_MM, mm_to_cm, offset_matching_bodies_z_mm, sanitize_token
 
-ADAPTER_REVISION = "loungeWorldAlignedAssembly_v23"
+ADAPTER_REVISION = "loungeWorldAlignedAssembly_v26"
 
 
 def _num(value, fallback=0.0):
@@ -283,7 +283,9 @@ def _add_yz_box_body(component, item_id, x0, x1, y0, y1, z0, z1, preview_mode="a
     extrudes = component.features.extrudeFeatures
     ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
     if anchor_x1:
-        ext_input.setDistanceExtent(True, adsk.core.ValueInput.createByReal(-mm_to_cm(thickness)))
+        # Sketch on x=x1; negative distance (non-symmetric) extrudes toward -X to x0.
+        # isSymmetric=True would double the thickness (2 × PPT) — that was the L-piece bug.
+        ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(-mm_to_cm(thickness)))
     else:
         ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm_to_cm(thickness)))
     feature = extrudes.add(ext_input)
@@ -356,6 +358,7 @@ def _add_placement_box_body(component, item, preview_mode="assembly"):
 
 
 def _rounded_rect_points(x0, y0, x1, y1, radius, segments=10):
+    """Facetted fallback (tests / size helpers). Prefer `_draw_rounded_rect` for Fusion bodies."""
     r = max(0.0, min(float(radius or 0.0), (x1 - x0) / 2.0, (y1 - y0) / 2.0))
     if r <= 0:
         return [[x0, y0], [x1, y0], [x1, y1], [x0, y1], [x0, y0]]
@@ -374,6 +377,49 @@ def _rounded_rect_points(x0, y0, x1, y1, radius, segments=10):
     return pts
 
 
+def _sketch_xy_point(sketch, x, y, offset_x=0.0, offset_y=0.0, plane_z_mm=None):
+    # Cut/body sketches on XY (or a Z-offset parallel plane) use 2D sketch coords
+    # that match model X/Y. Do not route through modelToSketchSpace: that can flip
+    # sketch axes and break arc↔line connectivity (no closed profile → no step cut).
+    _ = sketch
+    _ = plane_z_mm
+    return adsk.core.Point3D.create(mm_to_cm(x + offset_x), mm_to_cm(y + offset_y), 0)
+
+
+def _draw_rounded_rect(sketch, x0, y0, x1, y1, radius, offset_x=0.0, offset_y=0.0, plane_z_mm=None):
+    """Closed rounded rectangle using true sketch arcs (CCW)."""
+    if x1 <= x0 or y1 <= y0:
+        return False
+    r = max(0.0, min(float(radius or 0.0), (x1 - x0) / 2.0, (y1 - y0) / 2.0))
+    lines = sketch.sketchCurves.sketchLines
+    pt = lambda x, y: _sketch_xy_point(sketch, x, y, offset_x, offset_y, plane_z_mm)
+
+    def add_line(ax, ay, bx, by):
+        if abs(ax - bx) < 1e-9 and abs(ay - by) < 1e-9:
+            return
+        lines.addByTwoPoints(pt(ax, ay), pt(bx, by))
+
+    if r <= 1e-9:
+        add_line(x0, y0, x1, y0)
+        add_line(x1, y0, x1, y1)
+        add_line(x1, y1, x0, y1)
+        add_line(x0, y1, x0, y0)
+        return True
+
+    arcs = sketch.sketchCurves.sketchArcs
+    quarter = math.pi / 2.0
+    # Bottom → BR arc → right → TR arc → top → TL arc → left → BL arc
+    add_line(x0 + r, y0, x1 - r, y0)
+    arcs.addByCenterStartSweep(pt(x1 - r, y0 + r), pt(x1 - r, y0), quarter)
+    add_line(x1, y0 + r, x1, y1 - r)
+    arcs.addByCenterStartSweep(pt(x1 - r, y1 - r), pt(x1, y1 - r), quarter)
+    add_line(x1 - r, y1, x0 + r, y1)
+    arcs.addByCenterStartSweep(pt(x0 + r, y1 - r), pt(x0 + r, y1), quarter)
+    add_line(x0, y1 - r, x0, y0 + r)
+    arcs.addByCenterStartSweep(pt(x0 + r, y0 + r), pt(x0, y0 + r), quarter)
+    return True
+
+
 def _draw_loop(sketch, points, offset_x=0.0, offset_y=0.0, plane_z_mm=None):
     if not isinstance(points, list) or len(points) < 3:
         return False
@@ -386,22 +432,8 @@ def _draw_loop(sketch, points, offset_x=0.0, offset_y=0.0, plane_z_mm=None):
     for idx in range(len(clean) - 1):
         p0 = clean[idx]
         p1 = clean[idx + 1]
-        if plane_z_mm is None:
-            a = adsk.core.Point3D.create(mm_to_cm(_num(p0[0]) + offset_x), mm_to_cm(_num(p0[1]) + offset_y), 0)
-            b = adsk.core.Point3D.create(mm_to_cm(_num(p1[0]) + offset_x), mm_to_cm(_num(p1[1]) + offset_y), 0)
-        else:
-            a = adsk.core.Point3D.create(
-                mm_to_cm(_num(p0[0]) + offset_x),
-                mm_to_cm(_num(p0[1]) + offset_y),
-                mm_to_cm(plane_z_mm),
-            )
-            b = adsk.core.Point3D.create(
-                mm_to_cm(_num(p1[0]) + offset_x),
-                mm_to_cm(_num(p1[1]) + offset_y),
-                mm_to_cm(plane_z_mm),
-            )
-            a = sketch.modelToSketchSpace(a)
-            b = sketch.modelToSketchSpace(b)
+        a = _sketch_xy_point(sketch, _num(p0[0]), _num(p0[1]), offset_x, offset_y, plane_z_mm)
+        b = _sketch_xy_point(sketch, _num(p1[0]), _num(p1[1]), offset_x, offset_y, plane_z_mm)
         lines.addByTwoPoints(a, b)
     return True
 
@@ -454,10 +486,11 @@ def _profile_closest_to_area(sketch, expected_area_mm2):
 
 
 def _item_outer_points(item):
+    # Lid footprint is rectangular in the data model; Fusion draws true arcs via `_draw_rounded_rect`.
     if item.get("kind") == "lid":
         width = _num(item.get("width"))
         depth = _num(item.get("depth"))
-        return _rounded_rect_points(0, 0, width, depth, _num(item.get("radius"), 0.0))
+        return [[0, 0], [width, 0], [width, depth], [0, depth], [0, 0]]
     outer = item.get("outer")
     if isinstance(outer, list) and outer:
         return outer
@@ -466,9 +499,21 @@ def _item_outer_points(item):
     return [[0, 0], [width, 0], [width, depth], [0, depth], [0, 0]]
 
 
+def _lid_draw_bounds(item):
+    if item.get("kind") != "lid":
+        return None
+    width = _num(item.get("width"))
+    depth = _num(item.get("depth"))
+    radius = _num(item.get("radius"), 0.0)
+    if width <= 0 or depth <= 0:
+        return None
+    return (0.0, 0.0, width, depth, radius)
+
+
 def _set_cut_participant_bodies(ext_input, body):
     """Restrict a cut extrude to one body; without this Fusion may cut every intersecting body."""
     try:
+        # Fusion SWIG binding prefers a Python list (same as GT LED cuts).
         ext_input.participantBodies = [body]
         return None
     except Exception:
@@ -502,8 +547,7 @@ def _cut_rounded_rect_from_top(component, body, item_id, x0, y0, x1, y1, radius,
     plane = construction.add(plane_input)
     sketch = component.sketches.add(plane)
     sketch.name = "LOUNGE_CUT_{}".format(sanitize_token(item_id, limit=60))
-    loop = _rounded_rect_points(x0, y0, x1, y1, radius)
-    if not _draw_loop(sketch, loop, offset_x, offset_y, plane_z_mm=plane_z):
+    if not _draw_rounded_rect(sketch, x0, y0, x1, y1, radius, offset_x, offset_y, plane_z_mm=plane_z):
         return {"id": item_id, "status": "failed", "reason": "draw_loop_failed"}
     profile = _largest_profile(sketch)
     if profile is None:
@@ -545,9 +589,9 @@ def _cut_rounded_rect_ring_from_top(component, body, item_id, x0, y0, x1, y1, ra
     plane = component.constructionPlanes.add(plane_input)
     sketch = component.sketches.add(plane)
     sketch.name = "LOUNGE_CUT_{}".format(sanitize_token(item_id, limit=60))
-    if not _draw_loop(sketch, _rounded_rect_points(x0, y0, x1, y1, radius), offset_x, offset_y, plane_z_mm=plane_z):
+    if not _draw_rounded_rect(sketch, x0, y0, x1, y1, radius, offset_x, offset_y, plane_z_mm=plane_z):
         return {"id": item_id, "status": "failed", "reason": "draw_outer_failed"}
-    if not _draw_loop(sketch, _rounded_rect_points(ix0, iy0, ix1, iy1, inner_radius), offset_x, offset_y, plane_z_mm=plane_z):
+    if not _draw_rounded_rect(sketch, ix0, iy0, ix1, iy1, inner_radius, offset_x, offset_y, plane_z_mm=plane_z):
         return {"id": item_id, "status": "failed", "reason": "draw_inner_failed"}
     outer_area = _rounded_rect_area_mm2(x0, y0, x1, y1, radius)
     inner_area = _rounded_rect_area_mm2(ix0, iy0, ix1, iy1, inner_radius)
@@ -574,21 +618,26 @@ def _apply_flat_panel_cuts(component, body, item, offset_x, offset_y, assembly_m
     if opening:
         step_w = _num(opening.get("stepWidth"), thickness / 2.0)
         step_h = _num(opening.get("stepHeight"), thickness / 2.0)
-        # Outer rebate / shoulder.
-        audits.append(_cut_rounded_rect_from_top(
-            component, body, "{}_rebate".format(item.get("id")),
-            _num(opening.get("x0")), _num(opening.get("y0")),
-            _num(opening.get("x1")), _num(opening.get("y1")),
-            _num(opening.get("radius"), 50),
-            min(step_h, thickness),
-            offset_x, offset_y,
-        ))
-        # Through opening inside the shoulder.
+        ox0 = _num(opening.get("x0"))
+        oy0 = _num(opening.get("y0"))
+        ox1 = _num(opening.get("x1"))
+        oy1 = _num(opening.get("y1"))
+        radius = _num(opening.get("radius"), 50)
+        # Explicit shoulder ring (outer − through), then through cut.
+        if step_w > 0 and step_h > 0:
+            audits.append(_cut_rounded_rect_ring_from_top(
+                component, body, "{}_rebate_step".format(item.get("id")),
+                ox0, oy0, ox1, oy1,
+                radius,
+                step_w,
+                min(step_h, thickness),
+                offset_x, offset_y,
+            ))
         audits.append(_cut_rounded_rect_from_top(
             component, body, "{}_through_opening".format(item.get("id")),
-            _num(opening.get("x0")) + step_w, _num(opening.get("y0")) + step_w,
-            _num(opening.get("x1")) - step_w, _num(opening.get("y1")) - step_w,
-            max(0.0, _num(opening.get("radius"), 50) - step_w),
+            ox0 + step_w, oy0 + step_w,
+            ox1 - step_w, oy1 - step_w,
+            max(0.0, radius - step_w),
             thickness + 0.5,
             offset_x, offset_y,
         ))
@@ -665,6 +714,17 @@ def _apply_flat_panel_cuts(component, body, item, offset_x, offset_y, assembly_m
     return audits
 
 
+def _cut_audit_warnings(audits):
+    warnings = []
+    for audit in audits or []:
+        if not isinstance(audit, dict):
+            continue
+        status = str(audit.get("status") or "")
+        if status in ("failed", "skipped") and audit.get("reason"):
+            warnings.append("Cut {}: {} ({})".format(audit.get("id"), status, audit.get("reason")))
+    return warnings
+
+
 def _item_size(item):
     outer = _item_outer_points(item)
     xs = [_num(p[0]) for p in outer]
@@ -737,6 +797,73 @@ def _draw_loop_oriented(sketch, points, plane, placement):
     return True
 
 
+def _oriented_sketch_point(sketch, plane, placement, x, y):
+    world = _profile_world_point(plane, placement, [x, y])
+    if world is None:
+        return None
+    model = adsk.core.Point3D.create(mm_to_cm(world[0]), mm_to_cm(world[1]), mm_to_cm(world[2]))
+    return sketch.modelToSketchSpace(model)
+
+
+def _draw_rounded_rect_oriented(sketch, x0, y0, x1, y1, radius, plane, placement):
+    """Closed rounded rectangle in assembly-oriented sketch space using true arcs."""
+    if x1 <= x0 or y1 <= y0:
+        return False
+    r = max(0.0, min(float(radius or 0.0), (x1 - x0) / 2.0, (y1 - y0) / 2.0))
+    lines = sketch.sketchCurves.sketchLines
+    pt = lambda x, y: _oriented_sketch_point(sketch, plane, placement, x, y)
+
+    def add_line(ax, ay, bx, by):
+        if abs(ax - bx) < 1e-9 and abs(ay - by) < 1e-9:
+            return True
+        a = pt(ax, ay)
+        b = pt(bx, by)
+        if a is None or b is None:
+            return False
+        lines.addByTwoPoints(a, b)
+        return True
+
+    if r <= 1e-9:
+        return (
+            add_line(x0, y0, x1, y0)
+            and add_line(x1, y0, x1, y1)
+            and add_line(x1, y1, x0, y1)
+            and add_line(x0, y1, x0, y0)
+        )
+
+    arcs = sketch.sketchCurves.sketchArcs
+    quarter = math.pi / 2.0
+    if not add_line(x0 + r, y0, x1 - r, y0):
+        return False
+    c = pt(x1 - r, y0 + r)
+    s = pt(x1 - r, y0)
+    if c is None or s is None:
+        return False
+    arcs.addByCenterStartSweep(c, s, quarter)
+    if not add_line(x1, y0 + r, x1, y1 - r):
+        return False
+    c = pt(x1 - r, y1 - r)
+    s = pt(x1, y1 - r)
+    if c is None or s is None:
+        return False
+    arcs.addByCenterStartSweep(c, s, quarter)
+    if not add_line(x1 - r, y1, x0 + r, y1):
+        return False
+    c = pt(x0 + r, y1 - r)
+    s = pt(x0 + r, y1)
+    if c is None or s is None:
+        return False
+    arcs.addByCenterStartSweep(c, s, quarter)
+    if not add_line(x0, y1 - r, x0, y0 + r):
+        return False
+    c = pt(x0 + r, y0 + r)
+    s = pt(x0, y0 + r)
+    if c is None or s is None:
+        return False
+    arcs.addByCenterStartSweep(c, s, quarter)
+    return True
+
+
 def _add_oriented_panel_body(component, item, preview_mode="assembly"):
     """Create panels directly in assembly pose (no flat staging + rotation)."""
     item_id = str(item.get("id") or "panel")
@@ -751,7 +878,17 @@ def _add_oriented_panel_body(component, item, preview_mode="assembly"):
         return None, "unsupported_profile_plane"
     sketch = component.sketches.add(sketch_plane)
     sketch.name = "LOUNGE_ORIENT_SK_{}".format(sanitize_token(item_id, limit=60))
-    if not _draw_loop_oriented(sketch, _item_outer_points(item), plane, placement):
+    # L pieces sketch on x=x1; draw profile on that plane (not x0) so extrude -X lands on x0..x1.
+    draw_placement = placement
+    if item_id in ("main_left_l_piece", "main_right_l_piece") and plane == "YZ":
+        draw_placement = dict(placement)
+        draw_placement["x0"] = _num(placement.get("x1"))
+    lid_bounds = _lid_draw_bounds(item)
+    if lid_bounds is not None:
+        lx0, ly0, lx1, ly1, radius = lid_bounds
+        if not _draw_rounded_rect_oriented(sketch, lx0, ly0, lx1, ly1, radius, plane, draw_placement):
+            return None, "invalid_outer"
+    elif not _draw_loop_oriented(sketch, _item_outer_points(item), plane, draw_placement):
         return None, "invalid_outer"
     profile = _largest_profile(sketch)
     if profile is None:
@@ -760,7 +897,8 @@ def _add_oriented_panel_body(component, item, preview_mode="assembly"):
     extrudes = component.features.extrudeFeatures
     ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
     if item_id in ("main_left_l_piece", "main_right_l_piece"):
-        ext_input.setDistanceExtent(True, adsk.core.ValueInput.createByReal(-mm_to_cm(thickness)))
+        # Plane is anchored at placement.x1; extrude -X by PPT only (not symmetric).
+        ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(-mm_to_cm(thickness)))
     else:
         ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm_to_cm(thickness)))
     feature = extrudes.add(ext_input)
@@ -796,7 +934,12 @@ def _add_flat_panel_body(component, item, offset_x, offset_y, preview_mode="flat
     thickness = max(0.1, _num(item.get("thickness"), 18))
     sketch = component.sketches.add(component.xYConstructionPlane)
     sketch.name = "LOUNGE_FLAT_SK_{}".format(sanitize_token(item_id, limit=60))
-    if not _draw_loop(sketch, _item_outer_points(item), offset_x, offset_y):
+    lid_bounds = _lid_draw_bounds(item)
+    if lid_bounds is not None:
+        lx0, ly0, lx1, ly1, radius = lid_bounds
+        if not _draw_rounded_rect(sketch, lx0, ly0, lx1, ly1, radius, offset_x, offset_y):
+            return None, "invalid_outer"
+    elif not _draw_loop(sketch, _item_outer_points(item), offset_x, offset_y):
         return None, "invalid_outer"
     for loop in _item_cut_loops(item):
         _draw_loop(sketch, loop, offset_x, offset_y)
@@ -975,7 +1118,7 @@ def create_lounge_bodies(fusion_adapter, result, run_label=None, component_name=
         "skipped": [],
         "cutAudit": [],
         "errors": [],
-        "warnings": ["Phase 1 Lounge flat bodies: SVG profiles only; stepped recess depths are not modeled yet."],
+        "warnings": ["Lounge flat bodies: opening rebate + lid underside step are cut after extrude."],
         "previewMode": "flat_svg",
         "adapterRevision": ADAPTER_REVISION,
         "deletedPrevious": {"bodies": 0, "sketches": 0, "failed": 0},
@@ -1021,6 +1164,7 @@ def create_lounge_bodies(fusion_adapter, result, run_label=None, component_name=
         summary["createdIds"].append(item.get("id"))
         cursor_x += width + gap
         row_h = max(row_h, depth)
+    summary["warnings"].extend(_cut_audit_warnings(summary["cutAudit"]))
     _capture_position_snapshot(root)
     summary["modelZOffset"] = {
         "offsetMm": origin_z_mm,
@@ -1042,7 +1186,7 @@ def create_lounge_assembly_bodies(fusion_adapter, result, run_label=None, compon
         "cutAudit": [],
         "transformAudit": [],
         "errors": [],
-        "warnings": ["Lounge assembly: world-aligned axes via placementBox/orientedAssemblyDirect (v23)."],
+        "warnings": ["Lounge assembly: world-aligned axes via placementBox/orientedAssemblyDirect (v26)."],
         "previewMode": "assembly",
         "adapterRevision": ADAPTER_REVISION,
         "deletedPrevious": {"bodies": 0, "sketches": 0, "failed": 0},
@@ -1092,6 +1236,7 @@ def create_lounge_assembly_bodies(fusion_adapter, result, run_label=None, compon
         })
         summary["createdBodies"] += 1
         summary["createdIds"].append(item_id)
+    summary["warnings"].extend(_cut_audit_warnings(summary["cutAudit"]))
     _capture_position_snapshot(root)
     summary["modelZOffset"] = {
         "offsetMm": origin_z_mm,

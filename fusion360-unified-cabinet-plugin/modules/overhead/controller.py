@@ -114,11 +114,14 @@ class OverheadController:
         return merged
 
     def create_fusion_rough_bodies(self, payload, _palette):
+        params = payload.get("params") if isinstance(payload, dict) else None
         result = payload.get("result") if isinstance(payload, dict) else None
-        if not isinstance(result, dict):
-            params = payload.get("params") if isinstance(payload, dict) else None
-            result, errors, node_debug = self._generate_result_from_params(params)
-            if errors or not isinstance(result, dict):
+        node_debug = {}
+        # Always rebuild from current params when available so UI toggles
+        # (Style / LED groove) are applied instead of a stale cached result.
+        if isinstance(params, dict):
+            fresh, errors, node_debug = self._generate_result_from_params(params)
+            if errors or not isinstance(fresh, dict):
                 return (
                     "overheadFusionResult",
                     self._with_bench(
@@ -132,6 +135,21 @@ class OverheadController:
                         },
                     ),
                 )
+            result = fresh
+        elif not isinstance(result, dict):
+            return (
+                "overheadFusionResult",
+                self._with_bench(
+                    payload,
+                    {
+                        "ok": False,
+                        "module": "overhead",
+                        "action": "overhead.createFusionRoughBodies",
+                        "errors": ["Missing Overhead result payload."],
+                        "debug": node_debug,
+                    },
+                ),
+            )
 
         validation = result.get("validation") if isinstance(result.get("validation"), dict) else {}
         boards = result.get("boards") if isinstance(result.get("boards"), list) else []
@@ -245,6 +263,10 @@ class OverheadController:
                     "bodyAudit": rough.get("bodyAudit", []),
                     "overheadPostprocess": rough.get("overheadPostprocess", {}),
                     "bpGrooveCutsCreated": rough.get("bpGrooveCutsCreated", 0),
+                    "ledGrooveCutsCreated": rough.get("ledGrooveCutsCreated", 0),
+                    "ledGrooveCutsFailed": rough.get("ledGrooveCutsFailed", 0),
+                    "ledGrooveCutsSkipped": rough.get("ledGrooveCutsSkipped", 0),
+                    "adapterBuild": rough.get("adapterBuild"),
                     "hingeCutsCreated": rough.get("hingeCutsCreated", 0),
                     "rotationOpsCreated": rough.get("rotationOpsCreated", 0),
                     "topPanelTranslationsCreated": rough.get("topPanelTranslationsCreated", 0),

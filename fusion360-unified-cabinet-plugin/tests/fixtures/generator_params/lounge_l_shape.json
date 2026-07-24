@@ -1,0 +1,12 @@
+{
+  "style": "L_SHAPE",
+  "height": 420,
+  "partitionPanelThickness": 18,
+  "mainWidth": 2000,
+  "mainDepth": 600,
+  "lWidth": 1600,
+  "lDepth": 800,
+  "lPosition": "RIGHT",
+  "topLidEnabled": true,
+  "lFrontAccess": "NONE"
+}

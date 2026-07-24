@@ -1,5 +1,6 @@
 import { calculateZStacking } from "./stackingCalculator.ts";
 import { formatAssemblyOverlapWarning, runAssemblyOverlapAudit } from "./assemblyOverlapAudit.ts";
+import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
 import type {
   Board,
   BoardFeature,
@@ -41,8 +42,11 @@ const ZI_HALF_FRONT_NOTCH_DEPTH = 45;
 const ZI_HALF_DEPTH = 150;
 const B3_GROOVE_WIDTH = 14.5;
 const B3_GROOVE_DEPTH = 6.5;
-const B3_GROOVE_BRANCH_COUNT = 2;
-const B3_GROOVE_BRANCH_WIDTH = 20;
+/** Clear strip from board front edge to near wall of main channel. */
+const LED_GROOVE_FRONT_LAND_MM = 18;
+/** Centerline from front = land + half groove width (25.25). */
+const LED_GROOVE_FRONT_OFFSET = LED_GROOVE_FRONT_LAND_MM + B3_GROOVE_WIDTH / 2;
+const LED_GROOVE_BRANCH_END_INSET = 80;
 // Zi slot height in the V stiles = mating board thickness + 1mm clearance
 // (computed per board; was a fixed 16 = 15 + 1).
 const ZI_SLOT_CLEARANCE = 1;
@@ -95,6 +99,9 @@ interface AvoidanceAdjustmentState {
   enabled: boolean;
   shortDepth?: number;
   effectiveAvoidH?: number;
+  fridgeMode?: "none" | "normal" | "raised";
+  fridgeGap?: number;
+  fridgeBaseBottomZ?: number;
 }
 
 function n(value: unknown, fallback: number): number {
@@ -130,6 +137,81 @@ function board(
 
 function findZoneItem(stackingItems: StackingItem[], zoneId: string): StackingItem | undefined {
   return stackingItems.find((item) => item.type === "functional_zone" && item.zoneId === zoneId);
+}
+
+function addFridgeV5Boards(
+  boards: Board[],
+  params: GeneralTallCabinetParams,
+  stackingItems: StackingItem[],
+  debug: GeneralTallCabinetDebug,
+  notes: string[],
+): void {
+  const fridgeZones = (params.zones || []).filter((zone) => zone.type === "fridge");
+  if (!fridgeZones.length) return;
+
+  const pt = debug.panelThickness;
+  const fpt = debug.frontFaceAllowance;
+  const carcassY0 = fpt;
+  const carcassY1 = fpt + debug.midDepth;
+  const cabinetWidth = Number(params.cabinetWidth);
+  // Opposite the decorative exterior panel; none defaults to left (Fridge recipe).
+  const v5OnLeft = params.exteriorSide !== "left";
+
+  for (const zone of fridgeZones) {
+    const item = findZoneItem(stackingItems, zone.id);
+    if (!item) {
+      notes.push(`Fridge zone ${zone.id}: skipped V5 (stacking item missing).`);
+      continue;
+    }
+    let x0: number;
+    let x1: number;
+    if (v5OnLeft) {
+      x0 = debug.leftSidePanelThickness + pt;
+      x1 = x0 + pt;
+    } else {
+      x1 = cabinetWidth - debug.rightSidePanelThickness - pt;
+      x0 = x1 - pt;
+    }
+    const depth = carcassY1 - carcassY0;
+    const height = item.z1 - item.z0;
+    // Local YZ rectangle — Fusion profileVector uses local axes (not Fridge outerVector/flat_xy).
+    const v5Profile = [
+      { y: 0, z: 0 },
+      { y: depth, z: 0 },
+      { y: depth, z: height },
+      { y: 0, z: height },
+      { y: 0, z: 0 },
+    ];
+    const v5Board = board(
+      "V5",
+      "V5",
+      "vertical_structure",
+      "V5",
+      pt,
+      "YZ",
+      "X",
+      {
+        x0,
+        x1,
+        y0: carcassY0,
+        y1: carcassY1,
+        z0: item.z0,
+        z1: item.z1,
+      },
+      "fridge_v5",
+      [
+        "V5 fridge clearance strip: opposite exteriorSide (none→left); Z spans fridge cavity; X inset one PT from carcass wall.",
+      ],
+    );
+    v5Board.profileVector = v5Profile;
+    v5Board.cutProfileVector = v5Profile;
+    boards.push(v5Board);
+    notes.push(
+      `Fridge zone ${zone.id}: V5 on ${v5OnLeft ? "left" : "right"} (exteriorSide=${params.exteriorSide || "none"}).`,
+    );
+    // ponytail: one V5 for first fridge zone only; multi-cavity V5 ids later.
+    break;
+  }
 }
 
 function resolveAvoidanceAdjustment(
@@ -187,6 +269,91 @@ function resolveAvoidanceAdjustment(
   return { enabled: true, shortDepth, effectiveAvoidH };
 }
 
+function applyFridgeRaisedAvoidance(
+  params: GeneralTallCabinetParams,
+  stackingItems: StackingItem[],
+  debug: GeneralTallCabinetDebug,
+  avoidance: AvoidanceAdjustmentState,
+  validation: GeneratorValidation,
+): AvoidanceAdjustmentState {
+  const fridgeZone = (params.zones || []).find((zone) => zone.type === "fridge");
+  if (!fridgeZone) return avoidance;
+
+  const fridgeItemIndex = stackingItems.findIndex(
+    (item) => item.type === "functional_zone" && item.zoneId === fridgeZone.id,
+  );
+  if (fridgeItemIndex < 0) return avoidance;
+
+  const below = stackingItems[fridgeItemIndex - 1];
+  const fridgeItem = stackingItems[fridgeItemIndex];
+  const fridgeBaseBottomZ = below?.type === "boundary_panel"
+    ? below.z0
+    : fridgeItem.z0;
+  const inputHeight = Number(params.avoidance?.height);
+  const pt = debug.panelThickness;
+
+  if (params.avoidance?.enabled !== true || avoidance.enabled !== true) {
+    debug.fridgeAvoidance = {
+      finalMode: "none",
+      fridgeGap: 0,
+      fridgeBaseBottomZ,
+      inputHeight: Number.isFinite(inputHeight) ? inputHeight : 0,
+    };
+    return avoidance;
+  }
+
+  if (!Number.isFinite(inputHeight)) return avoidance;
+  const gap = fridgeBaseBottomZ - inputHeight;
+
+  if (fridgeBaseBottomZ < inputHeight + pt) {
+    validation.errors.push(
+      `Fridge base bottom Z (${fridgeBaseBottomZ}) must be >= Avoidance Height + panel thickness (${inputHeight}+${pt}).`,
+    );
+    debug.fridgeAvoidance = {
+      finalMode: "none",
+      fridgeGap: gap,
+      fridgeBaseBottomZ,
+      inputHeight,
+    };
+    return avoidance;
+  }
+
+  if (gap < 105) {
+    validation.warnings.push(
+      `Fridge/avoidance gap ${gap.toFixed(1)} mm < 105 mm: raised avoidance mode and above-fridge HSet will be used.`,
+    );
+    debug.fridgeAvoidance = {
+      finalMode: "raised",
+      fridgeGap: gap,
+      fridgeBaseBottomZ,
+      inputHeight,
+    };
+    return {
+      ...avoidance,
+      effectiveAvoidH: fridgeBaseBottomZ,
+      fridgeMode: "raised",
+      fridgeGap: gap,
+      fridgeBaseBottomZ,
+    };
+  }
+
+  validation.warnings.push(
+    `Fridge/avoidance gap ${gap.toFixed(1)} mm >= 105 mm: normal avoidance height kept.`,
+  );
+  debug.fridgeAvoidance = {
+    finalMode: "normal",
+    fridgeGap: gap,
+    fridgeBaseBottomZ,
+    inputHeight,
+  };
+  return {
+    ...avoidance,
+    fridgeMode: "normal",
+    fridgeGap: gap,
+    fridgeBaseBottomZ,
+  };
+}
+
 function boundaryId(aboveZoneId: string, belowZoneId: string): string {
   return `boundary-${aboveZoneId}-${belowZoneId}`;
 }
@@ -211,21 +378,24 @@ function addVerticalBoards(
 ): void {
   const pt = debug.panelThickness;
   const cabinetWidth = Number(params.cabinetWidth);
+  const lspT = debug.leftSidePanelThickness;
   const rspT = debug.rightSidePanelThickness;
   const fpt = debug.frontFaceAllowance;
   const midDepth = debug.midDepth;
   const carcassY0 = fpt;
   const carcassY1 = fpt + midDepth;
   const rearY0 = carcassY0 + Math.max(0, midDepth - 150);
-  // V stiles share the side-panel X slab in absolute cabinet coordinates.
-  // Left pair sits on 0..pt; right pair mirrors SidePanel_R at cw-rspT..cw-rspT+pt.
-  const rightV0 = rspT > 0 ? cabinetWidth - rspT : cabinetWidth - pt;
-  const rightV1 = rspT > 0 ? cabinetWidth - rspT + pt : cabinetWidth;
+  // Middle-first model: build the insert carcass, then hang side panels outside.
+  // V stiles sit on the middle outer faces (inboard of any side-panel skin).
+  const leftV0 = lspT;
+  const leftV1 = lspT + pt;
+  const rightV0 = cabinetWidth - rspT - pt;
+  const rightV1 = cabinetWidth - rspT;
 
   boards.push(
     board("V1", "V1", "vertical_structure", "V1", pt, "YZ", "X", {
-      x0: 0,
-      x1: pt,
+      x0: leftV0,
+      x1: leftV1,
       y0: carcassY0,
       y1: carcassY1,
       z0: 0,
@@ -248,8 +418,8 @@ function addVerticalBoards(
       "YZ",
       "X",
       {
-        x0: 0,
-        x1: pt,
+        x0: leftV0,
+        x1: leftV1,
         y0: rearY0,
         y1: carcassY1,
         z0: 0,
@@ -393,11 +563,14 @@ function addAvoidanceSupportBoards(
   params: GeneralTallCabinetParams,
   debug: GeneralTallCabinetDebug,
   validation: GeneratorValidation,
+  avoidance?: AvoidanceAdjustmentState,
 ): void {
   if (params.avoidance?.enabled !== true) return;
   const cabinetDepth = Number(params.cabinetDepth);
   const avoidDepth = Number(params.avoidance.depth);
-  const avoidHeight = Number(params.avoidance.height);
+  const avoidHeight = Number(
+    avoidance?.effectiveAvoidH != null ? avoidance.effectiveAvoidH : params.avoidance.height,
+  );
   if (!Number.isFinite(cabinetDepth) || !Number.isFinite(avoidDepth) || !Number.isFinite(avoidHeight)) return;
   if (avoidDepth <= 0 || avoidHeight <= 0) return;
 
@@ -428,7 +601,11 @@ function addAvoidanceSupportBoards(
     "Z",
     { x0, x1, y0, y1, z0, z1 },
     "avoidance_support",
-    ["Avoidance horizontal support panel generated from avoidance settings."],
+    [
+      avoidance?.fridgeMode === "raised"
+        ? "Avoidance horizontal raised to fridge base bottom (gap < 105mm)."
+        : "Avoidance horizontal support panel generated from avoidance settings.",
+    ],
   );
   horizontal.profileVector = [
     { x: 0, y: 0 },
@@ -478,9 +655,8 @@ function applyCoreBoardXOffset(
   void params;
   for (const item of boards) {
     if (item.category === "side_panel" || item.category === "avoidance_support") continue;
-    // V stiles never follow the side-panel offset: they share the side panels'
-    // X slab in every style combo (the former style_2 exception pushed them
-    // 16mm inboard, which was wrong).
+    // V stiles are already placed in absolute coords on the middle outer faces
+    // (inboard of side-panel skins). Do not shift them again.
     if (["V1", "V2", "V3", "V4"].includes(item.id)) continue;
     item.x0 += dx;
     item.x1 += dx;
@@ -516,7 +692,7 @@ function updateSidePanelOverlapAudit(
   for (const sidePanel of sidePanels) {
     const verticalId = sidePanel.id === "SidePanel_L" ? "V1" : "V2";
     const verticalBoard = verticalBoards.find((item) => item.id === verticalId);
-    if (!verticalBoard || !sharesXSlab(sidePanel, verticalBoard)) continue;
+    if (!verticalBoard) continue;
     const expectedFrontY = -fpt;
     const expectedCarcassY0 = fpt;
     if (Math.abs(sidePanel.y0 - expectedFrontY) > 0.01) {
@@ -527,6 +703,12 @@ function updateSidePanelOverlapAudit(
     if (Math.abs(verticalBoard.y0 - expectedCarcassY0) > 0.01) {
       validation?.warnings.push(
         `${verticalId} y0 ${verticalBoard.y0} differs from expected carcass start ${expectedCarcassY0} (FPT ${fpt}).`,
+      );
+    }
+    // Outer-skin model: side panel and V should be adjacent in X, not coplanar.
+    if (sharesXSlab(sidePanel, verticalBoard)) {
+      validation?.warnings.push(
+        `${sidePanel.id} still shares the X slab with ${verticalId}; expected middle-first outer-skin placement.`,
       );
     }
   }
@@ -547,12 +729,12 @@ function updateSidePanelOverlapAudit(
           verticalBoardId: verticalBoard.id as VerticalBoardId,
           overlaps,
           note: overlaps
-            ? "Overlap is visible and expected in current inner-width model; non-fatal."
-            : "No overlap detected.",
+            ? "Unexpected: side panel should sit outside the middle carcass, not share the V X slab."
+            : "No overlap (middle-first outer-skin model).",
         };
       })
     ),
-    note: "V stiles share the side-panel X slab (0..pt left, cw-rspT..cw right); core boards use inner span offset.",
+    note: "Middle-first model: V on middle outer faces; side panels are outer skins (adjacent in X).",
   };
 }
 
@@ -1120,7 +1302,6 @@ function addStyle1BottomSystemBoards(
       z1: frontRailHeight + debug.panelThickness,
     }, "bottom_system", [
       "Style 1 bottom inserted board",
-      "B3 groove placeholder remains feature-only",
     ]),
   );
 }
@@ -1152,7 +1333,6 @@ function addStyle1InsertBoardProfileVectors(boards: Board[], debug: GeneralTallC
     b3.notes = [
       "Style 1 bottom inserted board",
       "Exact Style 1 B3 notched profileVector implemented",
-      "B3 groove placeholder remains feature-only; exact path deferred",
     ];
   }
 }
@@ -1468,15 +1648,114 @@ function generateZiSlotFeatures(
   return features;
 }
 
-function addHSupportBoards(boards: Board[], params: GeneralTallCabinetParams, debug: GeneralTallCabinetDebug): void {
+function addFridgeRaisedHSetBoards(
+  boards: Board[],
+  stackingItems: StackingItem[],
+  params: GeneralTallCabinetParams,
+  debug: GeneralTallCabinetDebug,
+  avoidance: AvoidanceAdjustmentState,
+): void {
+  if (avoidance.fridgeMode !== "raised") return;
+  const fridgeZone = (params.zones || []).find((zone) => zone.type === "fridge");
+  if (!fridgeZone) return;
+  const fridgeItemIndex = stackingItems.findIndex(
+    (item) => item.type === "functional_zone" && item.zoneId === fridgeZone.id,
+  );
+  if (fridgeItemIndex < 0) return;
+  const below = stackingItems[fridgeItemIndex - 1];
+  const fridgeItem = stackingItems[fridgeItemIndex];
+  // Above the fridge-base Zi (panel z1) — matches Fridge above_panel HSet.
+  const z0 = below?.type === "boundary_panel" ? below.z1 : fridgeItem.z0;
+  const z1 = z0 + H_SUPPORT_HEIGHT;
+  const sideY0 = H_SUPPORT_SIDE_DEPTH_START;
+  const sideY1 = debug.midDepth - H_SUPPORT_SIDE_REAR_CLEARANCE;
+  const rearY0 = debug.midDepth - H34_DEPTH;
+  const rearY1 = debug.midDepth;
+  const notes = [
+    "Fridge raised HSet above fridge-base Zi (gap < 105mm).",
+  ];
+
+  boards.push(
+    board(
+      "H13_fridge",
+      "H13 fridge",
+      "h_support",
+      "H13",
+      H_SUPPORT_THICKNESS,
+      "YZ",
+      "X",
+      {
+        x0: 0,
+        x1: H_SUPPORT_THICKNESS,
+        y0: sideY0,
+        y1: sideY1,
+        z0,
+        z1,
+      },
+      "h_support_fridge",
+      notes,
+    ),
+    board(
+      "H24_fridge",
+      "H24 fridge",
+      "h_support",
+      "H24",
+      H_SUPPORT_THICKNESS,
+      "YZ",
+      "X",
+      {
+        x0: debug.midWidth - H_SUPPORT_THICKNESS,
+        x1: debug.midWidth,
+        y0: sideY0,
+        y1: sideY1,
+        z0,
+        z1,
+      },
+      "h_support_fridge",
+      notes,
+    ),
+    board(
+      "H34_fridge",
+      "H34 fridge",
+      "h_support",
+      "H34",
+      H_SUPPORT_THICKNESS,
+      "XZ",
+      "Y",
+      {
+        x0: H_SUPPORT_THICKNESS,
+        x1: debug.midWidth - H_SUPPORT_THICKNESS,
+        y0: rearY0,
+        y1: rearY1,
+        z0,
+        z1,
+      },
+      "h_support_fridge",
+      notes,
+    ),
+  );
+}
+
+function addHSupportBoards(
+  boards: Board[],
+  params: GeneralTallCabinetParams,
+  debug: GeneralTallCabinetDebug,
+  avoidance: AvoidanceAdjustmentState,
+): void {
   const ch = Number(params.cabinetHeight);
+  // Fridge raised: omit H_bot — fridge above-panel HSet replaces that band (Fridge generateHPlanes).
+  const omitBottomForRaised = avoidance.fridgeMode === "raised";
   const hSets = [
-    {
-      suffix: "bottom",
-      z0: 0,
-      z1: H_SUPPORT_HEIGHT,
-      notes: ["Bottom H support skeleton", "Avoidance adjustment deferred"],
-    },
+    ...(omitBottomForRaised
+      ? []
+      : [
+          {
+            suffix: "bottom",
+            z0: 0,
+            z1: H_SUPPORT_HEIGHT,
+            notes: ["Bottom H support skeleton", "Avoidance adjustment deferred"],
+          },
+        ]),
     {
       suffix: "mid",
       z0: ch / 2 - H_SUPPORT_HEIGHT / 2,
@@ -2517,22 +2796,133 @@ function addVerticalDividerH34ClearanceProfiles(
   }
 }
 
-function generateStyle1T3B3FeaturePlaceholders(boards: Board[]): BoardFeature[] {
-  const features: BoardFeature[] = [];
-  const b3 = boards.find((board) => board.id === "B3" && board.boardType === "B3");
-  if (!b3) return features;
+function buildInsertBoardLedGroovePath(
+  board: Board,
+  warnings: string[],
+): {
+  main: { x0: number; x1: number; y0: number; y1: number };
+  branches: Array<{ x0: number; x1: number; y0: number; y1: number }>;
+  branchLength: number;
+} | null {
+  const halfWidth = B3_GROOVE_WIDTH / 2;
+  // Local offsets from the board origin (front = y0 / doors). Fusion maps
+  // these through the live board bbox after applyCoreBoardXOffset.
+  const boardWidth = board.x1 - board.x0;
+  const boardDepth = board.y1 - board.y0;
+  if (boardWidth <= LED_GROOVE_BRANCH_END_INSET * 2 + B3_GROOVE_WIDTH) {
+    warnings.push(
+      `${board.id} LED groove skipped: board width ${boardWidth.toFixed(1)} too narrow for 80 mm end insets.`,
+    );
+    return null;
+  }
+  const mainYCenter = LED_GROOVE_FRONT_OFFSET;
+  const main = {
+    x0: 0,
+    x1: boardWidth,
+    y0: mainYCenter - halfWidth,
+    y1: mainYCenter + halfWidth,
+  };
+  if (main.y0 < -1e-6 || main.y1 > boardDepth + 1e-6) {
+    warnings.push(
+      `${board.id} LED groove main channel y=${main.y0.toFixed(2)}..${main.y1.toFixed(2)} leaves board depth ${boardDepth.toFixed(1)}.`,
+    );
+  }
+  // Branches run from the main channel rear edge all the way to the board
+  // back edge (Y+ / cabinet interior), not a fixed stub length.
+  const branchY0 = main.y1;
+  const branchY1 = boardDepth;
+  const branchLength = branchY1 - branchY0;
+  if (branchLength <= 1e-6) {
+    warnings.push(
+      `${board.id} LED groove T-branches skipped: no remaining depth behind main channel (y=${branchY0.toFixed(2)}).`,
+    );
+    return null;
+  }
+  const branchCenters = [
+    LED_GROOVE_BRANCH_END_INSET,
+    boardWidth - LED_GROOVE_BRANCH_END_INSET,
+  ];
+  const branches = branchCenters.map((centerX) => ({
+    x0: centerX - halfWidth,
+    x1: centerX + halfWidth,
+    y0: branchY0,
+    y1: branchY1,
+  }));
+  return { main, branches, branchLength };
+}
 
-  features.push({
-    id: "B3_groove_placeholder",
-    type: "b3_groove",
-    targetBoardId: "B3",
-    width: B3_GROOVE_WIDTH,
-    depth: B3_GROOVE_DEPTH,
-    branchCount: B3_GROOVE_BRANCH_COUNT,
-    branchWidth: B3_GROOVE_BRANCH_WIDTH,
-    source: "B3",
-    notes: ["B3 connected groove placeholder", "Exact connected groove path deferred"],
-  });
+function generateStyle1LedGrooveFeatures(
+  boards: Board[],
+  validation: GeneratorValidation,
+  params: GeneralTallCabinetParams,
+): BoardFeature[] {
+  const features: BoardFeature[] = [];
+  const topLed = params.topSystem.style === "style_1" && params.topSystem.ledGroove !== false;
+  const bottomLed = params.bottomSystem.style === "style_1" && params.bottomSystem.ledGroove !== false;
+
+  const b3 = boards.find((board) => board.id === "B3" && board.boardType === "B3");
+  if (b3 && bottomLed) {
+    const path = buildInsertBoardLedGroovePath(b3, validation.warnings);
+    if (path) {
+      features.push({
+        id: "B3_led_groove",
+        type: "b3_groove",
+        targetBoardId: "B3",
+        face: "bottom",
+        width: B3_GROOVE_WIDTH,
+        depth: B3_GROOVE_DEPTH,
+        frontOffset: LED_GROOVE_FRONT_OFFSET,
+        branchCount: path.branches.length,
+        branchLength: path.branchLength,
+        branchWidth: B3_GROOVE_WIDTH,
+        branchEndInset: LED_GROOVE_BRANCH_END_INSET,
+        main: path.main,
+        branches: path.branches,
+        source: "B3",
+        notes: [
+          "B3 LED groove on bottom face",
+          "Main channel along X, 18 mm land from front then 14.5 mm groove (centerline 25.25 mm)",
+          "Two rear T-branches parallel to Y, extend to board back edge, centers inset 80 mm from each X end",
+        ],
+      });
+      b3.notes = [
+        ...(b3.notes ?? []).filter((note) => !note.toLowerCase().includes("groove placeholder")),
+        "B3 LED groove path implemented on bottom face",
+      ];
+    }
+  }
+
+  const t3 = boards.find((board) => board.id === "T3" && board.boardType === "T3");
+  if (t3 && topLed) {
+    const path = buildInsertBoardLedGroovePath(t3, validation.warnings);
+    if (path) {
+      features.push({
+        id: "T3_led_groove",
+        type: "t3_groove",
+        targetBoardId: "T3",
+        face: "top",
+        width: B3_GROOVE_WIDTH,
+        depth: B3_GROOVE_DEPTH,
+        frontOffset: LED_GROOVE_FRONT_OFFSET,
+        branchCount: path.branches.length,
+        branchLength: path.branchLength,
+        branchWidth: B3_GROOVE_WIDTH,
+        branchEndInset: LED_GROOVE_BRANCH_END_INSET,
+        main: path.main,
+        branches: path.branches,
+        source: "T3",
+        notes: [
+          "T3 LED groove on top face",
+          "Main channel along X, 18 mm land from front then 14.5 mm groove (centerline 25.25 mm)",
+          "Two rear T-branches parallel to Y, extend to board back edge, centers inset 80 mm from each X end",
+        ],
+      });
+      t3.notes = [
+        ...(t3.notes ?? []),
+        "T3 LED groove path implemented on top face",
+      ];
+    }
+  }
 
   return features;
 }
@@ -2787,7 +3177,7 @@ function buildGeneralTallFrontPanels(
   const zoneIsOpen = (zoneId: string | undefined): boolean => {
     if (!zoneId) return false;
     const zone = zoneById.get(zoneId);
-    return !!zone && (zone.type === "open_space" || zone.type === "open_appliance");
+    return !!zone && (zone.type === "open_space" || zone.type === "open_appliance" || zone.type === "fridge");
   };
 
   const panels: GeneralTallFrontPanel[] = [];
@@ -3220,6 +3610,44 @@ function buildDebug(params: GeneralTallCabinetParams): GeneralTallCabinetDebug {
   };
 }
 
+function applyFridgeExteriorModel(
+  params: GeneralTallCabinetParams,
+  notes: string[],
+): GeneralTallCabinetParams {
+  const fridgeZones = (params.zones || []).filter((zone) => zone.type === "fridge");
+  if (!fridgeZones.length) return params;
+
+  const exteriorSide = params.exteriorSide === "left" || params.exteriorSide === "right"
+    ? params.exteriorSide
+    : "none";
+  // Fridge recipe uses a fixed 16mm exterior side panel thickness.
+  const SIDE_PANEL_MM = 16;
+  const next: GeneralTallCabinetParams = { ...params, exteriorSide };
+
+  if (exteriorSide === "left") {
+    next.leftSidePanelThickness = SIDE_PANEL_MM;
+    notes.push("Fridge exteriorSide=left → SidePanel_L thickness 16mm.");
+  } else if (exteriorSide === "right") {
+    next.rightSidePanelThickness = SIDE_PANEL_MM;
+    notes.push("Fridge exteriorSide=right → SidePanel_R thickness 16mm.");
+  }
+
+  const sync = params.syncCabinetWidthFromFridge !== false;
+  const applianceWidth = Number(fridgeZones[0].applianceWidthMm);
+  if (sync && Number.isFinite(applianceWidth) && applianceWidth > 0) {
+    const allowance = exteriorSide === "none" ? 45 : 61;
+    const targetWidth = applianceWidth + allowance;
+    if (Math.abs(Number(params.cabinetWidth) - targetWidth) > 0.01) {
+      notes.push(
+        `Cabinet width synced from fridge appliance (${applianceWidth}+${allowance}=${targetWidth}).`,
+      );
+    }
+    next.cabinetWidth = targetWidth;
+  }
+
+  return next;
+}
+
 export function generateGeneralTallCabinet(inputParams: GeneralTallCabinetParams): GeneralTallCabinetResult {
   if (!inputParams || typeof inputParams !== "object") {
     throw new Error("generateGeneralTallCabinet requires params.");
@@ -3227,14 +3655,30 @@ export function generateGeneralTallCabinet(inputParams: GeneralTallCabinetParams
 
   // Structural pipeline treats left/right side doors exactly like the legacy side_door type.
   // The original zone types are kept on inputParams for the front panel layer.
-  const params: GeneralTallCabinetParams = {
+  const fridgeNotes: string[] = [];
+  let params: GeneralTallCabinetParams = {
     ...inputParams,
-    zones: (inputParams.zones || []).map((zone) =>
-      zone.type === "left_side_door" || zone.type === "right_side_door"
-        ? { ...zone, type: "side_door" as ZoneType }
-        : zone,
-    ),
+    zones: (inputParams.zones || []).map((zone) => {
+      if (zone.type === "left_side_door" || zone.type === "right_side_door") {
+        return { ...zone, type: "side_door" as ZoneType };
+      }
+      if (zone.type !== "fridge") return zone;
+      const applianceHeight = Number(zone.applianceHeightMm);
+      if (Number.isFinite(applianceHeight) && applianceHeight > 0) {
+        if (Math.abs(Number(zone.height) - applianceHeight) > 0.01) {
+          fridgeNotes.push(
+            `Fridge zone ${zone.id} height synced to applianceHeightMm=${applianceHeight}.`,
+          );
+        }
+        return { ...zone, height: applianceHeight };
+      }
+      fridgeNotes.push(
+        `Fridge zone ${zone.id} has no applianceHeightMm; using zone height ${Number(zone.height) || 0}.`,
+      );
+      return zone;
+    }),
   };
+  params = applyFridgeExteriorModel(params, fridgeNotes);
 
   const debug = buildDebug(params);
   const stacking = calculateZStacking({
@@ -3247,21 +3691,45 @@ export function generateGeneralTallCabinet(inputParams: GeneralTallCabinetParams
   const boards: Board[] = [];
   const validation = {
     errors: [...stacking.validation.errors],
-    warnings: [...stacking.validation.warnings],
+    warnings: [...stacking.validation.warnings, ...fridgeNotes],
   };
-  const avoidance = resolveAvoidanceAdjustment(params, debug, validation);
+  for (const zone of params.zones) {
+    if (zone.type !== "fridge") continue;
+    const width = Number(zone.applianceWidthMm);
+    const depth = Number(zone.applianceDepthMm);
+    if (Number.isFinite(width) && width > debug.midWidth + 0.01) {
+      validation.warnings.push(
+        `Fridge zone ${zone.id} applianceWidthMm=${width} exceeds interior midWidth=${debug.midWidth}.`,
+      );
+    }
+    if (Number.isFinite(depth) && depth > debug.midDepth + 0.01) {
+      validation.warnings.push(
+        `Fridge zone ${zone.id} applianceDepthMm=${depth} exceeds interior midDepth=${debug.midDepth}.`,
+      );
+    }
+  }
+  const avoidanceBase = resolveAvoidanceAdjustment(params, debug, validation);
+  const avoidance = applyFridgeRaisedAvoidance(
+    params,
+    stacking.items,
+    debug,
+    avoidanceBase,
+    validation,
+  );
 
   addVerticalBoards(boards, params, debug, Number(params.cabinetHeight));
   addSidePanelBoards(boards, params, debug, validation);
-  addAvoidanceSupportBoards(boards, params, debug, validation);
+  addAvoidanceSupportBoards(boards, params, debug, validation, avoidance);
   addStyle1BottomSystemBoards(boards, params, debug);
   addStyle1TopSystemBoards(boards, params, debug);
   addStyle2SystemPanels(boards, params, debug);
   addStyle1InsertBoardProfileVectors(boards, debug);
   addSystemPlaceholders(boards, params, debug, stacking.topSystemHeight, stacking.bottomSystemHeight);
   addBoundaryZiBoards(boards, stacking.items, debug, params, avoidance);
+  addFridgeV5Boards(boards, params, stacking.items, debug, validation.warnings);
   addZiBoardProfileVectors(boards, debug, validation);
-  addHSupportBoards(boards, params, debug);
+  addHSupportBoards(boards, params, debug, avoidance);
+  addFridgeRaisedHSetBoards(boards, stacking.items, params, debug, avoidance);
   addTopRearTBoards(boards, params, debug);
   detectMergeAndAdjustHConflicts(boards, params, debug, validation);
   addVerticalDividerBoards(boards, params, stacking.items, debug, validation);
@@ -3275,7 +3743,7 @@ export function generateGeneralTallCabinet(inputParams: GeneralTallCabinetParams
     ...ziGrooveFeatures,
     ...generateDividerTongueFeatures(boards, ziGrooveFeatures, debug, validation),
     ...generateH34ClearanceSlotFeatures(boards, debug, validation),
-    ...generateStyle1T3B3FeaturePlaceholders(boards),
+    ...generateStyle1LedGrooveFeatures(boards, validation, params),
   ];
   addVerticalDividerH34ClearanceProfiles(boards, features, debug, validation);
   addVBoardSideProfileSkeletons(boards, features, params, debug, validation, avoidance);
@@ -3283,6 +3751,7 @@ export function generateGeneralTallCabinet(inputParams: GeneralTallCabinetParams
   updateSidePanelOverlapAudit(boards, debug, validation);
   updateAssemblyOverlapAudit(boards, debug, validation);
   const frontPanels = buildGeneralTallFrontPanels(inputParams, stacking.items, boards, debug, validation);
+  const relationshipDeclarations = relationshipDeclarationsForBoards(boards);
 
   return {
     boards,
@@ -3293,6 +3762,7 @@ export function generateGeneralTallCabinet(inputParams: GeneralTallCabinetParams
     validation,
     warnings: validation.warnings,
     debug,
+    relationshipDeclarations,
   };
 }
 

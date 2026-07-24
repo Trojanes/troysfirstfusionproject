@@ -9,9 +9,22 @@ import {
 } from "./geometry.ts";
 import { generateOHCSvgPreview } from "./svgPreview.ts";
 import type { Board, OverheadCabinetParams, OverheadCabinetResult } from "./types.ts";
+import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
 
 export * from "./geometry.ts";
 export * from "./svgPreview.ts";
+
+/** Match General Tall / Kitchen / Fridge LED insert groove (mm). */
+const LED_GROOVE_WIDTH = 14.5;
+const LED_GROOVE_DEPTH = 6.5;
+/**
+ * Clear strip from T3 front edge to the near wall of the main channel.
+ * Shared with GT / Kitchen / Fridge: 18 mm land → centerline 25.25.
+ */
+const LED_GROOVE_FRONT_LAND_MM = 18;
+const LED_GROOVE_FRONT_OFFSET = LED_GROOVE_FRONT_LAND_MM + LED_GROOVE_WIDTH / 2;
+const LED_GROOVE_BRANCH_END_INSET = 80;
+const T3_LED_BOARD_DEPTH_FALLBACK = 90;
 
 function toInputs(params: OverheadCabinetParams): OverheadCabinetInputs {
   return {
@@ -207,6 +220,125 @@ function legacyToBoards(geometry: OverheadLegacyGeometry, inputs: OverheadCabine
   return boards;
 }
 
+function buildInsertBoardLedGroovePath(
+  boardWidth: number,
+  boardDepth: number,
+  boardId: string,
+  warnings: string[],
+  frontOffset = LED_GROOVE_FRONT_OFFSET,
+): {
+  main: { x0: number; x1: number; y0: number; y1: number };
+  branches: Array<{ x0: number; x1: number; y0: number; y1: number }>;
+  branchLength: number;
+} | null {
+  const halfWidth = LED_GROOVE_WIDTH / 2;
+  if (boardWidth <= LED_GROOVE_BRANCH_END_INSET * 2 + LED_GROOVE_WIDTH) {
+    warnings.push(
+      `${boardId} LED groove skipped: board width ${boardWidth.toFixed(1)} too narrow for 80 mm end insets.`,
+    );
+    return null;
+  }
+  const mainYCenter = frontOffset;
+  const main = {
+    x0: 0,
+    x1: boardWidth,
+    y0: mainYCenter - halfWidth,
+    y1: mainYCenter + halfWidth,
+  };
+  if (main.y0 < -1e-6 || main.y1 > boardDepth + 1e-6) {
+    warnings.push(
+      `${boardId} LED groove skipped: main channel y=${main.y0.toFixed(2)}..${main.y1.toFixed(2)} leaves board depth ${boardDepth.toFixed(1)} (frontOffset=${frontOffset}).`,
+    );
+    return null;
+  }
+  const branchY0 = main.y1;
+  const branchY1 = boardDepth;
+  const branchLength = branchY1 - branchY0;
+  if (branchLength <= 1e-6) {
+    warnings.push(
+      `${boardId} LED groove T-branches skipped: no remaining depth behind main channel (y=${branchY0.toFixed(2)}).`,
+    );
+    return null;
+  }
+  const branchCenters = [
+    LED_GROOVE_BRANCH_END_INSET,
+    boardWidth - LED_GROOVE_BRANCH_END_INSET,
+  ];
+  const branches = branchCenters.map((centerX) => ({
+    x0: centerX - halfWidth,
+    x1: centerX + halfWidth,
+    y0: branchY0,
+    y1: branchY1,
+  }));
+  return { main, branches, branchLength };
+}
+
+function t3LedBoardExtents(board: Board): { width: number; depth: number } {
+  const width = board.x1 - board.x0;
+  const profileYs = (board.profileVector || [])
+    .map((point) => Number((point as { y?: number }).y))
+    .filter((value) => Number.isFinite(value));
+  if (profileYs.length >= 2) {
+    return { width, depth: Math.max(...profileYs) - Math.min(...profileYs) };
+  }
+  // T3 board bbox is padded to cabinet depth; solid outline is ~90 mm.
+  return {
+    width,
+    depth: Math.min(T3_LED_BOARD_DEPTH_FALLBACK, Math.max(0, board.y1 - board.y0)),
+  };
+}
+
+function generateT3LedGrooveFeatures(
+  boards: Board[],
+  warnings: string[],
+  params: OverheadCabinetParams,
+): Array<Record<string, unknown>> {
+  // Overhead Style 1/2 only changes divider front notches; gate on checkbox.
+  if (params.ledGroove === false) return [];
+
+  const t3 = boards.find((board) => board.id === "T3" && board.boardType === "T3");
+  if (!t3) {
+    warnings.push("T3 LED groove skipped: T3 board missing.");
+    return [];
+  }
+
+  // Front land (edge → groove) = 18 mm → centerline = 18 + 14.5/2 = 25.25.
+  const frontOffset = LED_GROOVE_FRONT_OFFSET;
+  const { width, depth } = t3LedBoardExtents(t3);
+  const path = buildInsertBoardLedGroovePath(width, depth, "T3", warnings);
+  if (!path) return [];
+
+  t3.notes = [
+    ...(t3.notes ?? []).filter((note) => !note.toLowerCase().includes("led groove")),
+    `T3 LED groove path on top face (${LED_GROOVE_FRONT_LAND_MM} mm front land)`,
+  ];
+
+  return [
+    {
+      id: "T3_led_groove",
+      type: "t3_groove",
+      targetBoardId: "T3",
+      face: "top",
+      width: LED_GROOVE_WIDTH,
+      depth: LED_GROOVE_DEPTH,
+      frontOffset,
+      frontLand: LED_GROOVE_FRONT_LAND_MM,
+      branchCount: path.branches.length,
+      branchLength: path.branchLength,
+      branchWidth: LED_GROOVE_WIDTH,
+      branchEndInset: LED_GROOVE_BRANCH_END_INSET,
+      main: path.main,
+      branches: path.branches,
+      source: "T3",
+      notes: [
+        "T3 LED groove on top face (opens upward)",
+        `Main channel along X, ${LED_GROOVE_FRONT_LAND_MM} mm land from T3 front then ${LED_GROOVE_WIDTH} mm groove (centerline ${frontOffset} mm)`,
+        "Two rear T-branches parallel to Y, extend to T3 back edge, centers inset 80 mm from each X end",
+      ],
+    },
+  ];
+}
+
 export function generateOverheadCabinet(rawParams: OverheadCabinetParams): OverheadCabinetResult {
   const inputs = toInputs(rawParams);
   const validation = { errors: [] as string[], warnings: [] as string[] };
@@ -251,6 +383,7 @@ export function generateOverheadCabinet(rawParams: OverheadCabinetParams): Overh
       },
       boards: [],
       features: [],
+      relationshipDeclarations: [],
       validation,
       debug: {
         phase: "geometry_v1",
@@ -262,6 +395,8 @@ export function generateOverheadCabinet(rawParams: OverheadCabinetParams): Overh
 
   const geometry = calculateOverheadGeometry(inputs);
   const boards = legacyToBoards(geometry, inputs);
+  const relationshipDeclarations = relationshipDeclarationsForBoards(boards);
+  const ledFeatures = generateT3LedGrooveFeatures(boards, validation.warnings, rawParams);
 
   return {
     params: {
@@ -287,7 +422,9 @@ export function generateOverheadCabinet(rawParams: OverheadCabinetParams): Overh
       ...geometry.divider_features,
       ...geometry.front_panels,
       ...geometry.hinge_holes,
+      ...ledFeatures,
     ],
+    relationshipDeclarations,
     validation,
     debug: {
       phase: "geometry_v1",

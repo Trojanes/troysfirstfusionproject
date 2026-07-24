@@ -44,7 +44,33 @@ const v7Case = runBridge({
     { id: "zone-3", type: "up_flap", width: 600 },
   ],
 });
-assert.equal(v7Case.features.length, 11);
+assert.equal(v7Case.features.length, 12);
+const t3Led = v7Case.features.find((feature) => feature && feature.type === "t3_groove" && feature.targetBoardId === "T3");
+assert.ok(t3Led, "expected T3 LED groove");
+assert.equal(t3Led.face, "top");
+assert.equal(t3Led.branches.length, 2);
+
+const ledOff = runBridge({
+  style: "style_1",
+  cabinetWidth: 2000,
+  cabinetDepth: 400,
+  cabinetHeight: 400,
+  topClearanceHeight: 40,
+  featureWidth: 15,
+  frontPanelThickness: 16,
+  clearance: 2.5,
+  routerDiameter: 10,
+  ledGroove: false,
+  zones: [
+    { id: "zone-1", type: "up_flap", width: 650 },
+    { id: "zone-2", type: "fixed_panel", width: 750 },
+    { id: "zone-3", type: "up_flap", width: 600 },
+  ],
+});
+assert.equal(
+  ledOff.features.filter((feature) => feature && (feature.type === "t3_groove" || feature.type === "b3_groove")).length,
+  0,
+);
 assert.deepEqual(
   v7Case.debug.dividerCenterlines,
   [7.5, 650, 1400, 1992.5],

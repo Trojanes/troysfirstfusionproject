@@ -82,10 +82,6 @@ function areParallelSlabs(boardA: Board, boardB: Board): boolean {
 }
 
 const ALLOWED_PARALLEL_OVERLAP_REASONS: Record<string, string> = {
-  "SidePanel_L|V1": "V stile shares the left side-panel X slab.",
-  "SidePanel_L|V3": "V stile shares the left side-panel X slab.",
-  "SidePanel_R|V2": "V stile shares the right side-panel X slab.",
-  "SidePanel_R|V4": "V stile shares the right side-panel X slab.",
   "V1|V3": "Front/rear stile sections are split boards with deferred union.",
   "V2|V4": "Front/rear stile sections are split boards with deferred union.",
 };

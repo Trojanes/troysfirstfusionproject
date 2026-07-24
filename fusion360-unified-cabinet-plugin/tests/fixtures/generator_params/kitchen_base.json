@@ -1,0 +1,55 @@
+{
+  "globalSettings": {
+    "length": 887,
+    "depth": 270,
+    "height": 880,
+    "materialThickness": 15,
+    "frontThickness": 16,
+    "frontClearance": 2.5,
+    "lockEnabled": true,
+    "lockPresetId": "razor_long_rounded_1",
+    "bottomClearanceHeight": 55,
+    "bottomClearanceStyle": "style_1"
+  },
+  "columns": [
+    {
+      "id": "k-col-1",
+      "width": 444,
+      "columnType": "left_door",
+      "zones": [
+        {
+          "id": "k-zone-left-door",
+          "height": 825,
+          "zoneType": "left_door",
+          "shelfEnabled": true,
+          "shelfHeight": 400,
+          "leftSidePanelOptions": {
+            "panelType": "door",
+            "frontVisible": true,
+            "bchNotchEnabled": false,
+            "grooveVisible": true,
+            "extendT2T3B4ToOuterFace": true,
+            "strengtheningStripEnabled": true
+          }
+        }
+      ]
+    },
+    {
+      "id": "k-col-2",
+      "width": 443,
+      "columnType": "custom",
+      "zones": [
+        { "id": "k-zone-drawer", "height": 300, "zoneType": "drawer" },
+        {
+          "id": "k-zone-right-door",
+          "height": 525,
+          "zoneType": "right_door",
+          "shelfEnabled": false,
+          "shelfHeight": 303
+        }
+      ]
+    }
+  ],
+  "wheelAvoidances": [],
+  "vPanelMachiningPreferences": []
+}

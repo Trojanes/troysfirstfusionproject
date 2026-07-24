@@ -1,0 +1,34 @@
+{
+  "cabinetHeight": 2100,
+  "cabinetWidth": 611,
+  "cabinetDepth": 616,
+  "panelThickness": 15,
+  "frontFaceAllowance": 16,
+  "frontPanelThickness": 16,
+  "ziThickness": 15,
+  "hThickness": 15,
+  "sideClearance": 3,
+  "exteriorSide": "right",
+  "syncCabinetWidthFromFridge": true,
+  "topSystem": { "style": "style_1", "frontRailHeight": 40, "insertSlotThickness": 16 },
+  "bottomSystem": { "style": "style_1", "frontRailHeight": 53, "insertSlotThickness": 16 },
+  "avoidance": { "enabled": true, "depth": 300, "height": 200 },
+  "frontHardware": {
+    "frontPanelsEnabled": true,
+    "frontClearance": 2.5,
+    "locksEnabled": true,
+    "lockPresetId": "razor_long_rounded_1"
+  },
+  "zones": [
+    { "id": "drawer", "type": "drawer", "height": 250 },
+    {
+      "id": "fridge",
+      "type": "fridge",
+      "height": 1500,
+      "applianceWidthMm": 550,
+      "applianceDepthMm": 580,
+      "applianceHeightMm": 1500
+    },
+    { "id": "flap", "type": "top_flap", "height": 195 }
+  ]
+}

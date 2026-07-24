@@ -43,14 +43,26 @@ test("boardsOverlap3d ignores face contact", () => {
   assert.equal(boardsOverlap3d(a, b), false);
 });
 
-test("runAssemblyOverlapAudit allows co-located V stiles and side panels", () => {
-  const audit = runAssemblyOverlapAudit([
+test("runAssemblyOverlapAudit allows split V stiles but flags side-panel/V coplanar volume", () => {
+  const colocated = runAssemblyOverlapAudit([
     board({ id: "SidePanel_L", category: "side_panel", x0: 0, x1: 16, y0: -16, y1: 624, z0: 0, z1: 2000 }),
     board({ id: "V1", category: "vertical_structure", x0: 0, x1: 16, y0: 0, y1: 624, z0: 0, z1: 2000 }),
     board({ id: "V3", category: "vertical_structure", x0: 0, x1: 16, y0: 474, y1: 624, z0: 0, z1: 2000 }),
   ]);
-  assert.equal(audit.unexpectedOverlapCount, 0);
-  assert.equal(audit.parallelOverlapCount, 3);
+  assert.equal(colocated.unexpectedOverlapCount, 2);
+  assert(
+    colocated.unexpectedOverlaps.every((pair) =>
+      [pair.boardAId, pair.boardBId].includes("SidePanel_L"),
+    ),
+  );
+
+  const outerSkin = runAssemblyOverlapAudit([
+    board({ id: "SidePanel_L", category: "side_panel", x0: 0, x1: 16, y0: -16, y1: 624, z0: 0, z1: 2000 }),
+    board({ id: "V1", category: "vertical_structure", x0: 16, x1: 32, y0: 0, y1: 624, z0: 0, z1: 2000 }),
+    board({ id: "V3", category: "vertical_structure", x0: 16, x1: 32, y0: 474, y1: 624, z0: 0, z1: 2000 }),
+  ]);
+  assert.equal(outerSkin.unexpectedOverlapCount, 0);
+  assert.equal(outerSkin.parallelOverlapCount, 1);
 });
 
 test("runAssemblyOverlapAudit flags parallel slabs that should not share volume", () => {

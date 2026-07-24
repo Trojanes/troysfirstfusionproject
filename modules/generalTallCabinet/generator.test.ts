@@ -70,6 +70,12 @@ function b3GrooveFeatures(result: ReturnType<typeof generateGeneralTallCabinet>)
   );
 }
 
+function t3GrooveFeatures(result: ReturnType<typeof generateGeneralTallCabinet>) {
+  return result.features.filter(
+    (feature): feature is Extract<BoardFeature, { type: "t3_groove" }> => feature.type === "t3_groove",
+  );
+}
+
 function b3DrillHoleFeatures(result: ReturnType<typeof generateGeneralTallCabinet>) {
   return result.features.filter(
     (feature): feature is Extract<BoardFeature, { type: "b3_drill_hole" }> => feature.type === "b3_drill_hole",
@@ -890,7 +896,8 @@ function testStyle1T3B3ExactNotchedProfileVectors() {
   assert(!t3.notes?.some((note) => note.toLowerCase().includes("drill")));
   assert(b3.notes?.includes("Exact Style 1 B3 notched profileVector implemented"));
   assert(!b3.notes?.includes("Exact notched profile vector deferred"));
-  assert(b3.notes?.includes("B3 groove placeholder remains feature-only; exact path deferred"));
+  assert(b3.notes?.includes("B3 LED groove path implemented on bottom face"));
+  assert(t3.notes?.includes("T3 LED groove path implemented on top face"));
   assert(!b3.notes?.some((note) => note.toLowerCase().includes("drill")));
 
   ["T1", "T2", "B1", "B2"].forEach((id) => {
@@ -935,15 +942,40 @@ function testStyle1T3B3FeaturePlaceholders() {
   assert.deepEqual(
     {
       targetBoardId: b3Grooves[0].targetBoardId,
+      face: b3Grooves[0].face,
       width: b3Grooves[0].width,
       depth: b3Grooves[0].depth,
+      frontOffset: b3Grooves[0].frontOffset,
       branchCount: b3Grooves[0].branchCount,
-      branchWidth: b3Grooves[0].branchWidth,
+      branchLength: b3Grooves[0].branchLength,
+      branchEndInset: b3Grooves[0].branchEndInset,
+      main: b3Grooves[0].main,
+      branches: b3Grooves[0].branches,
     },
-    { targetBoardId: "B3", width: 14.5, depth: 6.5, branchCount: 2, branchWidth: 20 },
+    {
+      targetBoardId: "B3",
+      face: "bottom",
+      width: 14.5,
+      depth: 6.5,
+      frontOffset: 25.25,
+      branchCount: 2,
+      branchLength: 117.5,
+      branchEndInset: 80,
+      main: { x0: 0, x1: 668, y0: 18, y1: 32.5 },
+      branches: [
+        { x0: 72.75, x1: 87.25, y0: 32.5, y1: 150 },
+        { x0: 580.75, x1: 595.25, y0: 32.5, y1: 150 },
+      ],
+    },
   );
-  assert(b3Grooves[0].notes?.includes("B3 connected groove placeholder"));
-  assert(b3Grooves[0].notes?.includes("Exact connected groove path deferred"));
+  assert(b3Grooves[0].notes?.includes("B3 LED groove on bottom face"));
+
+  const t3Grooves = t3GrooveFeatures(result);
+  assert.equal(t3Grooves.length, 1);
+  assert.equal(t3Grooves[0].face, "top");
+  assert.deepEqual(t3Grooves[0].main, b3Grooves[0].main);
+  assert.deepEqual(t3Grooves[0].branches, b3Grooves[0].branches);
+  assert(t3Grooves[0].notes?.includes("T3 LED groove on top face"));
 
   const t3 = result.boards.find((board) => board.id === "T3");
   const b3 = result.boards.find((board) => board.id === "B3");
@@ -951,6 +983,21 @@ function testStyle1T3B3FeaturePlaceholders() {
   assert.deepEqual(b3?.profileVector, style1InsertProfile(668));
   assert(!t3?.notes?.some((note) => note.toLowerCase().includes("drill")));
   assert(!b3?.notes?.some((note) => note.toLowerCase().includes("drill")));
+}
+
+function testStyle1LedGrooveCanBeDisabled() {
+  const result = generateGeneralTallCabinet({
+    ...baseParams([zone("open", "open_space", 1975)]),
+    cabinetWidth: 700,
+    leftSidePanelThickness: 16,
+    rightSidePanelThickness: 16,
+    topSystem: { style: "style_1", frontRailHeight: 40, insertSlotThickness: 16, ledGroove: false },
+    bottomSystem: { style: "style_1", frontRailHeight: 53, insertSlotThickness: 16, ledGroove: false },
+  });
+  assert.equal(b3GrooveFeatures(result).length, 0);
+  assert.equal(t3GrooveFeatures(result).length, 0);
+  assert(result.boards.some((board) => board.id === "T3"));
+  assert(result.boards.some((board) => board.id === "B3"));
 }
 
 function testStyle1CustomHeights() {
@@ -2069,20 +2116,18 @@ function testSidePanelsBothEnabled() {
   assert(left.notes?.includes("SidePanel_L generated from side panel thickness input."));
   assert(right.notes?.includes("SidePanel_R generated from side panel thickness input."));
   assert(result.debug.sidePanelOverlapAudit);
-  assert(result.debug.sidePanelOverlapAudit.overlaps.some((item) =>
-    item.sidePanelId === "SidePanel_L" && item.verticalBoardId === "V1" && item.overlaps
-  ));
-  assert(result.debug.sidePanelOverlapAudit.overlaps.some((item) =>
-    item.sidePanelId === "SidePanel_R" && item.verticalBoardId === "V2" && item.overlaps
-  ));
+  assert(result.debug.sidePanelOverlapAudit.overlaps.every((item) => !item.overlaps));
   const v2 = result.boards.find((board) => board.id === "V2");
   assert(v2);
-  assert.equal(v2.x0, 584);
-  assert.equal(v2.x1, 600);
+  // Middle-first: V sits inboard of the right skin (584..600), at 568..584.
+  assert.equal(v2.x0, 568);
+  assert.equal(v2.x1, 584);
   assert.equal(v2.y0, 16);
   assert.equal(v2.y1, 584);
   const v1 = result.boards.find((board) => board.id === "V1");
   assert(v1);
+  assert.equal(v1.x0, 16);
+  assert.equal(v1.x1, 32);
   assert.equal(v1.y0, 16);
   assert.equal(v1.y1, 584);
 }
@@ -2113,6 +2158,11 @@ function testVCarcassYAlignsWithSidePanelWhenOnlyRightEnabled() {
   assert.equal(v2.y0, 16);
   assert.equal(v2.y1, 660);
   assert.equal(v2.y0 - sidePanel.y0, 32);
+  // Right skin at 354..370; V2 inboard at 338..354.
+  assert.equal(sidePanel.x0, 354);
+  assert.equal(sidePanel.x1, 370);
+  assert.equal(v2.x0, 338);
+  assert.equal(v2.x1, 354);
   assert(!(result.validation.warnings || []).some((warning) => warning.includes("differs from expected carcass start")));
 }
 
@@ -2125,6 +2175,22 @@ function testSidePanelOneSideEnabled() {
 
   assert(result.boards.find((board) => board.id === "SidePanel_L"));
   assert.equal(result.boards.find((board) => board.id === "SidePanel_R"), undefined);
+  const v1 = result.boards.find((board) => board.id === "V1");
+  const v2 = result.boards.find((board) => board.id === "V2");
+  const t3 = result.boards.find((board) => board.id === "T3");
+  assert(v1);
+  assert(v2);
+  // Left skin outside; middle carcass insert-joins both V faces the same way.
+  assert.equal(v1.x0, 16);
+  assert.equal(v1.x1, 32);
+  assert.equal(v2.x0, 584);
+  assert.equal(v2.x1, 600);
+  if (t3) {
+    assert.equal(t3.x0, 16);
+    assert.equal(t3.x1, 600);
+    assert.equal(t3.x0, v1.x0);
+    assert.equal(t3.x1, v2.x1);
+  }
 }
 
 function testSidePanelAvoidanceNotchAppliedWhenAdaptEnabled() {
@@ -2559,6 +2625,7 @@ const tests = [
   testStyle1T3B3ExactNotchedProfileVectors,
   testStyle2DoesNotGenerateT3B3,
   testStyle1T3B3FeaturePlaceholders,
+  testStyle1LedGrooveCanBeDisabled,
   testStyle1CustomHeights,
   testStyle1InsertedBoardsFollowCpt,
   testHSupportBoardSkeletons,

@@ -18,6 +18,7 @@ import type {
   VPanelGeometry,
   VPanelMachiningMode,
 } from "./types.ts";
+import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
 
 export * from "./types.ts";
 
@@ -32,6 +33,15 @@ const DEFAULT_CONSTANTS: KitchenGeometryConstants = {
   supportStripNotchDepth: 20,
   minStripSegmentLength: 30,
 };
+
+/** Match General Tall / Fridge LED insert groove (mm). */
+const LED_GROOVE_WIDTH = 14.5;
+const LED_GROOVE_DEPTH = 6.5;
+/** Clear strip from board front edge to near wall of main channel. */
+const LED_GROOVE_FRONT_LAND_MM = 18;
+/** Centerline from front = land + half groove width (25.25). */
+const LED_GROOVE_FRONT_OFFSET = LED_GROOVE_FRONT_LAND_MM + LED_GROOVE_WIDTH / 2;
+const LED_GROOVE_BRANCH_END_INSET = 80;
 
 function n(value: unknown, fallback: number): number {
   const parsed = Number(value);
@@ -272,6 +282,63 @@ function vProfileWithWheel(base: Array<[number, number]>, wheel: { height: numbe
   return [...base.slice(0, -4), ...replacement, base[base.length - 1]];
 }
 
+/**
+ * Outer V beside a stove bay has no T1/T2/T3 receivers to seat — keep toe-kick / B3
+ * pocket only and a flat top + full rear so the panel does not show empty 豁口.
+ */
+function vProfileStoveOuterNoReceivers(
+  style: string,
+  cd: number,
+  ch: number,
+  cpt: number,
+  bch: number,
+  c: KitchenGeometryConstants,
+): Array<[number, number]> {
+  const na = cpt + c.notchAllowanceExtra;
+  const frontY = style === "style_2" ? cpt : c.style1ToeKickY;
+  return [
+    [frontY, 0],
+    [frontY, bch],
+    [c.bottomSlotRearY, bch],
+    [c.bottomSlotRearY, bch + na],
+    [0, bch + na],
+    [0, ch],
+    [cd, ch],
+    [cd, 0],
+    [frontY, 0],
+  ];
+}
+
+function vProfileStoveOuterWithWheel(
+  base: Array<[number, number]>,
+  wheel: { height: number; depth: number } | undefined,
+  cd: number,
+  ch: number,
+  cpt: number,
+  c: KitchenGeometryConstants,
+): Array<[number, number]> {
+  if (!wheel) return trimClosedProfile(base);
+  const na = cpt + c.notchAllowanceExtra;
+  const r = c.receiverNotchDepth;
+  const ah = Math.max(0, n(wheel.height, 0));
+  const ad = Math.max(0, n(wheel.depth, 0));
+  const closed = base.length > 1 && samePoint(base[0], base[base.length - 1]) ? base.slice(0, -1) : [...base];
+  // Flat stove-outer profile ends [... , [0,ch], [cd,ch], [cd,0]]; replace the rear drop with the wheel pocket.
+  const head = closed.filter(([y, z]) => !(Math.abs(y - cd) <= 0.001 && z < ch - 0.001));
+  if (!head.length || Math.abs(head[head.length - 1][0] - cd) > 0.001 || Math.abs(head[head.length - 1][1] - ch) > 0.001) {
+    head.push([cd, ch]);
+  }
+  return trimClosedProfile([
+    ...head,
+    [cd, ah + r],
+    [cd - na, ah + r],
+    [cd - na, ah],
+    [cd - ad, ah],
+    [cd - ad, 0],
+    closed[0],
+  ]);
+}
+
 function applySideFrontVisibility(
   profile: Array<[number, number]>,
   options: SidePanelOptions | undefined,
@@ -386,29 +453,54 @@ function computeZones(state: KitchenLayoutState, columns: ComputedKitchenColumn[
   return zones;
 }
 
-function removeFrontTopReceiverNotch(profile: Array<[number, number]>, cd: number, ch: number, cpt: number, constants: KitchenGeometryConstants): Array<[number, number]> {
-  const na = cpt + constants.notchAllowanceExtra;
-  const r = constants.receiverNotchDepth;
-  return profile.map(([y, z]) => {
-    if (Math.abs(z - (ch - na)) <= 0.001 && y >= -0.001 && y <= r + 0.001) return [0, z];
-    if (Math.abs(z - ch) <= 0.001 && y >= -0.001 && y <= r + 0.001) return [0, z];
-    return [y, z];
-  });
-}
-
-function removeUnsupportedEdgeStoveVPanelNotches(vPanels: VPanelGeometry[], zones: ComputedKitchenZone[], state: KitchenLayoutState, constants: KitchenGeometryConstants): void {
+function rebuildStoveEdgeOuterVPanel(
+  panel: VPanelGeometry,
+  state: KitchenLayoutState,
+  constants: KitchenGeometryConstants,
+): void {
   const g = state.globalSettings;
   const cd = kitchenStructuralDepth(g);
   const ch = n(g.height, 0);
   const cpt = n(g.materialThickness, 15);
+  const fpt = n(g.frontThickness, 16);
+  const bch = n(g.bottomClearanceHeight, 70);
+  const panelThickness = panel.materialThickness ?? cpt;
+  const baseProfile = vProfileStoveOuterNoReceivers(
+    g.bottomClearanceStyle,
+    cd,
+    ch,
+    panelThickness,
+    bch,
+    constants,
+  );
+  const visibleProfile = applySideFrontVisibility(
+    baseProfile,
+    panel.sidePanelOptions,
+    fpt,
+    bch,
+    Math.max(constants.bottomSlotRearY, constants.receiverNotchDepth),
+    bch + panelThickness + constants.notchAllowanceExtra,
+    ch,
+  );
+  const wheel = state.wheelAvoidances.find((avoidance) =>
+    intersects(panel.x0, panel.x1, n(avoidance.x0, 0), n(avoidance.x1, 0)),
+  );
+  panel.yzProfile = vProfileStoveOuterWithWheel(visibleProfile, wheel, cd, ch, panelThickness, constants);
+  panel.hasWheelAvoidance = Boolean(wheel);
+}
+
+function removeUnsupportedEdgeStoveVPanelNotches(
+  vPanels: VPanelGeometry[],
+  zones: ComputedKitchenZone[],
+  state: KitchenLayoutState,
+  constants: KitchenGeometryConstants,
+): void {
   const lastColumnIndex = state.columns.length - 1;
   const stoveAtLeftEdge = zones.some((zone) => zone.zoneType === "stove" && zone.columnIndex === 0);
   const stoveAtRightEdge = zones.some((zone) => zone.zoneType === "stove" && zone.columnIndex === lastColumnIndex);
-  if (stoveAtLeftEdge && vPanels[0]) {
-    vPanels[0].yzProfile = trimClosedProfile(removeFrontTopReceiverNotch(vPanels[0].yzProfile, cd, ch, cpt, constants));
-  }
+  if (stoveAtLeftEdge && vPanels[0]) rebuildStoveEdgeOuterVPanel(vPanels[0], state, constants);
   if (stoveAtRightEdge && vPanels[vPanels.length - 1]) {
-    vPanels[vPanels.length - 1].yzProfile = trimClosedProfile(removeFrontTopReceiverNotch(vPanels[vPanels.length - 1].yzProfile, cd, ch, cpt, constants));
+    rebuildStoveEdgeOuterVPanel(vPanels[vPanels.length - 1], state, constants);
   }
 }
 
@@ -490,8 +582,13 @@ function generateBaseBoards(state: KitchenLayoutState, vPanels: VPanelGeometry[]
   const refs = sideReferences(state, warnings);
   const frontStopX0 = refs.left.options.frontVisible ? refs.left.innerX : 0;
   const frontStopX1 = refs.right.options.frontVisible ? refs.right.innerX : cw;
-  const rearSupportX0 = refs.left.options.frontVisible && !refs.left.options.extendT2T3B4ToOuterFace ? refs.left.innerX : 0;
-  const rearSupportX1 = refs.right.options.frontVisible && !refs.right.options.extendT2T3B4ToOuterFace ? refs.right.innerX : cw;
+  const stoveAtLeftEdge = zones.some((zone) => zone.zoneType === "stove" && zone.columnIndex === 0);
+  const stoveAtRightEdge = zones.some((zone) => zone.zoneType === "stove" && zone.columnIndex === columns.length - 1);
+  // Stove-edge outer V has no strip receivers — keep T2/T3/B4 off that skin thickness.
+  let rearSupportX0 = refs.left.options.frontVisible && !refs.left.options.extendT2T3B4ToOuterFace ? refs.left.innerX : 0;
+  let rearSupportX1 = refs.right.options.frontVisible && !refs.right.options.extendT2T3B4ToOuterFace ? refs.right.innerX : cw;
+  if (stoveAtLeftEdge && vPanels[0]) rearSupportX0 = Math.max(rearSupportX0, vPanels[0].x1);
+  if (stoveAtRightEdge && vPanels.length) rearSupportX1 = Math.min(rearSupportX1, vPanels[vPanels.length - 1].x0);
   const wheelAvoidances = validWheelAvoidances(state, cd, ch);
 
   if (g.bottomClearanceStyle === "style_2") {
@@ -892,7 +989,11 @@ function generateSlotRequests(boards: BoardGeometry[], columns: ComputedKitchenC
   return requests;
 }
 
-function resolveSlots(requests: SlotRequest[], preferences: KitchenLayoutState["vPanelMachiningPreferences"], warnings: string[], errors: string[]): ResolvedSlot[] {
+function slotRangesOverlap(a: Pick<SlotRequest, "y0" | "y1" | "z0" | "z1">, b: Pick<SlotRequest, "y0" | "y1" | "z0" | "z1">): boolean {
+  return a.y0 < b.y1 - 0.001 && b.y0 < a.y1 - 0.001 && a.z0 < b.z1 - 0.001 && b.z0 < a.z1 - 0.001;
+}
+
+function resolveSlots(requests: SlotRequest[], preferences: KitchenLayoutState["vPanelMachiningPreferences"], warnings: string[], _errors: string[]): ResolvedSlot[] {
   const resolved: ResolvedSlot[] = requests.map((request) => ({ ...request, resolvedSlotType: request.slotType }));
   const resolvedTypeForMode = (mode: VPanelMachiningMode, side: SlotSide): SlotType | "none" => {
     if (mode === "left_half_right_none") return side === "left" ? "half" : "none";
@@ -908,15 +1009,36 @@ function resolveSlots(requests: SlotRequest[], preferences: KitchenLayoutState["
       request.vPanelIndex === panelIndex &&
       request.slotType === "half"
     );
-    const hasLeft = panelRequests.some((request) => request.side === "left");
-    const hasRight = panelRequests.some((request) => request.side === "right");
+    if (!panelRequests.length) continue;
     const preference = preferences?.find((pref) => pref.vPanelIndex === panelIndex)?.mode;
-    if (hasLeft && hasRight && !preference) {
-      errors.push(`Unresolved double-sided half-slot conflict on V${panelIndex}.`);
+
+    // Default: opposing same-height half requests share one through groove; both tongues stay half.
+    // Explicit V machining preference still wins and can force through/none arbitration.
+    if (!preference) {
+      const leftHalves = panelRequests.filter((request) => request.side === "left");
+      const rightHalves = panelRequests.filter((request) => request.side === "right");
+      const sharedIds = new Set<string>();
+      for (const left of leftHalves) {
+        for (const right of rightHalves) {
+          if (!slotRangesOverlap(left, right)) continue;
+          sharedIds.add(left.id);
+          sharedIds.add(right.id);
+        }
+      }
+      for (const request of panelRequests) {
+        if (sharedIds.has(request.id)) {
+          request.resolvedSlotType = "half";
+          request.sharedOpposingGroove = true;
+          request.tongueLength = request.tongueLength ?? Math.max(0, (request.x1 - request.x0) / 2);
+          continue;
+        }
+        request.machiningMode = request.side === "left" ? "left_face_half_allowed" : "right_face_half_allowed";
+        request.resolvedSlotType = "half";
+      }
       continue;
     }
-    const mode: VPanelMachiningMode | undefined = preference || (hasLeft ? "left_face_half_allowed" : hasRight ? "right_face_half_allowed" : undefined);
-    if (!mode) continue;
+
+    const mode = preference;
     for (const request of panelRequests) {
       request.machiningMode = mode;
       request.resolvedSlotType = resolvedTypeForMode(mode, request.side);
@@ -1072,22 +1194,48 @@ function buildBoardBodies(boards: BoardGeometry[], resolvedSlots: ResolvedSlot[]
 
 function buildVPanelBodies(vPanels: VPanelGeometry[], resolvedSlots: ResolvedSlot[]): void {
   for (const panel of vPanels) {
+    const panelSlots = resolvedSlots.filter((slot) => slot.vPanelIndex === panel.index && slot.resolvedSlotType !== "none");
+    const cutouts: PanelBodyCutout[] = [];
+    const consumedShared = new Set<string>();
+    for (const slot of panelSlots) {
+      if (!slot.sharedOpposingGroove) continue;
+      if (consumedShared.has(slot.id)) continue;
+      const group = panelSlots.filter((other) =>
+        other.sharedOpposingGroove &&
+        !consumedShared.has(other.id) &&
+        slotRangesOverlap(slot, other),
+      );
+      for (const member of group) consumedShared.add(member.id);
+      cutouts.push({
+        id: `V${panel.index}-shared-${cutouts.length}-body-cutout`,
+        kind: "slot",
+        sourceId: group.map((member) => member.id).join("+"),
+        x0: Math.min(...group.map((member) => member.y0)),
+        x1: Math.max(...group.map((member) => member.y1)),
+        y0: Math.min(...group.map((member) => member.z0)),
+        y1: Math.max(...group.map((member) => member.z1)),
+        slotType: "through",
+        side: "left",
+      });
+    }
+    for (const slot of panelSlots) {
+      if (slot.sharedOpposingGroove) continue;
+      cutouts.push({
+        id: `${slot.id}-body-cutout`,
+        kind: "slot",
+        sourceId: slot.id,
+        x0: slot.y0,
+        x1: slot.y1,
+        y0: slot.z0,
+        y1: slot.z1,
+        slotType: slot.resolvedSlotType === "half" ? "half" : "through",
+        side: slot.side,
+      });
+    }
     panel.body = {
       plane: "YZ",
       outer: panel.yzProfile,
-      cutouts: resolvedSlots
-        .filter((slot) => slot.vPanelIndex === panel.index && slot.resolvedSlotType !== "none")
-        .map((slot) => ({
-          id: `${slot.id}-body-cutout`,
-          kind: "slot" as const,
-          sourceId: slot.id,
-          x0: slot.y0,
-          x1: slot.y1,
-          y0: slot.z0,
-          y1: slot.z1,
-          slotType: slot.resolvedSlotType,
-          side: slot.side,
-        })),
+      cutouts,
     };
   }
 }
@@ -1095,6 +1243,94 @@ function buildVPanelBodies(vPanels: VPanelGeometry[], resolvedSlots: ResolvedSlo
 function buildPanelBodies(boards: BoardGeometry[], vPanels: VPanelGeometry[], resolvedSlots: ResolvedSlot[]): void {
   buildBoardBodies(boards, resolvedSlots);
   buildVPanelBodies(vPanels, resolvedSlots);
+}
+
+/**
+ * Style 1 B3 LED T-groove on the bottom face (opens downward / −Z).
+ * Emitted as half-groove rectangles so the kitchen Fusion flat cutter can cut
+ * them with participantBodies isolation (same path as other half grooves).
+ */
+function applyB3LedGrooveCutouts(
+  boards: BoardGeometry[],
+  state: KitchenLayoutState,
+  warnings: string[],
+): void {
+  const g = state.globalSettings || ({} as KitchenLayoutState["globalSettings"]);
+  if (String(g.bottomClearanceStyle || "style_1") === "style_2") return;
+  if (g.ledGroove === false) return;
+
+  const b3 = boards.find((item) => item.id === "B3" && item.type === "B3");
+  if (!b3?.body) return;
+
+  const boardWidth = b3.x1 - b3.x0;
+  const boardDepth = b3.y1 - b3.y0;
+  const halfWidth = LED_GROOVE_WIDTH / 2;
+  if (boardWidth <= LED_GROOVE_BRANCH_END_INSET * 2 + LED_GROOVE_WIDTH) {
+    warnings.push(
+      `B3 LED groove skipped: board width ${boardWidth.toFixed(1)} too narrow for 80 mm end insets.`,
+    );
+    return;
+  }
+
+  const mainYCenter = b3.y0 + LED_GROOVE_FRONT_OFFSET;
+  const main = {
+    x0: b3.x0,
+    x1: b3.x1,
+    y0: mainYCenter - halfWidth,
+    y1: mainYCenter + halfWidth,
+  };
+  if (main.y0 < b3.y0 - 1e-6 || main.y1 > b3.y1 + 1e-6) {
+    warnings.push(
+      `B3 LED groove main channel y=${main.y0.toFixed(2)}..${main.y1.toFixed(2)} leaves board depth ${boardDepth.toFixed(1)}.`,
+    );
+  }
+
+  const branchY0 = main.y1;
+  const branchY1 = b3.y1;
+  const branchLength = branchY1 - branchY0;
+  if (branchLength <= 1e-6) {
+    warnings.push(
+      `B3 LED groove T-branches skipped: no remaining depth behind main channel (y=${branchY0.toFixed(2)}).`,
+    );
+    return;
+  }
+
+  const branchCenters = [
+    b3.x0 + LED_GROOVE_BRANCH_END_INSET,
+    b3.x1 - LED_GROOVE_BRANCH_END_INSET,
+  ];
+  const ledCutouts: PanelBodyCutout[] = [
+    {
+      id: "B3-led-main",
+      kind: "slot",
+      sourceId: "B3_led_groove",
+      x0: main.x0,
+      x1: main.x1,
+      y0: main.y0,
+      y1: main.y1,
+      slotType: "half",
+      side: "left",
+      grooveDepth: LED_GROOVE_DEPTH,
+    },
+    ...branchCenters.map((centerX, index) => ({
+      id: `B3-led-branch-${index + 1}`,
+      kind: "slot" as const,
+      sourceId: "B3_led_groove",
+      x0: centerX - halfWidth,
+      x1: centerX + halfWidth,
+      y0: branchY0,
+      y1: branchY1,
+      slotType: "half" as const,
+      side: "left" as const,
+      grooveDepth: LED_GROOVE_DEPTH,
+    })),
+  ];
+
+  b3.body.cutouts = [...(b3.body.cutouts || []), ...ledCutouts];
+  b3.notes = [
+    ...(b3.notes || []).filter((note) => !note.toLowerCase().includes("led groove")),
+    "B3 LED groove path implemented on bottom face",
+  ];
 }
 
 function boardDxfEntry(boardItem: BoardGeometry): PanelDxfGeometry {
@@ -1369,8 +1605,10 @@ export function generateKitchenCabinetGeometry(rawState: KitchenLayoutState): Ki
   updateFunctionalBoardProfilesFromSlots(boards, resolvedSlots, cpt, cd, constants);
   applySideStrengtheningStripShelfJoinery(boards, cpt);
   buildPanelBodies(boards, vPanels, resolvedSlots);
+  applyB3LedGrooveCutouts(boards, state, warnings);
   const frontPanels = buildFrontPanels(columns, zones, state, warnings);
   const panelDxf = buildPanelDxf(boards, vPanels, cpt);
+  const relationshipDeclarations = relationshipDeclarationsForBoards(boards);
 
   return {
     params: state,
@@ -1383,6 +1621,7 @@ export function generateKitchenCabinetGeometry(rawState: KitchenLayoutState): Ki
     panelDxf,
     slotRequests,
     resolvedSlots,
+    relationshipDeclarations,
     warnings,
     errors,
     debug: {

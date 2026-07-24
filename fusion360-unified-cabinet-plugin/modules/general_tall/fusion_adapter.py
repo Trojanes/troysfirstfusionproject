@@ -13,7 +13,7 @@ PANEL_ATTRIBUTE_GROUP = "UnifiedCabinet.Panel"
 PANEL_METADATA_ATTR = "metadata"
 PANEL_ID_ATTR = "panelId"
 
-ADAPTER_BUILD = "2026-07-06-v-stile-y-align-1"
+ADAPTER_BUILD = "2026-07-21-oh-t3-led-front-land-18-1"
 
 
 def _write_placement_debug(payload):
@@ -965,7 +965,330 @@ def _collect_zi_groove_features(result):
     return by_target
 
 
-def _create_zi_groove_cut(component, target_board, target_bbox, feature, boards_by_id):
+def _collect_led_groove_features(result):
+    """B3/T3 LED grooves keyed by target board id."""
+    features = result.get("features")
+    if not isinstance(features, list):
+        return {}
+    by_target = {}
+    for feature in features:
+        if not isinstance(feature, dict):
+            continue
+        if feature.get("type") not in ("b3_groove", "t3_groove"):
+            continue
+        target_id = feature.get("targetBoardId")
+        if not isinstance(target_id, str) or not target_id:
+            continue
+        by_target.setdefault(target_id, []).append(feature)
+    return by_target
+
+
+def _set_single_body_participants(ext_input, body):
+    """Restrict a cut extrude to one workpiece body only.
+
+    Fusion's SWIG binding for participantBodies expects a Python list of
+    BRepBody (std::vector), not ObjectCollection. Try list first, then
+    ObjectCollection for older builds that accepted it.
+    """
+    if body is None:
+        return "missing body"
+    errors = []
+    try:
+        ext_input.participantBodies = [body]
+        return None
+    except Exception as ex:
+        errors.append("list: {}".format(ex))
+    try:
+        participants = adsk.core.ObjectCollection.create()
+        participants.add(body)
+        ext_input.participantBodies = participants
+        return None
+    except Exception as ex:
+        errors.append("ObjectCollection: {}".format(ex))
+    return "; ".join(errors)
+
+
+def _led_groove_segments(feature):
+    segments = []
+    main = feature.get("main") if isinstance(feature.get("main"), dict) else None
+    if main:
+        segments.append(("main", main))
+    for index, branch in enumerate(feature.get("branches") or []):
+        if isinstance(branch, dict):
+            segments.append(("branch{}".format(index + 1), branch))
+    return segments
+
+
+def _led_segment_world_rect(target_bbox, segment):
+    """Map LED segment local offsets -> assembly XY on the target board.
+
+    Generator stores main/branches as offsets from the board origin (front =
+    low Y / doors). Do NOT apply the B3/T3 profile 180° flip here: that flip
+    only corrects the insert outline shape; pocket positions stay in cabinet
+    space so the channel remains ~20 mm from the front edge.
+    """
+    local_x0 = _as_float(segment.get("x0"))
+    local_x1 = _as_float(segment.get("x1"))
+    local_y0 = _as_float(segment.get("y0"))
+    local_y1 = _as_float(segment.get("y1"))
+    if None in (local_x0, local_x1, local_y0, local_y1):
+        return None
+    world_x0, world_x1 = _as_world_range(target_bbox, local_x0, local_x1, "x")
+    world_y0, world_y1 = _as_world_range(target_bbox, local_y0, local_y1, "y")
+    clamped_x = _clamp_range(world_x0, world_x1, target_bbox["x0"], target_bbox["x1"])
+    clamped_y = _clamp_range(world_y0, world_y1, target_bbox["y0"], target_bbox["y1"])
+    if clamped_x is None or clamped_y is None:
+        return None
+    return (clamped_x[0], clamped_y[0], clamped_x[1], clamped_y[1])
+
+
+def _led_cut_plane_and_direction(face, target_bbox, effective_depth):
+    """Return (plane_z_mm, extent_direction, cut_signed_cm, opening).
+
+    B3/BP bottom: sketch slightly below the bottom face and cut into +Z so the
+    pocket opens downward. A tiny below-face offset avoids Fusion failing on
+    coplanar cuts (common for BP where z0==0 and the body was also sketched on
+    the XY construction plane). T3 top: sketch on the top face and cut into -Z.
+    """
+    depth_cm = mm_to_cm(effective_depth)
+    if face == "bottom":
+        plane_nudge_mm = 0.05
+        return (
+            target_bbox["z0"] - plane_nudge_mm,
+            adsk.fusion.ExtentDirections.PositiveExtentDirection,
+            depth_cm + mm_to_cm(plane_nudge_mm),
+            "downward",
+        )
+    return (
+        target_bbox["z1"],
+        adsk.fusion.ExtentDirections.NegativeExtentDirection,
+        -depth_cm,
+        "downward_into_board_from_top",
+    )
+
+
+def _cut_led_groove_rect(component, body, plane_z, extent_direction, cut_signed, rect, sketch_name, cut_name):
+    """Cut one rectangular pocket; returns (status, reason)."""
+    x0, y0, x1, y1 = rect
+    construction = component.constructionPlanes
+    plane_input = construction.createInput()
+    plane_input.setByOffset(
+        component.xYConstructionPlane,
+        adsk.core.ValueInput.createByReal(mm_to_cm(plane_z)),
+    )
+    cut_plane = construction.add(plane_input)
+    sketch = component.sketches.add(cut_plane)
+    sketch.name = sketch_name
+    p0 = sketch.modelToSketchSpace(
+        adsk.core.Point3D.create(mm_to_cm(x0), mm_to_cm(y0), mm_to_cm(plane_z))
+    )
+    p1 = sketch.modelToSketchSpace(
+        adsk.core.Point3D.create(mm_to_cm(x1), mm_to_cm(y1), mm_to_cm(plane_z))
+    )
+    sketch.sketchCurves.sketchLines.addTwoPointRectangle(p0, p1)
+    profile = _largest_profile(sketch)
+    if profile is None:
+        return "failed", "no closed LED groove profile"
+
+    extrudes = component.features.extrudeFeatures
+
+    def _try_cut(direction, signed_distance, with_participants):
+        ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
+        try:
+            extent = adsk.fusion.DistanceExtentDefinition.create(
+                adsk.core.ValueInput.createByReal(abs(float(signed_distance)))
+            )
+            ext_input.setOneSideExtent(extent, direction)
+        except Exception:
+            ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(signed_distance))
+        if with_participants:
+            _set_single_body_participants(ext_input, body)
+        cut = extrudes.add(ext_input)
+        cut.name = cut_name
+        return cut
+
+    try:
+        _try_cut(extent_direction, cut_signed, True)
+        return "created", ""
+    except Exception as first_ex:
+        # Retry without participantBodies, then flip direction once in case the
+        # construction-plane normal is inverted on this Fusion build.
+        flip = (
+            adsk.fusion.ExtentDirections.NegativeExtentDirection
+            if extent_direction == adsk.fusion.ExtentDirections.PositiveExtentDirection
+            else adsk.fusion.ExtentDirections.PositiveExtentDirection
+        )
+        for direction, signed, participants in (
+            (extent_direction, cut_signed, False),
+            (flip, -cut_signed, True),
+            (flip, -cut_signed, False),
+        ):
+            try:
+                _try_cut(direction, signed, participants)
+                return "created", "recovered_with_fallback_direction" if direction == flip else ""
+            except Exception:
+                continue
+        return "failed", "Fusion LED groove cut failed: {}".format(first_ex)
+
+
+def _create_led_groove_cut(component, body, target_board, target_bbox, feature):
+    """Cut LED groove pockets on one B3/T3 body only.
+
+    GT carcass boards are built in assembly pose (no flat nest pass). Isolation is
+    enforced by: (1) cutting inside the board's own child component, and
+    (2) participantBodies=[this body] so neighboring workpieces are never cut.
+
+    Each main/branch segment is cut as its own extrude so adjacent rectangles
+    cannot collapse into an invalid multi-profile cut (which previously left a
+    sketch with no pocket).
+    """
+    feature_id = str(feature.get("id") or "led_groove")
+    target_board_id = str(target_board.get("id") or "")
+    feature_type = str(feature.get("type") or "").strip().lower()
+    # Hard-pin faces by feature type / board so B3/BP always open downward.
+    if feature_type == "b3_groove" or target_board_id.upper() in ("B3", "BP"):
+        face = "bottom"
+    elif feature_type == "t3_groove" or target_board_id.upper() == "T3":
+        face = "top"
+    else:
+        face = str(feature.get("face") or "").strip().lower()
+    if face not in ("top", "bottom"):
+        return {
+            "featureId": feature_id,
+            "targetBoardId": target_board_id,
+            "status": "skipped",
+            "reason": "face must be top or bottom",
+        }
+    if body is None or target_bbox is None:
+        return {
+            "featureId": feature_id,
+            "targetBoardId": target_board_id,
+            "status": "skipped",
+            "reason": "missing body or bbox",
+        }
+
+    depth = _as_float(feature.get("depth"))
+    depth = depth if depth is not None and depth > 0 else 6.5
+    thickness = max(0.0, target_bbox["z1"] - target_bbox["z0"])
+    effective_depth = min(depth, max(0.0, thickness - 0.2))
+    if effective_depth <= 0:
+        return {
+            "featureId": feature_id,
+            "targetBoardId": target_board_id,
+            "status": "skipped",
+            "reason": "non-positive groove depth",
+        }
+
+    segments = _led_groove_segments(feature)
+    if not segments:
+        return {
+            "featureId": feature_id,
+            "targetBoardId": target_board_id,
+            "status": "skipped",
+            "reason": "no main/branch segments",
+        }
+
+    plane_z, extent_direction, cut_signed, opening = _led_cut_plane_and_direction(
+        face, target_bbox, effective_depth
+    )
+
+    world_rects = []
+    for label, segment in segments:
+        rect = _led_segment_world_rect(target_bbox, segment)
+        if rect is None:
+            continue
+        world_rects.append((label, rect))
+
+    if not world_rects:
+        return {
+            "featureId": feature_id,
+            "targetBoardId": target_board_id,
+            "status": "skipped",
+            "reason": "segments outside board bbox",
+        }
+
+    created = 0
+    failures = []
+    recovered = False
+    try:
+        for label, rect in world_rects:
+            sketch_name = "GT_{}_led_{}_{}".format(
+                sanitize_token(target_board_id, limit=24),
+                sanitize_token(feature_id, limit=28),
+                sanitize_token(label, limit=16),
+            )
+            cut_name = "GT_LED_CUT_{}_{}".format(
+                sanitize_token(feature_id, limit=40),
+                sanitize_token(label, limit=16),
+            )
+            status, reason = _cut_led_groove_rect(
+                component,
+                body,
+                plane_z,
+                extent_direction,
+                cut_signed,
+                rect,
+                sketch_name,
+                cut_name,
+            )
+            if status == "created":
+                created += 1
+                if reason:
+                    recovered = True
+            else:
+                failures.append("{}: {}".format(label, reason or "unknown"))
+    except Exception as ex:
+        return {
+            "featureId": feature_id,
+            "targetBoardId": target_board_id,
+            "status": "failed",
+            "face": face,
+            "opening": opening,
+            "reason": "Fusion LED groove cut failed: {}".format(ex),
+            "segmentCount": len(world_rects),
+            "createdSegments": created,
+        }
+
+    if created == len(world_rects):
+        return {
+            "featureId": feature_id,
+            "targetBoardId": target_board_id,
+            "status": "created",
+            "face": face,
+            "opening": opening,
+            "depth": effective_depth,
+            "planeZMm": plane_z,
+            "segmentCount": len(world_rects),
+            "createdSegments": created,
+            "isolatedBody": True,
+            "reason": "recovered_with_fallback_direction" if recovered else "",
+            "yRangeMm": [world_rects[0][1][1], world_rects[0][1][3]],
+        }
+    if created > 0:
+        return {
+            "featureId": feature_id,
+            "targetBoardId": target_board_id,
+            "status": "failed",
+            "face": face,
+            "opening": opening,
+            "depth": effective_depth,
+            "segmentCount": len(world_rects),
+            "createdSegments": created,
+            "reason": "partial LED groove cut: {}".format("; ".join(failures)),
+        }
+    return {
+        "featureId": feature_id,
+        "targetBoardId": target_board_id,
+        "status": "failed",
+        "face": face,
+        "opening": opening,
+        "segmentCount": len(world_rects),
+        "createdSegments": 0,
+        "reason": "; ".join(failures) or "LED groove cut produced no pockets",
+    }
+
+
+def _create_zi_groove_cut(component, target_board, target_bbox, feature, boards_by_id, body=None):
     feature_id = str(feature.get("id") or "zi_groove")
     target_board_id = str(target_board.get("id") or "")
     divider_id = feature.get("dividerBoardId")
@@ -1074,6 +1397,8 @@ def _create_zi_groove_cut(component, target_board, target_bbox, feature, boards_
         extrudes = component.features.extrudeFeatures
         ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
         ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(-mm_to_cm(effective_depth)))
+        if body is not None:
+            _set_single_body_participants(ext_input, body)
         extrudes.add(ext_input)
         return {
             "featureId": feature_id,
@@ -1219,7 +1544,9 @@ def _oh_cut_bp_grooves(component, bp_body, bp_board, result):
             ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
             ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(-mm_to_cm(effective_depth)))
             try:
-                ext_input.participantBodies = [bp_body]
+                participants = adsk.core.ObjectCollection.create()
+                participants.add(bp_body)
+                ext_input.participantBodies = participants
             except Exception:
                 pass
             cut = extrudes.add(ext_input)
@@ -1264,7 +1591,9 @@ def _oh_cut_hinge_holes(component, board, body, hinge_features):
             ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
             ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(-mm_to_cm(depth)))
             try:
-                ext_input.participantBodies = [body]
+                participants = adsk.core.ObjectCollection.create()
+                participants.add(body)
+                ext_input.participantBodies = participants
             except Exception:
                 pass
             cut = extrudes.add(ext_input)
@@ -1436,9 +1765,195 @@ def _oh_top_panel_translation_specs(result, boards_by_id):
     )
 
 
+def _oh_cut_t3_led_grooves(component, t3_body, t3_board, result):
+    """Cut LED T-groove on Overhead T3 top face (opens upward).
+
+    Same Fusion recipe as `_oh_cut_bp_grooves`: construction-plane sketch +
+    setDistanceExtent(-depth) from the top face + participantBodies.
+    Runs before T3 postprocess translation while the body is still at design Z.
+    """
+    t3_bbox = _board_bbox(t3_board)
+    if not t3_body or not t3_bbox:
+        return [{
+            "featureId": "T3_led_groove",
+            "status": "skipped",
+            "reason": "missing T3 body or bbox",
+        }]
+
+    features = _collect_led_groove_features(result).get("T3") or []
+    if not features:
+        feature_types = []
+        for feature in (result.get("features") or []):
+            if isinstance(feature, dict):
+                feature_types.append({
+                    "id": feature.get("id"),
+                    "type": feature.get("type"),
+                    "targetBoardId": feature.get("targetBoardId"),
+                })
+        return [{
+            "featureId": "T3_led_groove",
+            "status": "skipped",
+            "reason": "no T3 LED features in result",
+            "featureCount": len(result.get("features") or []),
+            "featureTypesPreview": feature_types[:12],
+        }]
+
+    rows = []
+    thickness = max(0.0, t3_bbox["z1"] - t3_bbox["z0"])
+    top_z = t3_bbox["z1"]
+
+    for feature in features:
+        feature_id = str(feature.get("id") or "T3_led_groove")
+        depth = _as_float(feature.get("depth"))
+        depth = depth if depth is not None and depth > 0 else 6.5
+        effective_depth = min(depth, max(0.0, thickness - 0.2))
+        if effective_depth <= 0:
+            rows.append({
+                "featureId": feature_id,
+                "status": "skipped",
+                "reason": "non-positive groove depth",
+                "thickness": thickness,
+            })
+            continue
+
+        segments = _led_groove_segments(feature)
+        if not segments:
+            rows.append({
+                "featureId": feature_id,
+                "status": "skipped",
+                "reason": "no main/branch segments",
+            })
+            continue
+
+        created = 0
+        failures = []
+        segment_rows = []
+        for label, segment in segments:
+            segment_id = "{}_{}".format(feature_id, label)
+            try:
+                rect = _led_segment_world_rect(t3_bbox, segment)
+                if rect is None:
+                    failures.append("{}: outside bbox".format(label))
+                    segment_rows.append({"id": segment_id, "status": "skipped", "reason": "outside bbox"})
+                    continue
+                x0, y0, x1, y1 = rect
+                construction = component.constructionPlanes
+                plane_input = construction.createInput()
+                plane_input.setByOffset(
+                    component.xYConstructionPlane,
+                    adsk.core.ValueInput.createByReal(mm_to_cm(top_z)),
+                )
+                cut_plane = construction.add(plane_input)
+                sketch = component.sketches.add(cut_plane)
+                sketch.name = "OH_T3_LED_{}".format(sanitize_token(segment_id, limit=50))
+                p0 = sketch.modelToSketchSpace(
+                    adsk.core.Point3D.create(mm_to_cm(x0), mm_to_cm(y0), mm_to_cm(top_z))
+                )
+                p1 = sketch.modelToSketchSpace(
+                    adsk.core.Point3D.create(mm_to_cm(x1), mm_to_cm(y1), mm_to_cm(top_z))
+                )
+                sketch.sketchCurves.sketchLines.addTwoPointRectangle(p0, p1)
+                profile = _largest_profile(sketch)
+                if profile is None:
+                    failures.append("{}: no closed profile".format(label))
+                    segment_rows.append({"id": segment_id, "status": "failed", "reason": "no closed profile"})
+                    continue
+                extrudes = component.features.extrudeFeatures
+                ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
+                # Negative distance: into the board from the top face (opens upward).
+                ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(-mm_to_cm(effective_depth)))
+                participant_error = _set_single_body_participants(ext_input, t3_body)
+                # T3 lives in its own child component, so a cut without
+                # participants still cannot reach T1/T2. Prefer isolation, but
+                # never leave an orphan sketch with zero material removed.
+                used_participants = participant_error is None
+                cut = extrudes.add(ext_input)
+                cut.name = "OH_T3_LED_CUT_{}".format(sanitize_token(segment_id, limit=50))
+                created += 1
+                segment_rows.append({
+                    "id": segment_id,
+                    "status": "created",
+                    "xRange": [x0, x1],
+                    "yRange": [y0, y1],
+                    "planeZ": top_z,
+                    "depth": effective_depth,
+                    "isolatedBody": used_participants,
+                    **({"participantWarning": participant_error} if participant_error else {}),
+                })
+            except Exception as ex:
+                # Direction fallback: some Fusion builds treat the construction
+                # plane normal such that negative distance goes into empty space.
+                try:
+                    extrudes = component.features.extrudeFeatures
+                    profile = _largest_profile(sketch) if "sketch" in locals() and sketch is not None else None
+                    if profile is None:
+                        raise ex
+                    for signed in (-effective_depth, effective_depth):
+                        try:
+                            ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
+                            ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm_to_cm(signed)))
+                            _set_single_body_participants(ext_input, t3_body)
+                            cut = extrudes.add(ext_input)
+                            cut.name = "OH_T3_LED_CUT_{}".format(sanitize_token(segment_id, limit=50))
+                            created += 1
+                            segment_rows.append({
+                                "id": segment_id,
+                                "status": "created",
+                                "reason": "recovered_signed_distance_{}".format(signed),
+                                "xRange": [x0, x1],
+                                "yRange": [y0, y1],
+                                "planeZ": top_z,
+                                "depth": effective_depth,
+                            })
+                            break
+                        except Exception:
+                            continue
+                    else:
+                        raise ex
+                except Exception as ex2:
+                    failures.append("{}: {}".format(label, ex2))
+                    segment_rows.append({"id": segment_id, "status": "failed", "reason": str(ex2)})
+
+        if created == len(segments):
+            rows.append({
+                "featureId": feature_id,
+                "targetBoardId": "T3",
+                "status": "created",
+                "face": "top",
+                "opening": "upward",
+                "depth": effective_depth,
+                "planeZMm": top_z,
+                "segmentCount": len(segments),
+                "createdSegments": created,
+                "segments": segment_rows,
+            })
+        elif created > 0:
+            rows.append({
+                "featureId": feature_id,
+                "targetBoardId": "T3",
+                "status": "failed",
+                "reason": "partial LED groove cut: {}".format("; ".join(failures)),
+                "segmentCount": len(segments),
+                "createdSegments": created,
+                "segments": segment_rows,
+            })
+        else:
+            rows.append({
+                "featureId": feature_id,
+                "targetBoardId": "T3",
+                "status": "failed",
+                "reason": "; ".join(failures) or "all LED segments failed",
+                "segmentCount": len(segments),
+                "createdSegments": 0,
+                "segments": segment_rows,
+            })
+    return rows
+
+
 def _oh_postprocess_bodies(component, result, bodies_by_id, boards_by_id, components_by_id=None):
     rows = {
         "bpGrooveCuts": [],
+        "ledGrooveCuts": [],
         "hingeCuts": [],
         "rotations": [],
         "topPanelTranslations": [],
@@ -1453,7 +1968,16 @@ def _oh_postprocess_bodies(component, result, bodies_by_id, boards_by_id, compon
     rows["dividerZShifts"] = []
     bp_board = boards_by_id.get("BP")
     if bp_board:
-        rows["bpGrooveCuts"] = _oh_cut_bp_grooves(components_by_id.get("BP") or component, bodies_by_id.get("BP"), bp_board, result)
+        bp_component = components_by_id.get("BP") or component
+        bp_body = bodies_by_id.get("BP")
+        rows["bpGrooveCuts"] = _oh_cut_bp_grooves(bp_component, bp_body, bp_board, result)
+
+    t3_board = boards_by_id.get("T3")
+    if t3_board:
+        t3_component = components_by_id.get("T3") or component
+        t3_body = bodies_by_id.get("T3")
+        # Cut LED on T3 top face before the top-panel Z translation.
+        rows["ledGrooveCuts"] = _oh_cut_t3_led_grooves(t3_component, t3_body, t3_board, result)
 
     hinge_by_board = _oh_collect_hinge_holes_by_board(result)
     for board_id, features in hinge_by_board.items():
@@ -1560,10 +2084,14 @@ def create_rough_bodies_from_board_result(
         "errors": [],
         "warnings": [],
         "runLabel": str(run_label or int(time.time() * 1000)),
+        "adapterBuild": ADAPTER_BUILD,
         "sourceUsage": {"cutProfileVector": 0, "profileVector": 0, "bboxFallback": 0},
         "grooveCutsCreated": 0,
         "grooveCutsSkipped": 0,
         "grooveCutsFailed": 0,
+        "ledGrooveCutsCreated": 0,
+        "ledGrooveCutsSkipped": 0,
+        "ledGrooveCutsFailed": 0,
         "bpGrooveCutsCreated": 0,
         "hingeCutsCreated": 0,
         "rotationOpsCreated": 0,
@@ -1602,6 +2130,11 @@ def create_rough_bodies_from_board_result(
     components_by_id = {}
     panel_metadata_by_id = {}
     zi_grooves_by_target = _collect_zi_groove_features(result) if enable_zi_groove_cuts else {}
+    led_grooves_by_target = (
+        _collect_led_groove_features(result)
+        if module_name in ("generalTall", "overhead")
+        else {}
+    )
     result_debug = result.get("debug") if isinstance(result.get("debug"), dict) else {}
 
     # Spawn avoidance: shift +X in furniture-sized slots when the target spot
@@ -1659,6 +2192,17 @@ def create_rough_bodies_from_board_result(
     summary["_containerComponent"] = container
     if container_warning:
         summary["warnings"].append(container_warning)
+    declarations = result.get("relationshipDeclarations") if isinstance(result, dict) else None
+    if isinstance(declarations, list) and declarations and container is not root_comp:
+        try:
+            container.attributes.add(
+                ATTRIBUTE_GROUP,
+                "relationshipDeclarations",
+                json.dumps(declarations, ensure_ascii=False, separators=(",", ":")),
+            )
+            summary["relationshipDeclarationCount"] = len(declarations)
+        except Exception as ex:
+            summary["warnings"].append("Could not write relationshipDeclarations on assembly: {}".format(ex))
     for index, board in enumerate(boards):
         board_id = str(board.get("id") or "board-{}".format(index + 1))
         bbox = _board_bbox(board)
@@ -1772,12 +2316,14 @@ def create_rough_bodies_from_board_result(
         bodies_by_id[board_id] = body
         summary["sourceUsage"][chosen_source] = summary["sourceUsage"].get(chosen_source, 0) + 1
         groove_cuts = []
+        board_cut_component = components_by_id.get(board_id) or container
         if enable_zi_groove_cuts and _is_zi_board(board):
             for groove_feature in zi_grooves_by_target.get(board_id, []):
                 # Cut inside the board's own component so the feature reaches
-                # the body that now lives there.
+                # the body that now lives there; participantBodies keeps the
+                # cut off neighboring workpieces.
                 groove_row = _create_zi_groove_cut(
-                    components_by_id.get(board_id) or container, board, bbox, groove_feature, boards_by_id
+                    board_cut_component, board, bbox, groove_feature, boards_by_id, body=body
                 )
                 groove_cuts.append(groove_row)
                 status = groove_row.get("status")
@@ -1794,6 +2340,31 @@ def create_rough_bodies_from_board_result(
                 else:
                     summary["grooveCutsSkipped"] += 1
 
+        led_cuts = []
+        # Overhead BP LED is cut in _oh_postprocess_bodies (with bp_groove).
+        # General Tall B3/T3 LED cuts run here during body creation.
+        if module_name == "generalTall" and (
+            board_id in ("B3", "T3") or str(board.get("boardType") or "") in ("B3", "T3")
+        ):
+            for led_feature in led_grooves_by_target.get(board_id, []):
+                led_row = _create_led_groove_cut(
+                    board_cut_component, body, board, bbox, led_feature
+                )
+                led_cuts.append(led_row)
+                status = led_row.get("status")
+                if status == "created":
+                    summary["ledGrooveCutsCreated"] += 1
+                elif status == "failed":
+                    summary["ledGrooveCutsFailed"] += 1
+                    summary["warnings"].append(
+                        "LED groove cut failed for {}: {}".format(
+                            led_row.get("featureId"),
+                            led_row.get("reason") or "unknown",
+                        )
+                    )
+                else:
+                    summary["ledGrooveCutsSkipped"] += 1
+
         summary["bodyAudit"].append({
             **audit_row,
             "source": chosen_source,
@@ -1802,6 +2373,7 @@ def create_rough_bodies_from_board_result(
             "componentName": board_component_name,
             "placementOffset": {"x": dx_mm, "y": dy_mm, "z": dz_mm},
             "grooveCuts": groove_cuts,
+            "ledGrooveCuts": led_cuts,
             "panelMetadataWritten": panel_metadata_written,
             "panelMetadata": panel_metadata,
         })
@@ -1810,6 +2382,18 @@ def create_rough_bodies_from_board_result(
         postprocess = _oh_postprocess_bodies(container, result, bodies_by_id, boards_by_id, components_by_id=components_by_id)
         summary["overheadPostprocess"] = postprocess
         summary["bpGrooveCutsCreated"] = len([row for row in postprocess.get("bpGrooveCuts", []) if row.get("status") == "created"])
+        oh_led_rows = postprocess.get("ledGrooveCuts", [])
+        summary["ledGrooveCutsCreated"] = len([row for row in oh_led_rows if row.get("status") == "created"])
+        summary["ledGrooveCutsFailed"] = len([row for row in oh_led_rows if row.get("status") == "failed"])
+        summary["ledGrooveCutsSkipped"] = len([row for row in oh_led_rows if row.get("status") == "skipped"])
+        for led_row in oh_led_rows:
+            if led_row.get("status") == "failed":
+                summary["warnings"].append(
+                    "LED groove cut failed for {}: {}".format(
+                        led_row.get("featureId"),
+                        led_row.get("reason") or "unknown",
+                    )
+                )
         summary["hingeCutsCreated"] = len([row for row in postprocess.get("hingeCuts", []) if row.get("status") == "created"])
         summary["rotationOpsCreated"] = len([row for row in postprocess.get("rotations", []) if row.get("status") == "created"])
         summary["topPanelTranslationsCreated"] = len([row for row in postprocess.get("topPanelTranslations", []) if row.get("status") == "created"])
@@ -1818,7 +2402,7 @@ def create_rough_bodies_from_board_result(
         summary["supportZShiftsCreated"] = len([row for row in postprocess.get("supportZShifts", []) if row.get("status") == "created"])
         summary["bodyComponentsCreated"] = len(components_by_id)
         summary["bodyComponentNames"] = ["OH_{}".format(sanitize_token(board_id, fallback="board", limit=60)) for board_id in components_by_id.keys()]
-        for group_name in ("bpGrooveCuts", "hingeCuts", "rotations", "topPanelTranslations", "frontPanelZShifts", "dividerZShifts", "supportZShifts"):
+        for group_name in ("bpGrooveCuts", "ledGrooveCuts", "hingeCuts", "rotations", "topPanelTranslations", "frontPanelZShifts", "dividerZShifts", "supportZShifts"):
             for row in postprocess.get(group_name, []):
                 if row.get("status") == "failed":
                     summary["warnings"].append("Overhead {} failed for {}: {}".format(group_name, row.get("featureId") or row.get("boardId"), row.get("reason") or "unknown"))
@@ -1911,6 +2495,14 @@ def create_rough_bodies_from_board_result(
             summary["warnings"].append("Container placement read-back failed: {}".format(ex))
     placement_debug["containerTransformFinalMm"] = summary.get("containerTransformMm")
     placement_debug["createdBodies"] = summary.get("createdBodies")
+    placement_debug["ledGrooveCutsCreated"] = summary.get("ledGrooveCutsCreated")
+    placement_debug["ledGrooveCutsFailed"] = summary.get("ledGrooveCutsFailed")
+    placement_debug["ledGrooveCutsSkipped"] = summary.get("ledGrooveCutsSkipped")
+    placement_debug["overheadLedGrooveCuts"] = (
+        (summary.get("overheadPostprocess") or {}).get("ledGrooveCuts")
+        if enable_overhead_postprocess
+        else None
+    )
     placement_debug["warnings"] = list(summary.get("warnings") or [])[:10]
     summary["placementDebug"] = {k: v for k, v in placement_debug.items() if k != "layoutRaw"}
     _write_placement_debug(placement_debug)

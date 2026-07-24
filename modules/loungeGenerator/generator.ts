@@ -6,12 +6,20 @@ import type {
   LoungePanel,
   LoungeSettings,
 } from "./types.ts";
+import { relationshipDeclarationsForPanels } from "./relationshipDeclarations.ts";
 
 const DEFAULT_HEIGHT = 420;
 const DEFAULT_PPT = 18;
 const OPENING_RADIUS = 50;
 const LID_CLEARANCE_EACH_SIDE = 1.5;
 const FINGER_HOLE_DIAMETER = 40;
+
+function withRelationshipDeclarations(result: LoungeGeometryResult): LoungeGeometryResult {
+  return {
+    ...result,
+    relationshipDeclarations: relationshipDeclarationsForPanels(result.panels),
+  };
+}
 
 function lSupportOuter(length: number, profileHeight: number): number[][] {
   const safeLength = Math.max(0, length);
@@ -567,7 +575,7 @@ function generateIShapeGeometry(state: LoungeSettings): LoungeGeometryResult {
     });
   }
 
-  return {
+  return withRelationshipDeclarations({
     meta: { module: "lounge", style: "I_SHAPE", phase: "i_shape_geometry_v1" },
     state,
     footprint: { i: bounds },
@@ -575,7 +583,7 @@ function generateIShapeGeometry(state: LoungeSettings): LoungeGeometryResult {
     openings,
     lids,
     validation: { warnings: iShapeWarnings(state), errors: [] },
-  };
+  });
 }
 
 function generateParallelLoungeGeometry(state: LoungeSettings): LoungeGeometryResult {
@@ -591,7 +599,7 @@ function generateParallelLoungeGeometry(state: LoungeSettings): LoungeGeometryRe
   addParallelAvoidanceCovers(panels, state, ppt);
   if (state.hasMiddleCabinet) addMiddleCabinet(panels, state);
 
-  return {
+  return withRelationshipDeclarations({
     meta: { module: "lounge", style: "PARALLEL", phase: "parallel_geometry_v1" },
     state,
     footprint: {
@@ -603,7 +611,7 @@ function generateParallelLoungeGeometry(state: LoungeSettings): LoungeGeometryRe
     openings,
     lids,
     validation: { warnings: parallelWarnings(state), errors: [] },
-  };
+  });
 }
 
 export function generateLoungeGeometry(input: Partial<LoungeSettings>): LoungeGeometryResult {
@@ -743,7 +751,7 @@ export function generateLoungeGeometry(input: Partial<LoungeSettings>): LoungeGe
   });
   addTopPanel(panels, openings, lids, "l_top", "L Top", state.lWidth, state.lDepth, ppt, lBounds, state.height, state.topLidEnabled);
 
-  return {
+  return withRelationshipDeclarations({
     meta: { module: "lounge", style: state.style, phase: "ui_geometry_svg_only" },
     state,
     footprint: {
@@ -755,5 +763,5 @@ export function generateLoungeGeometry(input: Partial<LoungeSettings>): LoungeGe
     openings,
     lids,
     validation: { warnings: loungeWarnings(state), errors: [] },
-  };
+  });
 }

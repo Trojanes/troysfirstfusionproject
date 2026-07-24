@@ -163,7 +163,15 @@ function testGenerateOverheadCabinetBoardsAndFeatures() {
   ["BP", "T1", "T2", "T3", "T4", "D0", "D1", "D2", "D3", "FP0", "FP1", "FP2"].forEach((id) => {
     assert.ok(boardIds.has(id), `expected board ${id}`);
   });
-  assert.equal(result.features.length, 11);
+  assert.equal(result.features.length, 12);
+  const led = result.features.find((feature) => feature && feature.type === "t3_groove" && feature.targetBoardId === "T3");
+  assert.ok(led, "expected T3 LED groove feature");
+  assert.equal(led.face, "top");
+  assert.equal(led.depth, 6.5);
+  assert.equal(led.width, 14.5);
+  assert.equal(led.branches?.length, 2);
+  const t3 = result.boards.find((board) => board.id === "T3");
+  assert.ok(t3?.notes?.some((note) => /LED groove/i.test(note)));
   const fp0 = result.boards.find((board) => board.id === "FP0");
   assert.deepEqual(fp0?.profileVector, [
     { x: 0, z: 0 },
@@ -173,6 +181,19 @@ function testGenerateOverheadCabinetBoardsAndFeatures() {
     { x: 0, z: 0 },
   ]);
   assert.ok(result.debug.svgPreview?.includes("OHC front elevation geometry preview"));
+}
+
+function testRelationshipDeclarationsEmbeddedInResult() {
+  const result = generateOverheadCabinet({
+    cabinetWidth: 900,
+    cabinetDepth: 350,
+    cabinetHeight: 720,
+    zones: [{ id: "zone-1", type: "up_flap", width: 900 }],
+  });
+  assert.equal(result.relationshipDeclarations.length, 4);
+  const ids = new Set(result.relationshipDeclarations.map((item) => item.declarationId));
+  assert.ok(ids.has("oh_bp_d0_back_to_divider"));
+  assert.ok(ids.has("oh_t1_t2_top_rail_stack"));
 }
 
 function testSvgPreviewUsesResolvedGeometry() {
@@ -195,6 +216,32 @@ function testInvalidWidthReportsError() {
   assert.equal(result.boards.length, 0);
 }
 
+function testT3LedGrooveOption() {
+  const on = generateOverheadCabinet(baseParams);
+  const onLed = on.features.filter((feature) => feature && feature.type === "t3_groove" && feature.targetBoardId === "T3");
+  assert.equal(onLed.length, 1);
+  assert.equal(onLed[0].face, "top");
+  // Front land 18 mm → centerline 25.25 (= 20 + (18 - 12.75)).
+  assert.equal(onLed[0].frontLand, 18);
+  assert.equal(onLed[0].frontOffset, 18 + 14.5 / 2);
+  assert.equal(onLed[0].main.y0, 18);
+  assert.equal(onLed[0].main.y1, 18 + 14.5);
+  assert.equal(onLed[0].branches[0].y1, 90);
+
+  const off = generateOverheadCabinet({ ...baseParams, ledGroove: false });
+  assert.equal(
+    off.features.filter((feature) => feature && (feature.type === "t3_groove" || feature.type === "b3_groove")).length,
+    0,
+  );
+
+  const style2 = generateOverheadCabinet({ ...baseParams, style: "style_2" });
+  assert.equal(
+    style2.features.filter((feature) => feature && feature.type === "t3_groove" && feature.targetBoardId === "T3").length,
+    1,
+    "Style 2 still has T3, so LED remains available when checkbox is on",
+  );
+}
+
 const tests = [
   testV7DividerCenterlinesFromZoneBoundaries,
   testV7ManufacturingRules,
@@ -206,8 +253,10 @@ const tests = [
   testDividerZBaseSitsOnShiftedBottomPanel,
   testDividerBoardThicknessUsesCptNotGrooveSlot,
   testGenerateOverheadCabinetBoardsAndFeatures,
+  testRelationshipDeclarationsEmbeddedInResult,
   testSvgPreviewUsesResolvedGeometry,
   testInvalidWidthReportsError,
+  testT3LedGrooveOption,
 ];
 
 for (const test of tests) {

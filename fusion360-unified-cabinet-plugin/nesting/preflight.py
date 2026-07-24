@@ -28,10 +28,13 @@ def evaluate_record(record):
     metadata = record.get("metadata") if isinstance(record, dict) else {}
     try:
         import attribute_state_service
-        if callable(getattr(attribute_state_service, "migrate_metadata", None)):
-            metadata = attribute_state_service.migrate_metadata(metadata)
     except Exception:
-        pass
+        try:
+            from panel_attributes import attribute_state_service
+        except Exception:
+            attribute_state_service = None
+    if callable(getattr(attribute_state_service, "migrate_metadata", None)):
+        metadata = attribute_state_service.migrate_metadata(metadata)
 
     board_type = _canonical(metadata or {}, "boardType")
     color = _canonical(metadata or {}, "color")

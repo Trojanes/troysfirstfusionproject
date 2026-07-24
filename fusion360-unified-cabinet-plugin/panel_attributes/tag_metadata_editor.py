@@ -141,6 +141,61 @@ def _safe_face_token(face):
         return ""
 
 
+def normalize_complementary_surface_roles(role_a, role_b, face_a=None, face_b=None,
+                                          require_definite=False):
+    """Enforce colour face ≠ milling face on the two broad surfaces.
+
+    Hard rules:
+    - The two faces must be distinct entities.
+    - Never MILLING/MILLING or NON_MILLING/NON_MILLING.
+    - Complementary MILLING + NON_MILLING (or EITHER + EITHER) only.
+    - When ``require_definite`` (manual override), EITHER/EITHER becomes
+      MILLING/NON_MILLING — hinge holes / symmetry are irrelevant.
+    """
+    ra = str(role_a or "").strip().upper()
+    rb = str(role_b or "").strip().upper()
+    token_a = _safe_face_token(face_a) if face_a is not None else ""
+    token_b = _safe_face_token(face_b) if face_b is not None else ""
+    if token_a and token_b and token_a == token_b:
+        raise ValueError(
+            "Colour face and milling face must be opposite broad faces, not the same face."
+        )
+    if face_a is not None and face_b is not None and face_a is face_b:
+        raise ValueError(
+            "Colour face and milling face must be opposite broad faces, not the same face."
+        )
+    if not ra or not rb:
+        raise ValueError("Both face roles are required.")
+
+    either = "EITHER"
+    milling = "MILLING"
+    non_milling = "NON_MILLING"
+
+    if ra == either and rb == either:
+        if require_definite:
+            return milling, non_milling
+        return either, either
+    if ra == milling and rb == non_milling:
+        return milling, non_milling
+    if ra == non_milling and rb == milling:
+        return non_milling, milling
+
+    # Illegal same-role pairs: force complementary. Prefer keeping MILLING on A
+    # when both were tagged MILLING so a colour (NON_MILLING) face always exists.
+    if ra == milling and rb == milling:
+        return milling, non_milling
+    if ra == non_milling and rb == non_milling:
+        return non_milling, milling
+
+    if ra == milling or rb == non_milling:
+        return milling, non_milling
+    if rb == milling or ra == non_milling:
+        return non_milling, milling
+    if require_definite:
+        return milling, non_milling
+    return either, either
+
+
 def _patch_face_milling_surface(face, role, body_metadata=None, source="geometry", locked=False):
     """Write millingSurface onto a face entity attribute."""
     if not face or not write_face_metadata:
@@ -204,10 +259,12 @@ def apply_surface_roles(body, face_a, role_a, face_b, role_b,
         raise ValueError("Missing body")
     if face_a is None or face_b is None:
         raise ValueError("Both broad faces are required.")
-    role_a = str(role_a or "").strip().upper()
-    role_b = str(role_b or "").strip().upper()
-    if not role_a or not role_b:
-        raise ValueError("Both face roles are required.")
+    source_name = str(source or "").strip().lower()
+    # Manual override always locks definite MILLING/NON_MILLING (never leaves EITHER).
+    definite = bool(lock) or source_name == "manual"
+    role_a, role_b = normalize_complementary_surface_roles(
+        role_a, role_b, face_a, face_b, require_definite=definite
+    )
 
     existing, read_error = _read_body_metadata_raw(body)
     if read_error:
@@ -220,7 +277,7 @@ def apply_surface_roles(body, face_a, role_a, face_b, role_b,
         raise ValueError(reason or "face_up_write_rejected")
     registry = _ensure_dict(metadata, "faceRegistry")
 
-    locked = bool(lock or str(source or "").strip().lower() == "manual")
+    locked = bool(lock or source_name == "manual")
     old_a, _old_a_error = read_face_metadata(face_a) if read_face_metadata else (None, None)
     old_b, _old_b_error = read_face_metadata(face_b) if read_face_metadata else (None, None)
     try:
@@ -269,6 +326,10 @@ def apply_surface_milling_roles(body, milling_face, non_milling_face,
         except Exception:
             MILLING_SURFACE = "MILLING"
             NON_MILLING_SURFACE = "NON_MILLING"
+    if milling_face is not None and non_milling_face is not None and milling_face is non_milling_face:
+        raise ValueError(
+            "Colour face and milling face must be opposite broad faces, not the same face."
+        )
     return apply_surface_roles(
         body,
         milling_face,

@@ -4,11 +4,14 @@ MVP unified Fusion 360 add-in for cabinet generators.
 
 ## MVP Scope
 
-- Working module: Fridge Cabinet, powered by the existing Fridge Cabinet Generator logic.
-- Working module: General Tall Cabinet, powered by `modules/generalTallCabinet/`.
-- Skeleton module: Overhead Cabinet (`modules/overheadCabinet/`, bridge wired, geometry port pending).
+- Working module: General Tall Cabinet (`modules/generalTallCabinet/`), including fridge cavity zone.
+- Working module: Overhead Cabinet.
+- Working module: Kitchen Cabinet.
+- Working module: Lounge Generator.
 - Reserved module: Automation Tools.
 - UI: Figma-inspired top action bar, module sidebar, parameter panel, central workspace, validation panel, and status footer.
+
+Standalone **Fridge Cabinet** was removed; fridge cabinets use General Tall zone type `fridge` (see `docs/connect-gt-fridge-user-parity-checklist.md`).
 
 ## Fusion Entry
 
@@ -18,43 +21,18 @@ MVP unified Fusion 360 add-in for cabinet generators.
 
 Install or link this folder as a Fusion 360 add-in folder, then run `CabinetNC` from the Scripts and Add-ins dialog.
 
-## Fridge Flow
+## Fridge cabinets (via General Tall)
 
 ```text
-palette.html
-  -> FridgeCabinetLogic.buildPureParams()
-  -> FridgeCabinetLogic.buildBoardPlan()
-  -> FridgeCabinetLogic.verifyVSeriesVectors()
-  -> Python action fridge.generate
-  -> modules/fridge/controller.py
-  -> modules/fridge/flat_board_geometry.py
+palette.html → Load fridge layout / zone type fridge
+  -> modules/generalTallCabinet/generator.ts
+  -> generalTall.generate
+  -> generalTall.createFusionRoughBodies
 ```
-
-The MVP intentionally keeps the proven JavaScript `PureParams` and board-plan rules as the source of truth.
 
 ## Manual Fusion Validation
 
 1. Load the `CabinetNC` add-in.
-2. Confirm the palette opens with the Figma-style layout.
-3. Click `Calculate` and confirm validation/status panels update.
-4. Click `Validate` and confirm Python returns a `fridgeCabinetResult`.
-5. Click `Generate Bodies` in an active design.
-6. Confirm generated bodies use `UnifiedCabinetPlugin` attributes and `FRIDGE_` feature prefixes.
-7. Re-run generation after changing stack heights and confirm errors are surfaced in the right panel.
-
-## Overhead Flow (skeleton_v0)
-
-```text
-palette.html
-  -> overhead.generate
-  -> modules/overhead/controller.py
-  -> scripts/overhead_from_params.js
-  -> modules/overheadCabinet/generator.ts
-```
-
-See `docs/overhead-cabinet-spec-v0.1.md` and `docs/overhead-cabinet-new-chat-handoff.md`.
-
-## Later Modules
-
-- Phase 2: port legacy `fusion360-cabinet-generator/core/overhead_geometry.py` into `modules/overheadCabinet/`.
-- Phase 3: migrate `fusion360-basic-addin` services as Automation Tools.
+2. Confirm the palette opens on General Tall (no Fridge tab).
+3. Click **Load fridge layout**, then Generate / Create Fusion Rough Bodies.
+4. Confirm validation/status panels update.

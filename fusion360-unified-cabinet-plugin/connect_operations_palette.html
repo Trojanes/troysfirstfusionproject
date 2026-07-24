@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>Connect 已创建操作</title>
+  <style>
+    :root {
+      --bg: #f4f6f8;
+      --card: #ffffff;
+      --line: #d7dee7;
+      --text: #1f2a37;
+      --muted: #667788;
+      --ok: #1f7a4c;
+      --bad: #b42318;
+      --accent: #2f5bff;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: var(--text);
+      background: var(--bg);
+    }
+    .shell { padding: 12px; }
+    h1 {
+      margin: 0 0 6px;
+      font-size: 16px;
+      font-weight: 650;
+    }
+    .note {
+      color: var(--muted);
+      margin: 0 0 12px;
+      font-size: 12px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px;
+    }
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      max-height: 220px;
+      overflow: auto;
+      margin-bottom: 10px;
+    }
+    button {
+      font: inherit;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: #fff;
+      padding: 7px 10px;
+      cursor: pointer;
+    }
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .list button {
+      text-align: left;
+      width: 100%;
+    }
+    .list button.selected {
+      outline: 2px solid var(--accent);
+    }
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .grid label {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .grid input {
+      font: inherit;
+      padding: 6px 8px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    .edit-block {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+    .edit-block[hidden] { display: none; }
+    .msg {
+      margin-top: 10px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: #eef3f8;
+    }
+    .msg.ok { background: #e8f7ef; color: var(--ok); }
+    .msg.warn { background: #fff6dc; color: #835700; }
+    .msg.error { background: #ffe9ea; color: var(--bad); }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <h1>已创建操作</h1>
+    <p class="note">选中一条 → 改参数 → 更新（删旧特征后按新参重切，同一 operationId）。</p>
+    <div class="card">
+      <div id="opsList" class="list"></div>
+      <div id="opsEditBlock" class="edit-block" hidden>
+        <div class="note" style="margin-bottom:6px;"><strong>修改此操作参数</strong></div>
+        <div id="opsEditParams" class="grid"></div>
+      </div>
+      <div class="actions">
+        <button type="button" id="opsRefreshBtn">刷新列表</button>
+        <button type="button" class="primary" id="opsUpdateBtn" disabled>更新操作</button>
+      </div>
+      <div id="opsHint" class="note" style="margin-top:8px;">正在加载…</div>
+      <div id="opsMessage" class="msg">打开后面板会自动刷新操作列表。</div>
+    </div>
+  </div>
+  <script>
+    const HW_RULES = {
+      screw_hole: { type: "screw_hole", diameterMm: 4, edgeOffsetMm: 30, minSpacingMm: 80, depthMode: "host_thickness" },
+      tongue_groove: { type: "tongue_groove", grooveDepthMm: 8, grooveWidthMm: 4, tongueProtrusionMm: 7 },
+      hinge_hole: { type: "hinge_hole", diameterMm: 35, depthMm: 13, edgeOffsetMm: 100, holeCount: 2 },
+      lock_cutout: { type: "lock_cutout", widthMm: 22, heightMm: 40, depthMm: 12 },
+      drawer_runner_hole: { type: "drawer_runner_hole", diameterMm: 5, depthMm: 12, edgeOffsetMm: 37, holeCount: 3 },
+    };
+    const HW_FIELDS = {
+      screw_hole: [
+        { key: "diameterMm", label: "孔径 (mm)", min: 0.1, step: 0.1 },
+        { key: "edgeOffsetMm", label: "边距 (mm)", min: 0, step: 1 },
+        { key: "minSpacingMm", label: "最小间距 (mm)", min: 1, step: 1 },
+      ],
+      tongue_groove: [
+        { key: "grooveDepthMm", label: "槽深 (mm)", min: 0.1, step: 0.1 },
+        { key: "grooveWidthMm", label: "槽宽 (mm)", min: 0.1, step: 0.1 },
+        { key: "tongueProtrusionMm", label: "榫出 (mm)", min: 0.1, step: 0.1 },
+      ],
+      hinge_hole: [
+        { key: "diameterMm", label: "杯径 (mm)", min: 0.1, step: 0.1 },
+        { key: "depthMm", label: "深度 (mm)", min: 0.1, step: 0.1 },
+        { key: "edgeOffsetMm", label: "边距 (mm)", min: 0, step: 1 },
+        { key: "holeCount", label: "数量", min: 1, step: 1 },
+      ],
+      drawer_runner_hole: [
+        { key: "diameterMm", label: "孔径 (mm)", min: 0.1, step: 0.1 },
+        { key: "depthMm", label: "深度 (mm)", min: 0.1, step: 0.1 },
+        { key: "edgeOffsetMm", label: "边距 (mm)", min: 0, step: 1 },
+        { key: "holeCount", label: "数量", min: 1, step: 1 },
+      ],
+      lock_cutout: [
+        { key: "widthMm", label: "宽 (mm)", min: 0.1, step: 0.1 },
+        { key: "heightMm", label: "高 (mm)", min: 0.1, step: 0.1 },
+        { key: "depthMm", label: "深 (mm)", min: 0.1, step: 0.1 },
+      ],
+    };
+
+    let selectedOp = null;
+    let lastOps = [];
+
+    function el(id) { return document.getElementById(id); }
+
+    function setMsg(text, tone) {
+      const node = el("opsMessage");
+      if (!node) return;
+      node.textContent = text || "";
+      node.className = "msg" + (tone ? " " + tone : "");
+    }
+
+    function fusionSend(action, payload) {
+      const data = JSON.stringify(payload || {});
+      if (window.adsk && window.adsk.fusionSendData) {
+        window.adsk.fusionSendData(action, data);
+      } else {
+        console.log("fusionSendData", action, payload);
+      }
+    }
+
+    function renderEdit(rule) {
+      const block = el("opsEditBlock");
+      const host = el("opsEditParams");
+      if (!block || !host) return;
+      if (!rule || typeof rule !== "object") {
+        block.hidden = true;
+        host.innerHTML = "";
+        return;
+      }
+      const hwType = String(rule.type || selectedOp?.hardwareType || "screw_hole");
+      const defaults = Object.assign({}, HW_RULES[hwType] || HW_RULES.screw_hole, rule, { type: hwType });
+      const fields = HW_FIELDS[hwType] || [];
+      if (!fields.length) {
+        block.hidden = true;
+        host.innerHTML = "";
+        return;
+      }
+      block.hidden = false;
+      host.innerHTML = fields.map((field) => (
+        `<label>${field.label}` +
+        `<input id="opsEdit_${field.key}" data-op-edit="${field.key}" type="number" ` +
+        `value="${defaults[field.key]}" min="${field.min}" step="${field.step}">` +
+        `</label>`
+      )).join("");
+    }
+
+    function readRule() {
+      const hwType = String(
+        selectedOp?.hardwareType || selectedOp?.rule?.type || "screw_hole"
+      );
+      const rule = Object.assign({}, HW_RULES[hwType] || HW_RULES.screw_hole, { type: hwType });
+      if (selectedOp?.rule && typeof selectedOp.rule === "object") {
+        Object.assign(rule, selectedOp.rule, { type: hwType });
+      }
+      (HW_FIELDS[hwType] || []).forEach((field) => {
+        const input = el(`opsEdit_${field.key}`);
+        if (!input) return;
+        const raw = Number(input.value);
+        if (!Number.isFinite(raw)) return;
+        rule[field.key] = field.key === "holeCount"
+          ? Math.max(1, Math.round(raw))
+          : Math.max(field.min, raw);
+      });
+      return rule;
+    }
+
+    function renderList(operations) {
+      const host = el("opsList");
+      const hint = el("opsHint");
+      const updateBtn = el("opsUpdateBtn");
+      lastOps = Array.isArray(operations) ? operations : [];
+      if (!host) return;
+      if (!lastOps.length) {
+        host.innerHTML = "";
+        selectedOp = null;
+        renderEdit(null);
+        if (updateBtn) updateBtn.disabled = true;
+        if (hint) hint.textContent = "当前设计无已创建五金操作。";
+        return;
+      }
+      host.innerHTML = lastOps.map((op, index) => {
+        const id = String(op.operationId || "");
+        const selected = selectedOp && selectedOp.operationId === id;
+        const label = op.label || `${op.hardwareType || "?"} · ${op.hostPanelId || "?"} → ${op.targetPanelId || "?"}`;
+        return (
+          `<button type="button" data-idx="${index}" class="${selected ? "selected" : ""}">` +
+          `${label} · ${op.status || "applied"}` +
+          `</button>`
+        );
+      }).join("");
+      host.querySelectorAll("button[data-idx]").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const op = lastOps[Number(btn.getAttribute("data-idx"))];
+          if (!op) return;
+          selectedOp = op;
+          renderEdit(op.rule || { type: op.hardwareType || "screw_hole" });
+          if (updateBtn) updateBtn.disabled = false;
+          if (hint) hint.textContent = `已选：${op.operationId}`;
+          renderList(lastOps);
+        });
+      });
+      if (selectedOp) {
+        const still = lastOps.find((op) => op.operationId === selectedOp.operationId);
+        selectedOp = still || null;
+        if (selectedOp) {
+          renderEdit(selectedOp.rule || { type: selectedOp.hardwareType || "screw_hole" });
+          if (updateBtn) updateBtn.disabled = false;
+        } else {
+          renderEdit(null);
+          if (updateBtn) updateBtn.disabled = true;
+        }
+      } else if (hint) {
+        hint.textContent = `共 ${lastOps.length} 条。点击一行后改参数。`;
+      }
+    }
+
+    function refresh() {
+      const hint = el("opsHint");
+      if (hint) hint.textContent = "正在加载…";
+      fusionSend("hardware.listHardwareOperations", {});
+    }
+
+    function updateSelected() {
+      if (!selectedOp) {
+        setMsg("请先选中一条操作。", "warn");
+        return;
+      }
+      setMsg("正在更新操作（删旧特征 → 重切）…", "");
+      fusionSend("hardware.updateHardwareOperation", {
+        operationId: selectedOp.operationId,
+        hostPanelId: selectedOp.hostPanelId,
+        targetPanelId: selectedOp.targetPanelId,
+        cutFeatureName: selectedOp.cutFeatureName,
+        tongueFeatureName: selectedOp.tongueFeatureName,
+        tongueFeatureNames: selectedOp.tongueFeatureNames || undefined,
+        relationship: selectedOp.relationship || undefined,
+        rule: readRule(),
+        autoHardware: { enabled: false },
+      });
+    }
+
+    window.fusionJavaScriptHandler = {
+      handle: function (action, data) {
+        let parsed = {};
+        try { parsed = data ? JSON.parse(data) : {}; } catch (e) { parsed = {}; }
+        if (action === "hardwareOperationsResult") {
+          if (!parsed.ok) {
+            renderList([]);
+            setMsg((parsed.errors || ["加载失败"]).join(" "), "error");
+            return;
+          }
+          renderList(parsed.operations || []);
+          setMsg(`已加载 ${Array.isArray(parsed.operations) ? parsed.operations.length : 0} 条操作。`, "ok");
+        } else if (action === "hardwareOperationUpdateResult") {
+          if (parsed.ok) {
+            setMsg(
+              `已更新：${parsed.operationId || ""}` +
+                (parsed.previousCutDeleted ? "（旧特征已删）" : "（未找到旧特征，已重切）"),
+              "ok",
+            );
+            refresh();
+          } else {
+            setMsg((parsed.errors || ["更新失败"]).join(" "), "error");
+          }
+        } else if (action === "connectOperationsPaletteResult") {
+          if (parsed.ok) refresh();
+        } else if (action === "unifiedResult" && parsed && parsed.errors) {
+          setMsg(parsed.errors.join(" "), "error");
+        }
+      },
+    };
+
+    el("opsRefreshBtn")?.addEventListener("click", refresh);
+    el("opsUpdateBtn")?.addEventListener("click", updateSelected);
+    refresh();
+  </script>
+</body>
+</html>
