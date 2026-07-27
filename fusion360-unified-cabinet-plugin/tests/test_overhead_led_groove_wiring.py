@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import unittest
+from pathlib import Path
 
 
 def led_cut_plane_and_direction(face, target_bbox, effective_depth, mm_to_cm=lambda mm: mm / 10.0):
@@ -67,6 +68,19 @@ class OverheadLedGrooveMathTests(unittest.TestCase):
         self.assertEqual(opening, "downward")
         # Total cut length reaches into the board by ~6.5 mm past the true face.
         self.assertTrue(math.isclose(cut_signed * 10.0 - 0.05, 6.5, abs_tol=1e-9))
+
+    def test_rangehood_fusion_postprocess_wiring_present(self):
+        adapter = (
+            Path(__file__).resolve().parents[1]
+            / "modules"
+            / "general_tall"
+            / "fusion_adapter.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"rangehood_bp_cutout"', adapter)
+        self.assertIn('"rangehood_top_divider_groove"', adapter)
+        self.assertIn('"rangehood_divider_side_groove"', adapter)
+        self.assertIn("def _oh_cut_xy_rect_features", adapter)
+        self.assertIn("def _oh_cut_divider_side_grooves", adapter)
 
 
 if __name__ == "__main__":

@@ -105,4 +105,38 @@ assert.deepEqual(explicitGeometry.trimmed_vectors.T4.slice(0, 4), [
   [484.5, 20],
 ]);
 
-console.log("OK overhead bridge: geometry_v1 with v7 golden checks");
+const rangehood = runBridge({
+  cabinetWidth: 1000,
+  cabinetDepth: 400,
+  cabinetHeight: 400,
+  featureWidth: 15,
+  topClearanceHeight: 40,
+  rangehoodPreset: "NCE",
+  rangehoodClearHeight: 75,
+  rangehoodAlignment: "right",
+  rangehoodEdgeOffsetX: 40,
+  zones: [
+    { id: "rh-1", type: "rangehood_flap", width: 500 },
+    { id: "rh-2", type: "rangehood_flap", width: 500 },
+  ],
+});
+assert.deepEqual(rangehood.validation.errors, []);
+assert.ok(rangehood.boards.some((board) => board.id === "RGHD_TOP"));
+assert.ok(rangehood.boards.some((board) => board.id === "RGHD_FRONT"));
+assert.ok(rangehood.boards.some((board) => board.id === "RGHD_BACK"));
+assert.equal(rangehood.boards.find((board) => board.id === "D1").z0, 120);
+assert.equal(rangehood.features.find((feature) => feature.id === "D1").bp_groove, undefined);
+assert.deepEqual(
+  rangehood.features.find((feature) => feature.type === "rangehood_bp_cutout").x,
+  [390, 945],
+);
+assert.equal(
+  rangehood.features.filter((feature) => feature.type === "rangehood_divider_side_groove").length,
+  2,
+);
+assert.equal(
+  rangehood.features.filter((feature) => feature.type === "rangehood_top_divider_groove").length,
+  1,
+);
+
+console.log("OK overhead bridge: geometry_v1 with v7 + NCE rangehood checks");

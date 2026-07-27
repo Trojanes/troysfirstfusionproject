@@ -1101,6 +1101,7 @@
       outline-offset: -2px;
     }
     .oh-zone.up_flap { background: #e5f2ff; }
+    .oh-zone.rangehood_flap { background: #f3e8ff; }
     .oh-zone.fixed_panel { background: #eef8ea; }
     .oh-zone.open { background: #fff7dc; }
     .oh-zone .oh-zone-title {
@@ -1825,6 +1826,7 @@
               <label><span data-i18n="gt.frontT">门板厚度</span> <input id="gtFrontPanelThickness" type="number" value="16"></label>
               <label><span data-i18n="gt.sideClearance">侧缝</span> <input id="gtSideClearance" type="number" value="3"></label>
             </div>
+            <label><span data-i18n="common.carcassColor">柜体颜色（双面）</span> <input id="gtCarcassColor" type="text" value="White Stipple"></label>
           </div>
         </div>
 
@@ -1960,6 +1962,7 @@
               <label><span data-i18n="oh.dividerT">分隔板厚度 (mm)</span> <input id="ohSideThickness" type="number" value="15" step="0.1"></label>
               <label><span data-i18n="oh.frontT">门板厚度 (mm)</span> <input id="ohFrontPanelThickness" type="number" value="16" step="0.1"></label>
               <label><span data-i18n="oh.clearance">间隙 (mm)</span> <input id="ohClearance" type="number" value="2.5" step="0.1"></label>
+              <label style="grid-column:1/-1;"><span data-i18n="common.carcassColor">柜体颜色（双面）</span> <input id="ohCarcassColor" type="text" value="White Stipple"></label>
             </div>
           </div>
         </div>
@@ -2000,6 +2003,7 @@
                   <option value="razor_long_rounded_1" selected data-i18n="kitchen.lockStyle.razor">Razor 长圆 1</option>
                 </select>
               </label>
+              <label style="grid-column:1/-1;"><span data-i18n="common.carcassColor">柜体颜色（双面）</span> <input id="kitchenCarcassColor" type="text" value="White Stipple"></label>
             </div>
           </div>
         </div>
@@ -2020,6 +2024,7 @@
                 <option value="U_SHAPE" disabled data-i18n="lounge.style.u">U 型 / 围合（稍后）</option>
               </select>
             </label>
+            <label><span data-i18n="common.carcassColor">柜体颜色（双面）</span> <input id="loungeCarcassColor" type="text" value="White Stipple"></label>
             <div class="grid2">
               <label data-i18n="lounge.height">高度 <input id="loungeHeight" type="number" value="420"></label>
               <label data-i18n="lounge.ppt">隔板厚 (PPT) <input id="loungePpt" type="number" value="18"></label>
@@ -2642,6 +2647,7 @@
               <label><span data-i18n="oh.zoneType">分区类型</span>
                 <select id="ohZoneType">
                   <option value="up_flap" data-i18n="oh.zone.upFlap">上翻门</option>
+                  <option value="rangehood_flap" data-i18n="oh.zone.rangehoodFlap">Rangehood 翻门</option>
                   <option value="fixed_panel" data-i18n="oh.zone.fixed">固定板</option>
                   <option value="open" data-i18n="oh.zone.open">开放格</option>
                 </select>
@@ -2657,6 +2663,26 @@
                 <label><span data-i18n="oh.holeDepth">孔深 (mm)</span> <input id="ohHingeHoleDepth" type="number" value="12" step="0.1"></label>
                 <label><span data-i18n="oh.fromTop">距顶 (mm)</span> <input id="ohHingeFromTop" type="number" value="22.5" step="0.1"></label>
                 <label><span data-i18n="oh.fromSide">距侧 (mm)</span> <input id="ohHingeFromSide" type="number" value="100" step="0.1"></label>
+              </div>
+            </details>
+            <details id="ohRangehoodSettings" style="margin-top:10px;">
+              <summary data-i18n="oh.rangehood.settings">Rangehood 设置</summary>
+              <div class="grid2" style="margin-top:8px;">
+                <label><span data-i18n="oh.rangehood.preset">Preset</span>
+                  <select id="ohRangehoodPreset"><option value="NCE">NCE</option></select>
+                </label>
+                <label><span data-i18n="oh.rangehood.clearHeight">BP 至 RGHD_TOP 净高 (mm)</span>
+                  <input id="ohRangehoodClearHeight" type="number" value="75" min="1" step="1">
+                </label>
+                <label><span data-i18n="oh.rangehood.alignment">Cutout X 对齐</span>
+                  <select id="ohRangehoodAlignment">
+                    <option value="left" data-i18n="oh.rangehood.left">靠左</option>
+                    <option value="right" data-i18n="oh.rangehood.right">靠右</option>
+                  </select>
+                </label>
+                <label><span data-i18n="oh.rangehood.edgeOffset">靠边距离 X (mm)</span>
+                  <input id="ohRangehoodEdgeOffsetX" type="number" value="40" min="40" step="1">
+                </label>
               </div>
             </details>
           </div>
@@ -3537,6 +3563,7 @@
               <label><span data-i18n="oh.dividerT">分隔板厚度 (mm)</span> <input id="aohSideThickness" type="number" value="15" step="0.1"></label>
               <label><span data-i18n="oh.frontT">门板厚度 (mm)</span> <input id="aohFrontPanelThickness" type="number" value="16" step="0.1"></label>
               <label><span data-i18n="oh.clearance">间隙 (mm)</span> <input id="aohClearance" type="number" value="2.5" step="0.1"></label>
+              <label style="grid-column:1/-1;"><span data-i18n="common.carcassColor">柜体颜色（双面）</span> <input id="aohCarcassColor" type="text" value="White Stipple"></label>
             </div>
           </div>
         </div>
@@ -3564,6 +3591,7 @@
                 <label>分区类型
                   <select id="aohZoneType">
                     <option value="up_flap">上翻门</option>
+                    <option value="rangehood_flap">Rangehood 翻门</option>
                     <option value="fixed_panel">固定板</option>
                     <option value="open">开放格</option>
                   </select>
@@ -3579,6 +3607,26 @@
                   <label>Hole Depth (mm) <input id="aohHingeHoleDepth" type="number" value="12" step="0.1"></label>
                   <label>Z Distance from Top (mm) <input id="aohHingeFromTop" type="number" value="22.5" step="0.1"></label>
                   <label>From Side (mm) <input id="aohHingeFromSide" type="number" value="100" step="0.1"></label>
+                </div>
+              </details>
+              <details id="aohRangehoodSettings" style="margin-top:10px;">
+                <summary>Rangehood Settings</summary>
+                <div class="grid2" style="margin-top:8px;">
+                  <label>Preset
+                    <select id="aohRangehoodPreset"><option value="NCE">NCE</option></select>
+                  </label>
+                  <label>BP to RGHD_TOP Clear Height (mm)
+                    <input id="aohRangehoodClearHeight" type="number" value="75" min="1" step="1">
+                  </label>
+                  <label>Cutout X Alignment
+                    <select id="aohRangehoodAlignment">
+                      <option value="left">Left</option>
+                      <option value="right">Right</option>
+                    </select>
+                  </label>
+                  <label>Edge Offset X (mm)
+                    <input id="aohRangehoodEdgeOffsetX" type="number" value="40" min="40" step="1">
+                  </label>
                 </div>
               </details>
             </div>
@@ -3794,6 +3842,7 @@
       dragStartX: 0,
       dragLeftStart: 0,
       dragRightStart: 0,
+      rangehood: { preset: "NCE", clearHeight: 75, alignment: "left", edgeOffsetX: 40 },
       zones: [
         { id: "oh-zone-1", type: "up_flap", width: 650 },
         { id: "oh-zone-2", type: "fixed_panel", width: 750 },
@@ -3807,6 +3856,7 @@
       dragStartX: 0,
       dragLeftStart: 0,
       dragRightStart: 0,
+      rangehood: { preset: "NCE", clearHeight: 75, alignment: "left", edgeOffsetX: 40 },
       zones: [
         { id: "aoh-zone-1", type: "up_flap", width: 650 },
         { id: "aoh-zone-2", type: "fixed_panel", width: 750 },
@@ -3937,6 +3987,8 @@
         bottomClearanceHeight: 55,
         bottomClearanceStyle: "style_1",
         ledGroove: true,
+        carcassColor: "white_stipple",
+        carcassColorName: "White Stipple",
       },
       columns: [
         { id: "k-col-1", width: 444, columnType: "left_door", zones: [
@@ -4167,6 +4219,10 @@
       if (lockEnabled) lockEnabled.value = settings.lockEnabled === false ? "false" : "true";
       const lockPreset = document.getElementById("kitchenLockPreset");
       if (lockPreset) lockPreset.value = settings.lockPresetId || "razor_long_rounded_1";
+      const carcassColor = document.getElementById("kitchenCarcassColor");
+      if (carcassColor) {
+        carcassColor.value = settings.carcassColorName || settings.carcassColor || "White Stipple";
+      }
     }
 
     function kitchenSyncBottomStyle1LedVisibility() {
@@ -4177,6 +4233,12 @@
       if (wrap) wrap.hidden = style !== "style_1";
       const propWrap = document.getElementById("kitchenPropBottomLedGrooveWrap");
       if (propWrap) propWrap.hidden = style !== "style_1";
+    }
+
+    function normalizeCarcassColorInput(rawValue) {
+      const raw = String(rawValue || "White Stipple").trim() || "White Stipple";
+      const tag = raw.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "") || "white_stipple";
+      return { carcassColor: tag, carcassColorName: tag === "white_stipple" ? "White Stipple" : raw };
     }
 
     function kitchenReadGlobalInputs() {
@@ -4191,6 +4253,7 @@
       kitchenState.globalSettings.ledGroove = document.getElementById("kitchenBottomStyle1LedGroove")?.checked !== false;
       kitchenState.globalSettings.lockEnabled = document.getElementById("kitchenLockEnabled").value === "true";
       kitchenState.globalSettings.lockPresetId = document.getElementById("kitchenLockPreset").value;
+      Object.assign(kitchenState.globalSettings, normalizeCarcassColorInput(document.getElementById("kitchenCarcassColor")?.value));
     }
 
     function kitchenStructuralDepthUi() {
@@ -4202,6 +4265,7 @@
         style: document.getElementById("loungeStyle").value,
         height: generalTallNumberValue("loungeHeight"),
         partitionPanelThickness: generalTallNumberValue("loungePpt"),
+        ...normalizeCarcassColorInput(document.getElementById("loungeCarcassColor")?.value),
         wheelAvoidanceEnabled: document.getElementById("loungeWheelAvoidance").checked,
         mainWidth: generalTallNumberValue("loungeMainWidth"),
         mainDepth: generalTallNumberValue("loungeMainDepth"),
@@ -5434,6 +5498,7 @@
         frontFaceAllowance: frontPanelThickness,
         doorPanelThickness: frontPanelThickness,
         frontClearance: generalTallNumberValue("gtFrontClearance"),
+        ...normalizeCarcassColorInput(document.getElementById("gtCarcassColor")?.value),
         frontHardware: {
           frontPanelsEnabled: document.getElementById("gtFrontPanelsEnabled").checked,
           frontClearance: generalTallNumberValue("gtFrontClearance"),
@@ -5573,6 +5638,11 @@
         featureWidth: fgWidth,
         internalDividerCenterlines: overheadInternalDividerCenterlines(),
         selectedZoneIndex: ohState().selectedZoneIndex,
+        rangehoodPreset: ohState().rangehood?.preset || "NCE",
+        rangehoodClearHeight: Math.max(1, Number(ohState().rangehood?.clearHeight) || 75),
+        rangehoodAlignment: ohState().rangehood?.alignment === "right" ? "right" : "left",
+        rangehoodEdgeOffsetX: Math.max(40, Number(ohState().rangehood?.edgeOffsetX) || 40),
+        ...normalizeCarcassColorInput(ohEl("CarcassColor")?.value),
         zones: ohState().zones.map((zone) => ({
           id: zone.id,
           type: zone.type,
@@ -7354,6 +7424,7 @@
     }
 
     function overheadZoneLabel(type) {
+      if (type === "rangehood_flap") return t("oh.zone.rangehoodFlap");
       if (type === "fixed_panel") return t("oh.zone.fixed");
       if (type === "open") return t("oh.zone.open");
       return t("oh.zone.upFlap");
@@ -7366,6 +7437,7 @@
     }
 
     function overheadZoneColors(type) {
+      if (type === "rangehood_flap") return { bg: "#f3e8ff", border: "#a974d6", text: "#5d2584" };
       if (type === "fixed_panel") return { bg: "#eef8ea", border: "#9fc38e", text: "#245b22" };
       if (type === "open") return { bg: "#fff7dc", border: "#e0c15b", text: "#6b5400" };
       return { bg: "#e5f2ff", border: "#85b5ff", text: "#0b57d0" };
@@ -7460,7 +7532,7 @@
         return `
           <rect x="${px.toFixed(2)}" y="${py.toFixed(2)}" width="${pw.toFixed(2)}" height="${ph.toFixed(2)}" fill="${overheadZoneColors(zone.type).bg}" stroke="${selected ? "#0f6bff" : "#9db6d5"}" stroke-width="${selected ? 2 : 1}"></rect>
           <rect x="${(px + panelInset).toFixed(2)}" y="${(py + panelInset).toFixed(2)}" width="${Math.max(pw - panelInset * 2, 1).toFixed(2)}" height="${Math.max(ph - panelInset * 2, 1).toFixed(2)}" fill="none" stroke="#66758a" stroke-width="1"></rect>
-          ${zone.type === "up_flap" ? `
+          ${zone.type === "up_flap" || zone.type === "rangehood_flap" ? `
             <circle cx="${(px + 28).toFixed(2)}" cy="${(py + 26).toFixed(2)}" r="7" fill="none" stroke="#66758a" stroke-dasharray="4 2"></circle>
             <circle cx="${(px + pw - 28).toFixed(2)}" cy="${(py + 26).toFixed(2)}" r="7" fill="none" stroke="#66758a" stroke-dasharray="4 2"></circle>
             <rect x="${(px + pw / 2 - 14).toFixed(2)}" y="${(py + ph - 18).toFixed(2)}" width="28" height="5" rx="2" fill="none" stroke="#66758a"></rect>` : ""}
@@ -7577,11 +7649,23 @@
       const zoneX0 = ohEl("ZoneX0");
       const zoneX1 = ohEl("ZoneX1");
       const hingeSettings = ohEl("HingeSettings");
+      const rangehoodSettings = ohEl("RangehoodSettings");
       if (zoneType) zoneType.value = zone.type;
       if (zoneWidth) zoneWidth.value = String(Math.round(width));
       if (zoneX0) zoneX0.value = String(Math.round(x0));
       if (zoneX1) zoneX1.value = String(Math.round(x1));
-      if (hingeSettings) hingeSettings.open = zone.type === "up_flap";
+      if (hingeSettings) hingeSettings.open = zone.type === "up_flap" || zone.type === "rangehood_flap";
+      if (rangehoodSettings) {
+        rangehoodSettings.hidden = zone.type !== "rangehood_flap";
+        rangehoodSettings.open = zone.type === "rangehood_flap";
+      }
+      const rangehood = ohState().rangehood || (ohState().rangehood = {
+        preset: "NCE", clearHeight: 75, alignment: "left", edgeOffsetX: 40,
+      });
+      if (ohEl("RangehoodPreset")) ohEl("RangehoodPreset").value = rangehood.preset || "NCE";
+      if (ohEl("RangehoodClearHeight")) ohEl("RangehoodClearHeight").value = String(rangehood.clearHeight ?? 75);
+      if (ohEl("RangehoodAlignment")) ohEl("RangehoodAlignment").value = rangehood.alignment || "left";
+      if (ohEl("RangehoodEdgeOffsetX")) ohEl("RangehoodEdgeOffsetX").value = String(rangehood.edgeOffsetX ?? 40);
     }
 
     function bindOverheadZoneProperties(bench) {
@@ -7612,6 +7696,30 @@
           }
           renderOverheadUi(ohState().result);
         });
+      });
+      const bindRangehood = (suffix, apply) => {
+        const control = document.getElementById(bench.prefix + suffix);
+        if (!control || control.dataset.bound === bench.benchId) return;
+        control.dataset.bound = bench.benchId;
+        control.addEventListener("change", (event) => {
+          runOverheadBench(bench, () => {
+            const rangehood = ohState().rangehood || (ohState().rangehood = {
+              preset: "NCE", clearHeight: 75, alignment: "left", edgeOffsetX: 40,
+            });
+            apply(rangehood, event.target.value);
+            renderOverheadUi(ohState().result);
+          });
+        });
+      };
+      bindRangehood("RangehoodPreset", (rangehood, value) => { rangehood.preset = value || "NCE"; });
+      bindRangehood("RangehoodClearHeight", (rangehood, value) => {
+        rangehood.clearHeight = Math.max(1, Number(value) || 75);
+      });
+      bindRangehood("RangehoodAlignment", (rangehood, value) => {
+        rangehood.alignment = value === "right" ? "right" : "left";
+      });
+      bindRangehood("RangehoodEdgeOffsetX", (rangehood, value) => {
+        rangehood.edgeOffsetX = Math.max(40, Number(value) || 40);
       });
     }
 
@@ -9350,6 +9458,7 @@
             savedAt: new Date().toISOString(),
             controls: presetReadControlsFromPanels(bench.controlsRootId === "overheadWorkspacePanel" ? ["overheadParamsPanel", "overheadWorkspacePanel"] : [bench.controlsRootId]),
             zones: ohState().zones.map((zone) => ({ ...zone })),
+            rangehood: { ...(ohState().rangehood || {}) },
             selectedZoneIndex: ohState().selectedZoneIndex,
           }));
         },
@@ -9357,6 +9466,14 @@
           runOverheadBench(bench, () => {
             presetApplyControls(preset.controls);
             if (Array.isArray(preset.zones)) ohState().zones = preset.zones.map((zone) => ({ ...zone }));
+            if (preset.rangehood && typeof preset.rangehood === "object") {
+              ohState().rangehood = {
+                preset: preset.rangehood.preset || "NCE",
+                clearHeight: Math.max(1, Number(preset.rangehood.clearHeight) || 75),
+                alignment: preset.rangehood.alignment === "right" ? "right" : "left",
+                edgeOffsetX: Math.max(40, Number(preset.rangehood.edgeOffsetX) || 40),
+              };
+            }
             ohState().selectedZoneIndex = Math.max(0, Math.min(ohState().zones.length - 1, Number(preset.selectedZoneIndex) || 0));
             ohState().result = null;
             renderOverheadUi(null);

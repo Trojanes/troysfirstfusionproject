@@ -57,6 +57,9 @@ export interface LoungeSettings {
   style: LoungeStyle;
   height: number;
   partitionPanelThickness: number;
+  /** Partition / structural board colour. Default White Stipple (double-sided). */
+  carcassColor?: string;
+  carcassColorName?: string;
   wheelAvoidanceEnabled?: boolean;
   mainWidth: number;
   mainDepth: number;

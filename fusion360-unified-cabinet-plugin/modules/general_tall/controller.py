@@ -272,6 +272,14 @@ class GeneralTallController:
                     avoidance_z_shift_mm = 0.0
                 if avoidance_z_shift_mm < 0:
                     avoidance_z_shift_mm = 0.0
+            # GT geometry result omits params; stamp carcass color for metadata defaults.
+            result = dict(result)
+            merged_params = dict(result.get("params") or {})
+            if params.get("carcassColor") is not None:
+                merged_params["carcassColor"] = params.get("carcassColor")
+            if params.get("carcassColorName") is not None:
+                merged_params["carcassColorName"] = params.get("carcassColorName")
+            result["params"] = merged_params
         adapter_module = importlib.reload(general_tall_fusion_adapter)
         rough = adapter_module.create_rough_bodies_from_general_tall_result(
             self.fusion,

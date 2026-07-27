@@ -570,8 +570,8 @@ function frontPanels(inputs: OverheadCabinetInputs, zones: FunctionZone[], cente
   const functionZoneHeight = (inputs.cabinetHeight ?? topClearanceHeight) - topClearanceHeight;
   const halfClearance = clearance / 2;
   return zones
-    .filter((zone) => zone.type !== "open")
     .map((zone, index) => {
+      if (zone.type === "open") return null;
       const openingX0 = centers[index]! + fgWidth / 2;
       const openingX1 = centers[index + 1]! - fgWidth / 2;
       const leftClearance = zone.x0 <= 0 ? clearance : halfClearance;
@@ -596,8 +596,9 @@ function frontPanels(inputs: OverheadCabinetInputs, zones: FunctionZone[], cente
           x: [openingX0, openingX1],
           width: openingX1 - openingX0,
         },
-      };
-    });
+      } as FrontPanelFeature;
+    })
+    .filter((panel): panel is FrontPanelFeature => panel !== null);
 }
 
 function hingeHoles(panels: FrontPanelFeature[], inputs: OverheadCabinetInputs): HingeHoleFeature[] {
@@ -606,7 +607,7 @@ function hingeHoles(panels: FrontPanelFeature[], inputs: OverheadCabinetInputs):
   const holeFromTop = inputs.hingeHoleFromTop ?? 22.5;
   const holeFromSide = inputs.hingeHoleFromSide ?? 100;
   return panels
-    .filter((panel) => panel.type === "up_flap")
+    .filter((panel) => panel.type === "up_flap" || panel.type === "rangehood_flap")
     .flatMap((panel) => {
       const z = panel.height - holeFromTop;
       return [holeFromSide, panel.width - holeFromSide].map((x, index) => ({

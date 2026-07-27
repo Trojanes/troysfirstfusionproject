@@ -119,6 +119,20 @@ function testFrontPanelXUsesOuterAndSharedClearance() {
   assert.deepEqual(threeZoneGeometry.front_panels[2]?.x, [1002, 1496]);
 }
 
+function testOpenZoneDoesNotShiftFollowingPanelDividerIndices() {
+  const geometry = calculateOverheadGeometry({
+    ...baseParams,
+    cabinetWidth: 1500,
+    zones: [
+      { id: "open", type: "open", width: 500 },
+      { id: "rangehood", type: "rangehood_flap", width: 1000 },
+    ],
+  });
+  assert.equal(geometry.front_panels.length, 1);
+  assert.equal(geometry.front_panels[0]?.zoneIndex, 1);
+  assert.deepEqual(geometry.front_panels[0]?.opening.x, [507.5, 1485]);
+}
+
 function testDividerZBaseSitsOnShiftedBottomPanel() {
   const result = generateOverheadCabinet({
     cabinetWidth: 994,
@@ -242,6 +256,122 @@ function testT3LedGrooveOption() {
   );
 }
 
+function testNceSingleRangehoodZoneGeometry() {
+  const result = generateOverheadCabinet({
+    cabinetWidth: 1000,
+    cabinetDepth: 400,
+    cabinetHeight: 400,
+    featureWidth: 15,
+    topClearanceHeight: 40,
+    rangehoodPreset: "NCE",
+    rangehoodClearHeight: 75,
+    rangehoodAlignment: "left",
+    rangehoodEdgeOffsetX: 40,
+    zones: [{ id: "rangehood", type: "rangehood_flap", width: 1000 }],
+  });
+  assert.deepEqual(result.validation.errors, []);
+  const byId = new Map(result.boards.map((board) => [board.id, board]));
+  const top = byId.get("RGHD_TOP");
+  const front = byId.get("RGHD_FRONT");
+  const back = byId.get("RGHD_BACK");
+  assert.ok(top && front && back);
+  assert.deepEqual([top.x0, top.x1, top.y0, top.y1, top.z0, top.z1], [8, 992, 0, 400, 105, 120]);
+  assert.deepEqual([front.x0, front.x1, front.y0, front.y1, front.z0, front.z1], [15, 985, 0, 15, 30, 105]);
+  assert.deepEqual([back.x0, back.x1, back.y0, back.y1, back.z0, back.z1], [15, 985, 385, 400, 30, 105]);
+  const cutout = result.features.find((feature) => feature?.type === "rangehood_bp_cutout");
+  assert.deepEqual(cutout?.x, [55, 610]);
+  assert.deepEqual(cutout?.y, [57.5, 342.5]);
+  const sideGrooves = result.features.filter((feature) => feature?.type === "rangehood_divider_side_groove");
+  assert.equal(sideGrooves.length, 2);
+  assert.deepEqual(sideGrooves[0]?.z, [105, 121]);
+  assert.equal(result.features.filter((feature) => feature?.purpose === "hinge").length, 2);
+}
+
+function testAdjacentRangehoodZonesMergeAndMoveInternalDivider() {
+  const result = generateOverheadCabinet({
+    cabinetWidth: 1000,
+    cabinetDepth: 400,
+    cabinetHeight: 400,
+    featureWidth: 15,
+    topClearanceHeight: 40,
+    rangehoodAlignment: "right",
+    rangehoodEdgeOffsetX: 40,
+    zones: [
+      { id: "rangehood-left", type: "rangehood_flap", width: 500 },
+      { id: "rangehood-right", type: "rangehood_flap", width: 500 },
+    ],
+  });
+  assert.deepEqual(result.validation.errors, []);
+  assert.equal(result.boards.filter((board) => board.id.startsWith("RGHD_")).length, 3);
+  const middleDivider = result.boards.find((board) => board.id === "D1");
+  assert.ok(middleDivider);
+  assert.equal(middleDivider.z0, 120);
+  assert.ok(middleDivider.notes?.some((note) => note.includes("BP groove suppressed")));
+  const d1Feature = result.features.find((feature) => feature?.id === "D1");
+  assert.equal(d1Feature?.bp_groove, undefined);
+  const topGroove = result.features.find((feature) => feature?.type === "rangehood_top_divider_groove");
+  assert.deepEqual(topGroove?.x, [492, 508]);
+  assert.deepEqual(topGroove?.y, [400 / 3, 800 / 3]);
+  const cutout = result.features.find((feature) => feature?.type === "rangehood_bp_cutout");
+  assert.deepEqual(cutout?.x, [390, 945]);
+  assert.equal(result.features.filter((feature) => feature?.purpose === "hinge").length, 4);
+}
+
+function testRangehoodValidation() {
+  const exactMinimum = generateOverheadCabinet({
+    cabinetWidth: 665, // Edge D inner faces are x=15 and x=650: exactly 635 clear.
+    cabinetDepth: 365,
+    cabinetHeight: 400,
+    featureWidth: 15,
+    rangehoodEdgeOffsetX: 40,
+    zones: [{ type: "rangehood_flap", width: 665 }],
+  });
+  assert.deepEqual(exactMinimum.validation.errors, []);
+
+  const exactMaximumHeight = generateOverheadCabinet({
+    cabinetWidth: 1000,
+    cabinetDepth: 400,
+    cabinetHeight: 400,
+    topClearanceHeight: 40,
+    featureWidth: 15,
+    rangehoodClearHeight: 315, // Ch - TCH - 3*CPT
+    zones: [{ type: "rangehood_flap", width: 1000 }],
+  });
+  assert.deepEqual(exactMaximumHeight.validation.errors, []);
+  const tooTall = generateOverheadCabinet({
+    cabinetWidth: 1000,
+    cabinetDepth: 400,
+    cabinetHeight: 400,
+    topClearanceHeight: 40,
+    featureWidth: 15,
+    rangehoodClearHeight: 316,
+    zones: [{ type: "rangehood_flap", width: 1000 }],
+  });
+  assert.ok(tooTall.validation.errors.some((error) => error.includes("top-clearance")));
+
+  const shallow = generateOverheadCabinet({
+    cabinetWidth: 700,
+    cabinetDepth: 360,
+    cabinetHeight: 400,
+    featureWidth: 15,
+    zones: [{ type: "rangehood_flap", width: 700 }],
+  });
+  assert.ok(shallow.validation.errors.some((error) => error.includes("BP depth >= 365")));
+
+  const nonContiguous = generateOverheadCabinet({
+    cabinetWidth: 1800,
+    cabinetDepth: 400,
+    cabinetHeight: 400,
+    featureWidth: 15,
+    zones: [
+      { type: "rangehood_flap", width: 700 },
+      { type: "up_flap", width: 400 },
+      { type: "rangehood_flap", width: 700 },
+    ],
+  });
+  assert.ok(nonContiguous.validation.errors.some((error) => error.includes("one contiguous rangehood group")));
+}
+
 const tests = [
   testV7DividerCenterlinesFromZoneBoundaries,
   testV7ManufacturingRules,
@@ -250,6 +380,7 @@ const tests = [
   testV7DividerSideProfileStyle2,
   testV7FrontPanelsAndHingeHoles,
   testFrontPanelXUsesOuterAndSharedClearance,
+  testOpenZoneDoesNotShiftFollowingPanelDividerIndices,
   testDividerZBaseSitsOnShiftedBottomPanel,
   testDividerBoardThicknessUsesCptNotGrooveSlot,
   testGenerateOverheadCabinetBoardsAndFeatures,
@@ -257,6 +388,9 @@ const tests = [
   testSvgPreviewUsesResolvedGeometry,
   testInvalidWidthReportsError,
   testT3LedGrooveOption,
+  testNceSingleRangehoodZoneGeometry,
+  testAdjacentRangehoodZonesMergeAndMoveInternalDivider,
+  testRangehoodValidation,
 ];
 
 for (const test of tests) {

@@ -8,12 +8,36 @@ import adsk.fusion
 
 from geometry_ops import ATTRIBUTE_GROUP, MODEL_Z_OFFSET_MM, avoid_existing_at_origin, capture_position_snapshot, mm_to_cm, move_body_by_mm, offset_matching_bodies_z_mm, sanitize_token
 
+try:
+    from generator_default_attributes import (
+        PANEL_ATTRIBUTE_GROUP,
+        PANEL_ID_ATTR,
+        PANEL_METADATA_ATTR,
+        build_panel_metadata,
+        extract_carcass_color_from_result,
+        general_tall_board_semantics,
+        overhead_board_semantics,
+        write_panel_metadata_to_body,
+    )
+except Exception:
+    import os
+    import sys
 
-PANEL_ATTRIBUTE_GROUP = "UnifiedCabinet.Panel"
-PANEL_METADATA_ATTR = "metadata"
-PANEL_ID_ATTR = "panelId"
+    _panel_attr_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "panel_attributes"))
+    if _panel_attr_dir not in sys.path:
+        sys.path.insert(0, _panel_attr_dir)
+    from generator_default_attributes import (
+        PANEL_ATTRIBUTE_GROUP,
+        PANEL_ID_ATTR,
+        PANEL_METADATA_ATTR,
+        build_panel_metadata,
+        extract_carcass_color_from_result,
+        general_tall_board_semantics,
+        overhead_board_semantics,
+        write_panel_metadata_to_body,
+    )
 
-ADAPTER_BUILD = "2026-07-21-oh-t3-led-front-land-18-1"
+ADAPTER_BUILD = "2026-07-28-oh-rangehood-nce-2"
 
 
 def _write_placement_debug(payload):
@@ -172,364 +196,58 @@ def _set_entity_attribute(entity, group, name, value):
         return False
 
 
-def _oh_divider_board_type(board_id, all_boards):
-    divider_ids = []
-    for board in all_boards or []:
-        candidate_id = str(board.get("id") or "")
-        if candidate_id.startswith("D") and candidate_id[1:].isdigit():
-            divider_ids.append((int(candidate_id[1:]), candidate_id))
-    if not divider_ids:
-        return "vertical_divider"
-    divider_ids.sort()
-    first_id = divider_ids[0][1]
-    last_id = divider_ids[-1][1]
-    if board_id == first_id:
-        return "left_side_panel"
-    if board_id == last_id:
-        return "right_side_panel"
-    return "internal_vertical_divider"
-
-
 def _oh_board_semantics(board, all_boards):
-    board_id = str(board.get("id") or "")
-    source_type = str(board.get("boardType") or "")
-    if board_id == "BP":
-        return {
-            "boardType": "bottom_panel",
-            "role": "carcass",
-            "category": "structural",
-            "materialClass": "carcass_board",
-            "tags": ["overhead", "bottom", "carcass"],
-        }
-    if board_id == "T1":
-        return {
-            "boardType": "top_front_door_fascia",
-            "role": "front_visible",
-            "category": "front",
-            "materialClass": "door_board",
-            "doorColorSlot": 1,
-            "tags": ["overhead", "front", "door-color", "top-fascia"],
-        }
-    if board_id == "T2":
-        return {
-            "boardType": "top_front_inner_rail",
-            "role": "carcass_rail",
-            "category": "structural",
-            "materialClass": "carcass_board",
-            "tags": ["overhead", "top", "rail", "carcass"],
-        }
-    if board_id == "T3":
-        return {
-            "boardType": "top_rear_panel",
-            "role": "carcass",
-            "category": "structural",
-            "materialClass": "carcass_board",
-            "tags": ["overhead", "top", "rear", "carcass"],
-        }
-    if board_id == "T4":
-        return {
-            "boardType": "top_front_panel",
-            "role": "carcass",
-            "category": "structural",
-            "materialClass": "carcass_board",
-            "tags": ["overhead", "top", "front", "carcass"],
-        }
-    if board_id.startswith("D"):
-        canonical = _oh_divider_board_type(board_id, all_boards)
-        role = "side_panel" if canonical in ("left_side_panel", "right_side_panel") else "divider"
-        return {
-            "boardType": canonical,
-            "role": role,
-            "category": "divider",
-            "materialClass": "carcass_board",
-            "tags": ["overhead", "divider", "carcass", canonical],
-        }
-    if board_id.startswith("FP"):
-        if source_type == "up_flap":
-            return {
-                "boardType": "up_flap_door_panel",
-                "role": "door",
-                "category": "front",
-                "materialClass": "door_board",
-                "doorColorSlot": 1,
-                "tags": ["overhead", "front", "door", "up-flap"],
-            }
-        if source_type == "fixed_panel":
-            return {
-                "boardType": "fixed_front_panel",
-                "role": "front_visible",
-                "category": "front",
-                "materialClass": "door_board",
-                "doorColorSlot": 1,
-                "tags": ["overhead", "front", "fixed-panel", "door-color"],
-            }
-        return {
-            "boardType": "front_panel",
-            "role": "front_visible",
-            "category": "front",
-            "materialClass": "door_board",
-            "doorColorSlot": 1,
-            "tags": ["overhead", "front", source_type or "front-panel"],
-        }
-    return {
-        "boardType": source_type or "unknown_board",
-        "role": "unknown",
-        "category": str(board.get("category") or "unknown"),
-        "materialClass": "unknown",
-        "tags": ["overhead", "unknown"],
-    }
+    return overhead_board_semantics(board, all_boards)
 
 
-def _oh_design_geometry(board, bbox):
-    return {
-        "x0": bbox["x0"],
-        "x1": bbox["x1"],
-        "y0": bbox["y0"],
-        "y1": bbox["y1"],
-        "z0": bbox["z0"],
-        "z1": bbox["z1"],
-        "profilePlane": board.get("profilePlane"),
-        "thicknessAxis": board.get("thicknessAxis"),
-        "materialThickness": board.get("materialThickness"),
-    }
-
-
-def _oh_panel_metadata(board, bbox, all_boards, run_label):
-    board_id = str(board.get("id") or "")
-    semantics = _oh_board_semantics(board, all_boards)
-    panel_id = "ohc.{}.{}".format(sanitize_token(run_label, fallback="run", limit=60), sanitize_token(board_id, fallback="board", limit=40))
-    default_attributes = {
-        "role": semantics["role"],
-        "category": semantics["category"],
-        "materialClass": semantics["materialClass"],
-        "tags": semantics["tags"],
-    }
-    if semantics.get("doorColorSlot") is not None:
-        default_attributes["doorColorSlot"] = semantics.get("doorColorSlot")
-    board_type_tag = (
-        "door" if semantics["materialClass"] == "door_board"
-        else "partition" if semantics["materialClass"] == "partition_board"
-        else "carcass"
+def _oh_panel_metadata(board, bbox, all_boards, run_label, features=None, carcass_color=None, carcass_color_name=None):
+    return build_panel_metadata(
+        "overhead",
+        board,
+        bbox=bbox,
+        all_boards=all_boards,
+        run_label=run_label,
+        features=features,
+        carcass_color=carcass_color,
+        carcass_color_name=carcass_color_name,
     )
-    return {
-        "schemaVersion": 1,
-        "identity": {
-            "panelId": panel_id,
-            "generator": "overhead",
-            "module": "overhead",
-            "cabinetType": "overhead",
-            "sourceBoardId": board_id,
-            "sourceBoardType": str(board.get("boardType") or ""),
-            "boardType": semantics["boardType"],
-            "runId": str(run_label or ""),
-        },
-        "defaultAttributes": default_attributes,
-        "classification": {
-            "boardType": {
-                "value": board_type_tag,
-                "source": "generator",
-                "locked": False,
-            },
-            "color": {
-                "value": "",
-                "source": "default",
-                "locked": False,
-            },
-        },
-        "designGeometry": _oh_design_geometry(board, bbox),
-        "lifecycle": {
-            "state": "generated",
-            "reviewRequired": False,
-        },
-    }
 
 
-def _write_oh_panel_metadata(body, board, bbox, all_boards, run_label):
-    metadata = _oh_panel_metadata(board, bbox, all_boards, run_label)
-    payload = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
-    panel_id = metadata["identity"]["panelId"]
-    ok_id = _set_entity_attribute(body, PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR, panel_id)
-    ok_payload = _set_entity_attribute(body, PANEL_ATTRIBUTE_GROUP, PANEL_METADATA_ATTR, payload)
-    # Instance lifecycle marker (dual-track zones): generator output is
-    # "generated"; nesting layout copies get "nested" and are excluded from
-    # scans/write-backs.
-    _set_entity_attribute(body, "UnifiedCabinet", "instanceRole", "generated")
-    return metadata, ok_id and ok_payload
+def _write_oh_panel_metadata(body, board, bbox, all_boards, run_label, features=None, carcass_color=None, carcass_color_name=None):
+    metadata = _oh_panel_metadata(
+        board, bbox, all_boards, run_label,
+        features=features,
+        carcass_color=carcass_color, carcass_color_name=carcass_color_name,
+    )
+    return metadata, write_panel_metadata_to_body(body, metadata)
 
 
 def _gt_board_semantics(board):
-    """Canonical material/role for General Tall boards.
-
-    T3/B3 are carcass inserted boards (CPT thick). T1/B1 are front-visible
-    door-colour fascias. Front panels (FP*) are door leaves.
-    """
-    board_id = str(board.get("id") or "")
-    source_type = str(board.get("boardType") or board_id)
-    category = str(board.get("category") or "")
-
-    if board_id in ("T1", "B1"):
-        return {
-            "boardType": "front_door_fascia" if board_id == "T1" else "bottom_front_door_fascia",
-            "role": "front_visible",
-            "category": "front",
-            "materialClass": "door_board",
-            "doorColorSlot": 1,
-            "tags": ["generalTall", "front", "door-color", board_id],
-        }
-    if board_id in ("T2", "B2"):
-        return {
-            "boardType": "top_front_inner_rail" if board_id == "T2" else "bottom_front_inner_rail",
-            "role": "carcass_rail",
-            "category": "structural",
-            "materialClass": "carcass_board",
-            "tags": ["generalTall", "rail", "carcass", board_id],
-        }
-    if board_id in ("T3", "B3"):
-        return {
-            "boardType": "top_inserted_board" if board_id == "T3" else "bottom_inserted_board",
-            "role": "carcass",
-            "category": "structural",
-            "materialClass": "carcass_board",
-            "tags": ["generalTall", "inserted", "carcass", board_id],
-        }
-    if board_id.startswith("V") and board_id[1:].isdigit():
-        return {
-            "boardType": "vertical_stile",
-            "role": "carcass",
-            "category": "structural",
-            "materialClass": "carcass_board",
-            "tags": ["generalTall", "vertical", "carcass", board_id],
-        }
-    if source_type in ("full_zi", "half_zi", "shortened_zi") or category == "boundary_panel":
-        return {
-            "boardType": source_type or "boundary_panel",
-            "role": "carcass",
-            "category": "structural",
-            "materialClass": "carcass_board",
-            "tags": ["generalTall", "zi", "carcass", board_id],
-        }
-    if category == "h_support" or board_id.startswith("H") or board_id == "T5":
-        return {
-            "boardType": source_type or "h_support",
-            "role": "carcass",
-            "category": "structural",
-            "materialClass": "carcass_board",
-            "tags": ["generalTall", "h_support", "carcass", board_id],
-        }
-    if source_type == "style2_fixed_front_panel" or "FixedFrontPanel" in board_id:
-        return {
-            "boardType": "fixed_front_panel",
-            "role": "front_visible",
-            "category": "front",
-            "materialClass": "door_board",
-            "doorColorSlot": 1,
-            "tags": ["generalTall", "front", "fixed-panel", "door-color", board_id],
-        }
-    if board_id.startswith("FP") or category in ("front_panel", "front"):
-        return {
-            "boardType": "cabinet_door",
-            "role": "door",
-            "category": "front",
-            "materialClass": "door_board",
-            "doorColorSlot": 1,
-            "tags": ["generalTall", "front", "door", board_id],
-        }
-    if category in ("shelf", "shelves") or "shelf" in board_id.lower():
-        return {
-            "boardType": "shelf",
-            "role": "carcass",
-            "category": "structural",
-            "materialClass": "carcass_board",
-            "tags": ["generalTall", "shelf", "carcass", board_id],
-        }
-    if "side_panel" in source_type or "SidePanel" in board_id:
-        return {
-            "boardType": "side_panel",
-            "role": "carcass",
-            "category": "structural",
-            "materialClass": "carcass_board",
-            "tags": ["generalTall", "side", "carcass", board_id],
-        }
-    if "divider" in source_type.lower() or "Divider" in board_id:
-        return {
-            "boardType": "vertical_divider",
-            "role": "divider",
-            "category": "divider",
-            "materialClass": "carcass_board",
-            "tags": ["generalTall", "divider", "carcass", board_id],
-        }
-    return {
-        "boardType": source_type or "unknown_board",
-        "role": "carcass",
-        "category": category or "structural",
-        "materialClass": "carcass_board",
-        "tags": ["generalTall", "carcass", board_id or "board"],
-    }
+    """Canonical material/role for General Tall boards."""
+    return general_tall_board_semantics(board)
 
 
-def _gt_panel_metadata(board, bbox, run_label):
-    board_id = str(board.get("id") or "")
-    semantics = _gt_board_semantics(board)
-    panel_id = "generalTall.{}".format(sanitize_token(board_id, fallback="board", limit=60))
-    if run_label:
-        panel_id = "generalTall.{}.{}".format(
-            sanitize_token(run_label, fallback="run", limit=40),
-            sanitize_token(board_id, fallback="board", limit=40),
-        )
-    default_attributes = {
-        "role": semantics["role"],
-        "category": semantics["category"],
-        "materialClass": semantics["materialClass"],
-        "tags": semantics["tags"],
-    }
-    if semantics.get("doorColorSlot") is not None:
-        default_attributes["doorColorSlot"] = semantics.get("doorColorSlot")
-    board_type_tag = (
-        "door" if semantics["materialClass"] == "door_board"
-        else "partition" if semantics["materialClass"] == "partition_board"
-        else "carcass"
+def _gt_panel_metadata(board, bbox, run_label, carcass_color=None, carcass_color_name=None, features=None):
+    return build_panel_metadata(
+        "generalTall",
+        board,
+        bbox=bbox,
+        run_label=run_label,
+        features=features,
+        carcass_color=carcass_color,
+        carcass_color_name=carcass_color_name,
     )
-    return {
-        "schemaVersion": 1,
-        "identity": {
-            "panelId": panel_id,
-            "generator": "generalTall",
-            "module": "generalTall",
-            "cabinetType": "generalTall",
-            "sourceBoardId": board_id,
-            "sourceBoardType": str(board.get("boardType") or ""),
-            "boardType": semantics["boardType"],
-            "runId": str(run_label or ""),
-        },
-        "defaultAttributes": default_attributes,
-        "classification": {
-            "boardType": {
-                "value": board_type_tag,
-                "source": "generator",
-                "locked": False,
-            },
-            "color": {
-                "value": "",
-                "source": "default",
-                "locked": False,
-            },
-        },
-        "designGeometry": _oh_design_geometry(board, bbox),
-        "lifecycle": {
-            "state": "generated",
-            "reviewRequired": False,
-        },
-    }
 
 
-def _write_gt_panel_metadata(body, board, bbox, run_label):
-    metadata = _gt_panel_metadata(board, bbox, run_label)
-    payload = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
-    panel_id = metadata["identity"]["panelId"]
-    ok_id = _set_entity_attribute(body, PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR, panel_id)
-    ok_payload = _set_entity_attribute(body, PANEL_ATTRIBUTE_GROUP, PANEL_METADATA_ATTR, payload)
-    _set_entity_attribute(body, "UnifiedCabinet", "instanceRole", "generated")
-    return metadata, ok_id and ok_payload
+def _write_gt_panel_metadata(
+    body, board, bbox, run_label, carcass_color=None, carcass_color_name=None, features=None,
+):
+    metadata = _gt_panel_metadata(
+        board, bbox, run_label,
+        carcass_color=carcass_color, carcass_color_name=carcass_color_name,
+        features=features,
+    )
+    return metadata, write_panel_metadata_to_body(body, metadata)
 
 
 def _update_oh_panel_metadata(body, panel_metadata):
@@ -1501,6 +1219,16 @@ def _oh_collect_hinge_holes_by_board(result):
     return by_board
 
 
+def _oh_collect_features_by_type(result, feature_type):
+    features = result.get("features")
+    if not isinstance(features, list):
+        return []
+    return [
+        feature for feature in features
+        if isinstance(feature, dict) and str(feature.get("type") or "") == feature_type
+    ]
+
+
 def _oh_cut_bp_grooves(component, bp_body, bp_board, result):
     bp_bbox = _board_bbox(bp_board)
     if not bp_body or not bp_bbox:
@@ -1554,6 +1282,133 @@ def _oh_cut_bp_grooves(component, bp_body, bp_board, result):
             rows.append({"featureId": groove_id, "status": "created", "xRange": [x0, x1], "yRange": [y0, y1], "depth": effective_depth})
         except Exception as ex:
             rows.append({"featureId": groove_id, "status": "failed", "reason": str(ex)})
+    return rows
+
+
+def _oh_cut_xy_rect_features(component, body, board, features, cut_name):
+    bbox = _board_bbox(board)
+    if not body or not bbox:
+        return []
+    rows = []
+    top_z = bbox["z1"]
+    board_thickness = max(0.0, bbox["z1"] - bbox["z0"])
+    for feature in features or []:
+        feature_id = str(feature.get("id") or cut_name)
+        try:
+            x = feature.get("x")
+            y = feature.get("y")
+            if not (isinstance(x, list) and len(x) >= 2 and isinstance(y, list) and len(y) >= 2):
+                raise ValueError("missing x/y range")
+            clamped_x = _clamp_range(float(x[0]), float(x[1]), bbox["x0"], bbox["x1"])
+            clamped_y = _clamp_range(float(y[0]), float(y[1]), bbox["y0"], bbox["y1"])
+            if clamped_x is None or clamped_y is None:
+                rows.append({"featureId": feature_id, "status": "skipped", "reason": "cut outside board bbox"})
+                continue
+            depth = board_thickness if feature.get("through") else _as_float(feature.get("depth"))
+            effective_depth = min(board_thickness, depth if depth and depth > 0 else board_thickness)
+            construction = component.constructionPlanes
+            plane_input = construction.createInput()
+            plane_input.setByOffset(
+                component.xYConstructionPlane,
+                adsk.core.ValueInput.createByReal(mm_to_cm(top_z)),
+            )
+            plane = construction.add(plane_input)
+            sketch = component.sketches.add(plane)
+            sketch.name = "{}_{}".format(cut_name, sanitize_token(feature_id, limit=50))
+            p0 = sketch.modelToSketchSpace(adsk.core.Point3D.create(
+                mm_to_cm(clamped_x[0]), mm_to_cm(clamped_y[0]), mm_to_cm(top_z),
+            ))
+            p1 = sketch.modelToSketchSpace(adsk.core.Point3D.create(
+                mm_to_cm(clamped_x[1]), mm_to_cm(clamped_y[1]), mm_to_cm(top_z),
+            ))
+            sketch.sketchCurves.sketchLines.addTwoPointRectangle(p0, p1)
+            profile = _largest_profile(sketch)
+            if profile is None:
+                raise ValueError("no closed cut profile")
+            extrudes = component.features.extrudeFeatures
+            ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
+            ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(-mm_to_cm(effective_depth)))
+            participant_error = _set_single_body_participants(ext_input, body)
+            if participant_error:
+                raise RuntimeError("participantBodies isolation failed: {}".format(participant_error))
+            cut = extrudes.add(ext_input)
+            cut.name = "{}_FEAT_{}".format(cut_name, sanitize_token(feature_id, limit=50))
+            rows.append({
+                "featureId": feature_id,
+                "status": "created",
+                "xRange": list(clamped_x),
+                "yRange": list(clamped_y),
+                "depth": effective_depth,
+            })
+        except Exception as ex:
+            rows.append({"featureId": feature_id, "status": "failed", "reason": str(ex)})
+    return rows
+
+
+def _oh_cut_divider_side_grooves(component, body, board, features):
+    bbox = _board_bbox(board)
+    if not body or not bbox:
+        return []
+    rows = []
+    board_thickness = max(0.0, bbox["x1"] - bbox["x0"])
+    for feature in features or []:
+        feature_id = str(feature.get("id") or "rangehood_divider_side_groove")
+        try:
+            y = feature.get("y")
+            z = feature.get("z")
+            if not (isinstance(y, list) and len(y) >= 2 and isinstance(z, list) and len(z) >= 2):
+                raise ValueError("missing y/z range")
+            clamped_y = _clamp_range(float(y[0]), float(y[1]), bbox["y0"], bbox["y1"])
+            clamped_z = _clamp_range(float(z[0]), float(z[1]), bbox["z0"], bbox["z1"])
+            if clamped_y is None or clamped_z is None:
+                rows.append({"featureId": feature_id, "status": "skipped", "reason": "groove outside divider bbox"})
+                continue
+            face = str(feature.get("face") or "+X").upper()
+            from_positive_x = face == "+X"
+            plane_x = bbox["x1"] if from_positive_x else bbox["x0"]
+            requested_depth = _as_float(feature.get("depth"))
+            effective_depth = min(
+                board_thickness,
+                requested_depth if requested_depth and requested_depth > 0 else board_thickness / 2.0,
+            )
+            construction = component.constructionPlanes
+            plane_input = construction.createInput()
+            plane_input.setByOffset(
+                component.yZConstructionPlane,
+                adsk.core.ValueInput.createByReal(mm_to_cm(plane_x)),
+            )
+            plane = construction.add(plane_input)
+            sketch = component.sketches.add(plane)
+            sketch.name = "OH_RGHD_D_GROOVE_{}".format(sanitize_token(feature_id, limit=50))
+            p0 = sketch.modelToSketchSpace(adsk.core.Point3D.create(
+                mm_to_cm(plane_x), mm_to_cm(clamped_y[0]), mm_to_cm(clamped_z[0]),
+            ))
+            p1 = sketch.modelToSketchSpace(adsk.core.Point3D.create(
+                mm_to_cm(plane_x), mm_to_cm(clamped_y[1]), mm_to_cm(clamped_z[1]),
+            ))
+            sketch.sketchCurves.sketchLines.addTwoPointRectangle(p0, p1)
+            profile = _largest_profile(sketch)
+            if profile is None:
+                raise ValueError("no closed side-groove profile")
+            extrudes = component.features.extrudeFeatures
+            ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.CutFeatureOperation)
+            signed_depth = -effective_depth if from_positive_x else effective_depth
+            ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm_to_cm(signed_depth)))
+            participant_error = _set_single_body_participants(ext_input, body)
+            if participant_error:
+                raise RuntimeError("participantBodies isolation failed: {}".format(participant_error))
+            cut = extrudes.add(ext_input)
+            cut.name = "OH_RGHD_D_GROOVE_FEAT_{}".format(sanitize_token(feature_id, limit=50))
+            rows.append({
+                "featureId": feature_id,
+                "status": "created",
+                "face": face,
+                "yRange": list(clamped_y),
+                "zRange": list(clamped_z),
+                "depth": effective_depth,
+            })
+        except Exception as ex:
+            rows.append({"featureId": feature_id, "status": "failed", "reason": str(ex)})
     return rows
 
 
@@ -1953,6 +1808,9 @@ def _oh_cut_t3_led_grooves(component, t3_body, t3_board, result):
 def _oh_postprocess_bodies(component, result, bodies_by_id, boards_by_id, components_by_id=None):
     rows = {
         "bpGrooveCuts": [],
+        "rangehoodBpCutouts": [],
+        "rangehoodTopGrooves": [],
+        "rangehoodDividerSideGrooves": [],
         "ledGrooveCuts": [],
         "hingeCuts": [],
         "rotations": [],
@@ -1971,6 +1829,36 @@ def _oh_postprocess_bodies(component, result, bodies_by_id, boards_by_id, compon
         bp_component = components_by_id.get("BP") or component
         bp_body = bodies_by_id.get("BP")
         rows["bpGrooveCuts"] = _oh_cut_bp_grooves(bp_component, bp_body, bp_board, result)
+        rows["rangehoodBpCutouts"] = _oh_cut_xy_rect_features(
+            bp_component,
+            bp_body,
+            bp_board,
+            _oh_collect_features_by_type(result, "rangehood_bp_cutout"),
+            "OH_RGHD_BP_CUTOUT",
+        )
+
+    rangehood_top_board = boards_by_id.get("RGHD_TOP")
+    if rangehood_top_board:
+        rows["rangehoodTopGrooves"] = _oh_cut_xy_rect_features(
+            components_by_id.get("RGHD_TOP") or component,
+            bodies_by_id.get("RGHD_TOP"),
+            rangehood_top_board,
+            _oh_collect_features_by_type(result, "rangehood_top_divider_groove"),
+            "OH_RGHD_TOP_GROOVE",
+        )
+
+    side_grooves_by_board = {}
+    for feature in _oh_collect_features_by_type(result, "rangehood_divider_side_groove"):
+        target_id = str(feature.get("targetBoardId") or "")
+        if target_id:
+            side_grooves_by_board.setdefault(target_id, []).append(feature)
+    for board_id, features in side_grooves_by_board.items():
+        rows["rangehoodDividerSideGrooves"].extend(_oh_cut_divider_side_grooves(
+            components_by_id.get(board_id) or component,
+            bodies_by_id.get(board_id),
+            boards_by_id.get(board_id),
+            features,
+        ))
 
     t3_board = boards_by_id.get("T3")
     if t3_board:
@@ -2112,6 +2000,10 @@ def create_rough_bodies_from_board_result(
             "boards": [],
         },
     }
+    carcass_color_tag, carcass_color_name = extract_carcass_color_from_result(result)
+    summary["carcassColor"] = carcass_color_tag
+    summary["carcassColorName"] = carcass_color_name
+    result_features = result.get("features") if isinstance(result.get("features"), list) else []
     root_comp = fusion_adapter.get_root_component()
     if not root_comp:
         summary["errors"].append("No active Fusion design/root component.")
@@ -2296,7 +2188,11 @@ def create_rough_bodies_from_board_result(
         panel_metadata = None
         panel_metadata_written = None
         if module_name == "overhead":
-            panel_metadata, panel_metadata_written = _write_oh_panel_metadata(body, board, bbox, boards, summary["runLabel"])
+            panel_metadata, panel_metadata_written = _write_oh_panel_metadata(
+                body, board, bbox, boards, summary["runLabel"],
+                features=result.get("features") if isinstance(result.get("features"), list) else [],
+                carcass_color=carcass_color_tag, carcass_color_name=carcass_color_name,
+            )
             if not panel_metadata_written:
                 summary["warnings"].append("Could not write panel metadata for overhead board {}.".format(board_id))
             # Face metadata is initialized after post-processing (groove/hinge
@@ -2305,7 +2201,11 @@ def create_rough_bodies_from_board_result(
             if panel_metadata_written:
                 panel_metadata_by_id[board_id] = panel_metadata
         elif module_name == "generalTall":
-            panel_metadata, panel_metadata_written = _write_gt_panel_metadata(body, board, bbox, summary["runLabel"])
+            panel_metadata, panel_metadata_written = _write_gt_panel_metadata(
+                body, board, bbox, summary["runLabel"],
+                carcass_color=carcass_color_tag, carcass_color_name=carcass_color_name,
+                features=result_features,
+            )
             if not panel_metadata_written:
                 summary["warnings"].append("Could not write panel metadata for generalTall board {}.".format(board_id))
             if panel_metadata_written:
@@ -2382,6 +2282,9 @@ def create_rough_bodies_from_board_result(
         postprocess = _oh_postprocess_bodies(container, result, bodies_by_id, boards_by_id, components_by_id=components_by_id)
         summary["overheadPostprocess"] = postprocess
         summary["bpGrooveCutsCreated"] = len([row for row in postprocess.get("bpGrooveCuts", []) if row.get("status") == "created"])
+        summary["rangehoodBpCutoutsCreated"] = len([row for row in postprocess.get("rangehoodBpCutouts", []) if row.get("status") == "created"])
+        summary["rangehoodTopGroovesCreated"] = len([row for row in postprocess.get("rangehoodTopGrooves", []) if row.get("status") == "created"])
+        summary["rangehoodDividerSideGroovesCreated"] = len([row for row in postprocess.get("rangehoodDividerSideGrooves", []) if row.get("status") == "created"])
         oh_led_rows = postprocess.get("ledGrooveCuts", [])
         summary["ledGrooveCutsCreated"] = len([row for row in oh_led_rows if row.get("status") == "created"])
         summary["ledGrooveCutsFailed"] = len([row for row in oh_led_rows if row.get("status") == "failed"])
@@ -2402,7 +2305,19 @@ def create_rough_bodies_from_board_result(
         summary["supportZShiftsCreated"] = len([row for row in postprocess.get("supportZShifts", []) if row.get("status") == "created"])
         summary["bodyComponentsCreated"] = len(components_by_id)
         summary["bodyComponentNames"] = ["OH_{}".format(sanitize_token(board_id, fallback="board", limit=60)) for board_id in components_by_id.keys()]
-        for group_name in ("bpGrooveCuts", "ledGrooveCuts", "hingeCuts", "rotations", "topPanelTranslations", "frontPanelZShifts", "dividerZShifts", "supportZShifts"):
+        for group_name in (
+            "bpGrooveCuts",
+            "rangehoodBpCutouts",
+            "rangehoodTopGrooves",
+            "rangehoodDividerSideGrooves",
+            "ledGrooveCuts",
+            "hingeCuts",
+            "rotations",
+            "topPanelTranslations",
+            "frontPanelZShifts",
+            "dividerZShifts",
+            "supportZShifts",
+        ):
             for row in postprocess.get(group_name, []):
                 if row.get("status") == "failed":
                     summary["warnings"].append("Overhead {} failed for {}: {}".format(group_name, row.get("featureId") or row.get("boardId"), row.get("reason") or "unknown"))
@@ -2716,7 +2631,10 @@ def _gt_create_front_panel_bodies(component, result, summary):
                 "z1": bbox["z1"],
             }
             panel_metadata, panel_metadata_written = _write_gt_panel_metadata(
-                body, fp_board, bbox, summary.get("runLabel")
+                body, fp_board, bbox, summary.get("runLabel"),
+                carcass_color=summary.get("carcassColor"),
+                carcass_color_name=summary.get("carcassColorName"),
+                features=result.get("features") if isinstance(result.get("features"), list) else [],
             )
             if not panel_metadata_written:
                 summary["warnings"].append("Could not write panel metadata for front panel {}.".format(panel_id))

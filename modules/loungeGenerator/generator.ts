@@ -34,11 +34,19 @@ function num(value: unknown, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function normalizeCarcassColor(input: Partial<LoungeSettings>): { carcassColor: string; carcassColorName: string } {
+  const raw = String(input.carcassColor || input.carcassColorName || "white_stipple").trim();
+  const tag = raw.toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]+/g, "_").replace(/_+/g, "_").replace(/^_|_$/g, "") || "white_stipple";
+  const name = String(input.carcassColorName || (tag === "white_stipple" ? "White Stipple" : raw)).trim() || "White Stipple";
+  return { carcassColor: tag, carcassColorName: name };
+}
+
 function normalizeSettings(input: Partial<LoungeSettings>): LoungeSettings {
   return {
     style: input.style || "L_SHAPE",
     height: num(input.height, DEFAULT_HEIGHT),
     partitionPanelThickness: num(input.partitionPanelThickness, DEFAULT_PPT),
+    ...normalizeCarcassColor(input),
     wheelAvoidanceEnabled: input.wheelAvoidanceEnabled === true,
     mainWidth: num(input.mainWidth, 2000),
     mainDepth: num(input.mainDepth, 600),

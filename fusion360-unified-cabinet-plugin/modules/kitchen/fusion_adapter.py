@@ -9,6 +9,22 @@ import adsk.fusion
 from geometry_ops import avoid_existing_at_origin
 from assembly_cut_face import assembly_cut_face
 
+try:
+    from generator_default_attributes import (
+        extract_carcass_color_from_result,
+        write_generator_panel_metadata,
+    )
+except Exception:
+    import sys
+
+    _panel_attr_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "panel_attributes"))
+    if _panel_attr_dir not in sys.path:
+        sys.path.insert(0, _panel_attr_dir)
+    from generator_default_attributes import (
+        extract_carcass_color_from_result,
+        write_generator_panel_metadata,
+    )
+
 ADAPTER_REVISION = "yzHalfCutSide_v39"
 ATTRIBUTE_GROUP = "CabinetNC"
 MODEL_Z_OFFSET_MM = 10000.0
@@ -206,7 +222,51 @@ def _cut_face_plane_for_sketch(component, plane, bbox, cutout=None):
     return construction.add(plane_input)
 
 
+def _v_panel_options_by_id(result):
+    options = {}
+    for panel in result.get("vPanels") or []:
+        if not isinstance(panel, dict):
+            continue
+        panel_id = str(panel.get("id") or "")
+        if panel_id:
+            options[panel_id] = panel.get("sidePanelOptions") if isinstance(panel.get("sidePanelOptions"), dict) else {}
+    return options
+
+
+def _write_kitchen_panel_metadata(body, entry, run_label=None, v_panels=None, carcass_color=None, carcass_color_name=None):
+    board = {
+        "id": entry.get("id"),
+        "kind": entry.get("kind"),
+        "type": entry.get("type"),
+        "panelType": entry.get("type"),
+        "panelKind": entry.get("kind"),
+        "materialThickness": entry.get("materialThickness"),
+        "profilePlane": entry.get("plane"),
+        "thicknessAxis": entry.get("thicknessAxis"),
+        "sidePanelOptions": entry.get("sidePanelOptions"),
+        "halfGrooveVectors": list(entry.get("halfGrooveVectors") or []),
+        "cutouts": list((entry.get("body") or {}).get("cutouts") or []) if isinstance(entry.get("body"), dict) else [],
+        "x0": (entry.get("bbox") or {}).get("x0"),
+        "x1": (entry.get("bbox") or {}).get("x1"),
+        "y0": (entry.get("bbox") or {}).get("y0"),
+        "y1": (entry.get("bbox") or {}).get("y1"),
+        "z0": (entry.get("bbox") or {}).get("z0"),
+        "z1": (entry.get("bbox") or {}).get("z1"),
+    }
+    return write_generator_panel_metadata(
+        body,
+        "kitchen",
+        board,
+        bbox=entry.get("bbox"),
+        run_label=run_label,
+        v_panels=v_panels,
+        carcass_color=carcass_color,
+        carcass_color_name=carcass_color_name,
+    )
+
+
 def _panel_entries(result):
+    v_options = _v_panel_options_by_id(result)
     panel_dxf = result.get("panelDxf") if isinstance(result.get("panelDxf"), list) else None
     if panel_dxf is not None:
         entries = []
@@ -221,9 +281,10 @@ def _panel_entries(result):
             points = _close_points(panel.get("outer"))
             if len(points) < 4 or not bbox:
                 continue
-            entries.append({
+            panel_id = str(panel.get("panelId") or "panel")
+            entry = {
                 "kind": str(panel.get("panelKind") or "board"),
-                "id": str(panel.get("panelId") or "panel"),
+                "id": panel_id,
                 "type": str(panel.get("panelType") or "panel"),
                 "materialThickness": _num(panel.get("materialThickness"), 15.0),
                 "plane": str(panel.get("plane") or "XY"),
@@ -241,7 +302,10 @@ def _panel_entries(result):
                 "notchVectors": list(panel.get("notchVectors") or []),
                 "throughVectors": list(panel.get("throughVectors") or []),
                 "halfGrooveVectors": list(panel.get("halfGrooveVectors") or []),
-            })
+            }
+            if panel_id in v_options:
+                entry["sidePanelOptions"] = v_options[panel_id]
+            entries.append(entry)
         for front_panel in result.get("frontPanels") or []:
             if not isinstance(front_panel, dict):
                 continue
@@ -309,9 +373,10 @@ def _panel_entries(result):
         bbox = _v_panel_bbox(panel, points)
         if len(points) < 4 or bbox is None:
             continue
-        entries.append({
+        panel_id = str(panel.get("id") or "V")
+        entry = {
             "kind": "vPanel",
-            "id": str(panel.get("id") or "V"),
+            "id": panel_id,
             "type": "VPanel",
             "materialThickness": bbox["x1"] - bbox["x0"],
             "plane": "YZ",
@@ -319,7 +384,12 @@ def _panel_entries(result):
             "bbox": bbox,
             "body": body,
             "points": points,
-        })
+        }
+        if panel_id in v_options:
+            entry["sidePanelOptions"] = v_options[panel_id]
+        elif isinstance(panel.get("sidePanelOptions"), dict):
+            entry["sidePanelOptions"] = panel.get("sidePanelOptions")
+        entries.append(entry)
     return entries
 
 
@@ -1362,6 +1432,8 @@ def create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=N
     }
     if container_warning:
         warnings.append(container_warning)
+    v_panels = result.get("vPanels") if isinstance(result, dict) else None
+    carcass_color_tag, carcass_color_name = extract_carcass_color_from_result(result)
     declarations = result.get("relationshipDeclarations") if isinstance(result, dict) else None
     if isinstance(declarations, list) and declarations and component is not root:
         try:
@@ -1402,6 +1474,21 @@ def create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=N
                 continue
             created_bodies.extend(entry.get("createdFlatBodies") or [body])
             created_ids.append(entry["id"])
+            metadata_targets = entry.get("createdFlatBodies") or [body]
+            for target_body in metadata_targets:
+                try:
+                    _meta, written = _write_kitchen_panel_metadata(
+                        target_body,
+                        entry,
+                        run_label=resolved_run_label,
+                        v_panels=v_panels,
+                        carcass_color=carcass_color_tag,
+                        carcass_color_name=carcass_color_name,
+                    )
+                    if not written:
+                        warnings.append("Could not write panel metadata for kitchen board {}.".format(entry["id"]))
+                except Exception as ex:
+                    warnings.append("Kitchen panel metadata failed for {}: {}".format(entry["id"], ex))
             if create_cutouts:
                 try:
                     if use_direct_assembly:

@@ -29,6 +29,9 @@ export interface OverheadCabinetParams {
   cabinetWidth: number;
   cabinetDepth: number;
   cabinetHeight?: number;
+  /** Carcass / structural board colour. Default White Stipple (double-sided). */
+  carcassColor?: string;
+  carcassColorName?: string;
   /** T3 top-face LED T-groove (opens upward). Default on when omitted. */
   ledGroove?: boolean;
   topClearanceHeight?: number;
@@ -39,6 +42,13 @@ export interface OverheadCabinetParams {
   hingeHoleFromTop?: number;
   hingeHoleFromSide?: number;
   selectedZoneIndex?: number;
+  /** Rangehood carcass insert. Only one contiguous rangehood group is allowed per OHC. */
+  rangehoodPreset?: "NCE" | string;
+  /** Clear distance from BP top face to RGHD_TOP bottom face. */
+  rangehoodClearHeight?: number;
+  rangehoodAlignment?: "left" | "right" | string;
+  /** Cutout distance from the selected outer D inner face. Minimum 40 mm for NCE. */
+  rangehoodEdgeOffsetX?: number;
   // Legacy aliases kept for bridge/backwards compatibility.
   bottomThickness?: number;
   dividerTongueHeight?: number;
@@ -47,7 +57,7 @@ export interface OverheadCabinetParams {
   internalDividerCenterlines?: number[];
   zones?: Array<{
     id?: string;
-    type: "up_flap" | "fixed_panel" | "open" | string;
+    type: "up_flap" | "rangehood_flap" | "fixed_panel" | "open" | string;
     width: number;
   }>;
 }
@@ -87,6 +97,12 @@ export interface OverheadCabinetResult {
       routerDiameter: number;
       featureWidth: number;
       internalDividerCenterlines: number[];
+      carcassColor: string;
+      carcassColorName: string;
+      rangehoodPreset: string;
+      rangehoodClearHeight: number;
+      rangehoodAlignment: string;
+      rangehoodEdgeOffsetX: number;
     }
   >;
   boards: Board[];

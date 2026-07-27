@@ -21,6 +21,9 @@ export interface KitchenGlobalSettings {
   bottomClearanceStyle: "style_1" | "style_2" | string;
   /** Style 1 B3 bottom-face LED T-groove. Default on when omitted. */
   ledGroove?: boolean;
+  /** Carcass / structural board colour. Default White Stipple (double-sided). */
+  carcassColor?: string;
+  carcassColorName?: string;
 }
 
 export interface KitchenZone {

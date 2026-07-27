@@ -20,6 +20,7 @@ function fmt(value: number): string {
 }
 
 function panelFill(type: string): string {
+  if (type === "rangehood_flap") return "#f3e8ff";
   if (type === "fixed_panel") return "#eef8ea";
   if (type === "open") return "#fff7dc";
   return "#e5f2ff";
@@ -96,7 +97,11 @@ export function generateOHCSvgPreview(
 
   const frontPanelRects = geometry.front_panels.map((panel) => {
     const r = rectFromXZ(panel.x[0], panel.z[0], panel.x[1], panel.z[1]);
-    const label = panel.type === "fixed_panel" ? "Fixed Panel" : "Up Flap";
+    const label = panel.type === "fixed_panel"
+      ? "Fixed Panel"
+      : panel.type === "rangehood_flap"
+        ? "Rangehood Flap"
+        : "Up Flap";
     return `
       <rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="none" stroke="#66758a" stroke-width="1.2"></rect>
       <text x="${fmt(r.x + r.w / 2)}" y="${fmt(r.y + r.h / 2 - 4)}" text-anchor="middle" fill="#22344d" font-size="12">${esc(label)}</text>

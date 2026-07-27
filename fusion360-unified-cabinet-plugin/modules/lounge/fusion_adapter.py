@@ -1,3 +1,5 @@
+import os
+import sys
 import time
 import math
 
@@ -5,6 +7,20 @@ import adsk.core
 import adsk.fusion
 
 from geometry_ops import ATTRIBUTE_GROUP, MODEL_Z_OFFSET_MM, mm_to_cm, offset_matching_bodies_z_mm, sanitize_token
+
+try:
+    from generator_default_attributes import (
+        extract_carcass_color_from_result,
+        write_generator_panel_metadata,
+    )
+except Exception:
+    _panel_attr_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "panel_attributes"))
+    if _panel_attr_dir not in sys.path:
+        sys.path.insert(0, _panel_attr_dir)
+    from generator_default_attributes import (
+        extract_carcass_color_from_result,
+        write_generator_panel_metadata,
+    )
 
 ADAPTER_REVISION = "loungeWorldAlignedAssembly_v26"
 
@@ -221,7 +237,17 @@ def _draw_model_loop_on_sketch(sketch, world_points):
     return True
 
 
-def _tag_lounge_body(body, item_id, preview_mode, profile_source):
+def _tag_lounge_body(
+    body,
+    item_id,
+    preview_mode,
+    profile_source,
+    item=None,
+    run_label=None,
+    warnings=None,
+    carcass_color=None,
+    carcass_color_name=None,
+):
     prefix = "LOUNGE_ASM" if preview_mode == "assembly" else "LOUNGE_FLAT"
     body.name = "{}_{}".format(prefix, sanitize_token(item_id, limit=90))
     try:
@@ -231,9 +257,27 @@ def _tag_lounge_body(body, item_id, preview_mode, profile_source):
         body.attributes.add(ATTRIBUTE_GROUP, "profileSource", profile_source)
     except Exception:
         pass
+    if isinstance(item, dict):
+        try:
+            _meta, written = write_generator_panel_metadata(
+                body,
+                "lounge",
+                item,
+                run_label=run_label,
+                carcass_color=carcass_color,
+                carcass_color_name=carcass_color_name,
+            )
+            if not written and isinstance(warnings, list):
+                warnings.append("Could not write panel metadata for lounge board {}.".format(item_id))
+        except Exception as ex:
+            if isinstance(warnings, list):
+                warnings.append("Lounge panel metadata failed for {}: {}".format(item_id, ex))
 
 
-def _extrude_new_body(component, sketch, profile, distance_mm, item_id, preview_mode, profile_source):
+def _extrude_new_body(
+    component, sketch, profile, distance_mm, item_id, preview_mode, profile_source,
+    item=None, run_label=None, warnings=None, carcass_color=None, carcass_color_name=None,
+):
     extrudes = component.features.extrudeFeatures
     ext_input = extrudes.createInput(profile, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
     ext_input.setDistanceExtent(False, adsk.core.ValueInput.createByReal(mm_to_cm(distance_mm)))
@@ -241,11 +285,18 @@ def _extrude_new_body(component, sketch, profile, distance_mm, item_id, preview_
     if feature.bodies.count < 1:
         return None, "no_body"
     body = feature.bodies.item(0)
-    _tag_lounge_body(body, item_id, preview_mode, profile_source)
+    _tag_lounge_body(
+        body, item_id, preview_mode, profile_source,
+        item=item, run_label=run_label, warnings=warnings,
+        carcass_color=carcass_color, carcass_color_name=carcass_color_name,
+    )
     return body, None
 
 
-def _add_xz_box_body(component, item_id, x0, x1, y0, y1, z0, z1, preview_mode="assembly"):
+def _add_xz_box_body(
+    component, item_id, x0, x1, y0, y1, z0, z1, preview_mode="assembly",
+    item=None, run_label=None, warnings=None, carcass_color=None, carcass_color_name=None,
+):
     if x1 <= x0 or y1 <= y0 or z1 <= z0:
         return None, "non_positive_dimension"
     construction = component.constructionPlanes
@@ -260,10 +311,17 @@ def _add_xz_box_body(component, item_id, x0, x1, y0, y1, z0, z1, preview_mode="a
     profile = _largest_profile(sketch)
     if profile is None:
         return None, "no_profile"
-    return _extrude_new_body(component, sketch, profile, y1 - y0, item_id, preview_mode, "placementBoxXZ")
+    return _extrude_new_body(
+        component, sketch, profile, y1 - y0, item_id, preview_mode, "placementBoxXZ",
+        item=item, run_label=run_label, warnings=warnings,
+        carcass_color=carcass_color, carcass_color_name=carcass_color_name,
+    )
 
 
-def _add_yz_box_body(component, item_id, x0, x1, y0, y1, z0, z1, preview_mode="assembly", anchor_x1=False):
+def _add_yz_box_body(
+    component, item_id, x0, x1, y0, y1, z0, z1, preview_mode="assembly", anchor_x1=False,
+    item=None, run_label=None, warnings=None, carcass_color=None, carcass_color_name=None,
+):
     if x1 <= x0 or y1 <= y0 or z1 <= z0:
         return None, "non_positive_dimension"
     construction = component.constructionPlanes
@@ -292,7 +350,11 @@ def _add_yz_box_body(component, item_id, x0, x1, y0, y1, z0, z1, preview_mode="a
     if feature.bodies.count < 1:
         return None, "no_body"
     body = feature.bodies.item(0)
-    _tag_lounge_body(body, item_id, preview_mode, "placementBoxYZ")
+    _tag_lounge_body(
+        body, item_id, preview_mode, "placementBoxYZ",
+        item=item, run_label=run_label, warnings=warnings,
+        carcass_color=carcass_color, carcass_color_name=carcass_color_name,
+    )
     return body, None
 
 
@@ -331,7 +393,10 @@ def _outer_is_axis_aligned_rectangle(item):
     return False
 
 
-def _add_placement_box_body(component, item, preview_mode="assembly"):
+def _add_placement_box_body(
+    component, item, preview_mode="assembly", run_label=None, warnings=None,
+    carcass_color=None, carcass_color_name=None,
+):
     placement = _item_placement(item)
     item_id = str(item.get("id") or "panel")
     plane = str(item.get("profilePlane") or "XY")
@@ -344,15 +409,25 @@ def _add_placement_box_body(component, item, preview_mode="assembly"):
     if plane == "XY":
         body, err = _add_box_body(component, item_id, x0, x1, y0, y1, z0, z1)
         if body is not None:
-            _tag_lounge_body(body, item_id, preview_mode, "placementBoxXY")
+            _tag_lounge_body(
+                body, item_id, preview_mode, "placementBoxXY",
+                item=item, run_label=run_label, warnings=warnings,
+                carcass_color=carcass_color, carcass_color_name=carcass_color_name,
+            )
         return body, err
     if plane == "XZ":
-        return _add_xz_box_body(component, item_id, x0, x1, y0, y1, z0, z1, preview_mode=preview_mode)
+        return _add_xz_box_body(
+            component, item_id, x0, x1, y0, y1, z0, z1,
+            preview_mode=preview_mode, item=item, run_label=run_label, warnings=warnings,
+            carcass_color=carcass_color, carcass_color_name=carcass_color_name,
+        )
     if plane == "YZ":
         anchor_x1 = item_id in ("main_left_l_piece", "main_right_l_piece")
         return _add_yz_box_body(
             component, item_id, x0, x1, y0, y1, z0, z1,
             preview_mode=preview_mode, anchor_x1=anchor_x1,
+            item=item, run_label=run_label, warnings=warnings,
+            carcass_color=carcass_color, carcass_color_name=carcass_color_name,
         )
     return None, "unsupported_profile_plane"
 
@@ -864,14 +939,20 @@ def _draw_rounded_rect_oriented(sketch, x0, y0, x1, y1, radius, plane, placement
     return True
 
 
-def _add_oriented_panel_body(component, item, preview_mode="assembly"):
+def _add_oriented_panel_body(
+    component, item, preview_mode="assembly", run_label=None, warnings=None,
+    carcass_color=None, carcass_color_name=None,
+):
     """Create panels directly in assembly pose (no flat staging + rotation)."""
     item_id = str(item.get("id") or "panel")
     plane = str(item.get("profilePlane") or "XY")
     if plane not in ("XY", "XZ", "YZ"):
         return None, "oriented_plane_required"
     if _outer_is_axis_aligned_rectangle(item):
-        return _add_placement_box_body(component, item, preview_mode=preview_mode)
+        return _add_placement_box_body(
+            component, item, preview_mode=preview_mode, run_label=run_label, warnings=warnings,
+            carcass_color=carcass_color, carcass_color_name=carcass_color_name,
+        )
     placement = _item_placement(item)
     sketch_plane = _lounge_profile_plane_for_sketch(component, plane, placement, item_id=item_id)
     if sketch_plane is None:
@@ -905,7 +986,11 @@ def _add_oriented_panel_body(component, item, preview_mode="assembly"):
     if feature.bodies.count < 1:
         return None, "no_body"
     body = feature.bodies.item(0)
-    _tag_lounge_body(body, item_id, preview_mode, "orientedAssemblyProfile")
+    _tag_lounge_body(
+        body, item_id, preview_mode, "orientedAssemblyProfile",
+        item=item, run_label=run_label, warnings=warnings,
+        carcass_color=carcass_color, carcass_color_name=carcass_color_name,
+    )
     return body, None
 
 
@@ -929,7 +1014,10 @@ def _item_needs_assembly_cuts(item):
     return False
 
 
-def _add_flat_panel_body(component, item, offset_x, offset_y, preview_mode="flat_svg"):
+def _add_flat_panel_body(
+    component, item, offset_x, offset_y, preview_mode="flat_svg", run_label=None, warnings=None,
+    carcass_color=None, carcass_color_name=None,
+):
     item_id = str(item.get("id") or "panel")
     thickness = max(0.1, _num(item.get("thickness"), 18))
     sketch = component.sketches.add(component.xYConstructionPlane)
@@ -953,14 +1041,11 @@ def _add_flat_panel_body(component, item, offset_x, offset_y, preview_mode="flat
     if feature.bodies.count < 1:
         return None, "no_body"
     body = feature.bodies.item(0)
-    prefix = "LOUNGE_ASM" if preview_mode == "assembly" else "LOUNGE_FLAT"
-    body.name = "{}_{}".format(prefix, sanitize_token(item_id, limit=90))
-    try:
-        body.attributes.add(ATTRIBUTE_GROUP, "module", "lounge")
-        body.attributes.add(ATTRIBUTE_GROUP, "bodyId", item_id)
-        body.attributes.add(ATTRIBUTE_GROUP, "previewMode", preview_mode)
-    except Exception:
-        pass
+    _tag_lounge_body(
+        body, item_id, preview_mode, "flatSvgProfile",
+        item=item, run_label=run_label, warnings=warnings,
+        carcass_color=carcass_color, carcass_color_name=carcass_color_name,
+    )
     return body, None
 
 
@@ -1143,6 +1228,7 @@ def create_lounge_bodies(fusion_adapter, result, run_label=None, component_name=
     panels = result.get("panels") if isinstance(result.get("panels"), list) else []
     lids = result.get("lids") if isinstance(result.get("lids"), list) else []
     flat_items = [item for item in panels + lids if isinstance(item, dict)]
+    carcass_color_tag, carcass_color_name = extract_carcass_color_from_result(result)
     cursor_x = 0.0
     row_y = 0.0
     row_h = 0.0
@@ -1155,7 +1241,11 @@ def create_lounge_bodies(fusion_adapter, result, run_label=None, component_name=
             row_y += row_h + gap
             row_h = 0.0
         item_component, item_occurrence = _item_component_or_fallback(component, root, item.get("id"), summary["warnings"])
-        body, err = _add_flat_panel_body(item_component, item, cursor_x, row_y)
+        body, err = _add_flat_panel_body(
+            item_component, item, cursor_x, row_y,
+            run_label=summary["runLabel"], warnings=summary["warnings"],
+            carcass_color=carcass_color_tag, carcass_color_name=carcass_color_name,
+        )
         if err:
             summary["skipped"].append({"id": item.get("id"), "reason": err})
             continue
@@ -1214,10 +1304,15 @@ def create_lounge_assembly_bodies(fusion_adapter, result, run_label=None, compon
         [item for item in panels + lids if isinstance(item, dict)],
         key=_assembly_plane_sort_key,
     )
+    carcass_color_tag, carcass_color_name = extract_carcass_color_from_result(result)
     for item in items:
         item_id = item.get("id")
         item_component, _item_occurrence = _item_component_for_assembly(component, item_id)
-        body, err = _add_oriented_panel_body(item_component, item, preview_mode="assembly")
+        body, err = _add_oriented_panel_body(
+            item_component, item, preview_mode="assembly",
+            run_label=summary["runLabel"], warnings=summary["warnings"],
+            carcass_color=carcass_color_tag, carcass_color_name=carcass_color_name,
+        )
         if err:
             summary["skipped"].append({"id": item_id, "reason": err})
             continue

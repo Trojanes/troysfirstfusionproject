@@ -320,6 +320,9 @@ export interface GeneralTallCabinetParams {
   cabinetHeight: number;
   cabinetWidth: number;
   cabinetDepth: number;
+  /** Carcass / structural board colour. Default White Stipple (double-sided). */
+  carcassColor?: string;
+  carcassColorName?: string;
   panelThickness?: number;
   leftSidePanelThickness?: number;
   rightSidePanelThickness?: number;
