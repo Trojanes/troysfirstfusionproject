@@ -103,6 +103,14 @@ def overhead_board_semantics(board, all_boards=None):
         return _pack("rangehood_front", "carcass", "carcass", "rangehood", ["overhead", "rangehood", "front", "carcass"])
     if board_id == "RGHD_BACK":
         return _pack("rangehood_back", "carcass", "carcass", "rangehood", ["overhead", "rangehood", "back", "carcass"])
+    if board_id == "U_CONNECTOR" or source_type == "u_back_connector_panel":
+        return _pack(
+            "u_back_connector_panel",
+            "carcass",
+            "connector",
+            "structural",
+            ["overhead", "u-shape", "connector", "carcass"],
+        )
     if board_id.startswith("D"):
         canonical = _oh_divider_board_type(board_id, all_boards)
         role = "side_panel" if canonical in ("left_side_panel", "right_side_panel") else "divider"
@@ -120,13 +128,13 @@ def overhead_board_semantics(board, all_boards=None):
                 tags,
                 door_color_slot=1,
             )
-        if source_type == "fixed_panel":
+        if source_type in ("fixed_panel", "u_clearance_fixed_panel"):
             return _pack(
-                "fixed_front_panel",
+                "u_clearance_fixed_front_panel" if source_type == "u_clearance_fixed_panel" else "fixed_front_panel",
                 "door",
                 "front_visible",
                 "front",
-                ["overhead", "front", "fixed-panel", "door-color"],
+                ["overhead", "front", "fixed-panel", "door-color"] + (["u-shape", "clearance"] if source_type == "u_clearance_fixed_panel" else []),
                 door_color_slot=1,
             )
         return _pack(
@@ -155,7 +163,7 @@ def _direction_pair(milling_direction):
     }
 
 
-def overhead_milling_direction(board, features=None):
+def _overhead_local_milling_direction(board, features=None):
     """Return OH milling / cutting face as a design-world ±axis bucket.
 
     Frame (generator / Fusion assembly before optional board moves):
@@ -205,6 +213,25 @@ def overhead_milling_direction(board, features=None):
             return _direction_pair("-X")
         return _direction_pair("")
     return _direction_pair("")
+
+
+def _rotate_direction_about_z(direction, degrees):
+    direction = str(direction or "")
+    steps = int(round(float(degrees or 0) / 90.0)) % 4
+    cycle = ["+X", "+Y", "-X", "-Y"]
+    if direction not in cycle:
+        return direction
+    return cycle[(cycle.index(direction) + steps) % 4]
+
+
+def overhead_milling_direction(board, features=None):
+    """Return world milling direction, rotating U-OHC run-local defaults."""
+    local = _overhead_local_milling_direction(board, features=features)
+    degrees = board.get("worldRotationDeg") if isinstance(board, dict) else 0
+    if not degrees or not local.get("millingDirection"):
+        return local
+    world_direction = _rotate_direction_about_z(local["millingDirection"], degrees)
+    return _direction_pair(world_direction)
 
 
 def _is_gt_zi_board(board):

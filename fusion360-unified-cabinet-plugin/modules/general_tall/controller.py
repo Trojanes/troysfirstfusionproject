@@ -118,6 +118,8 @@ class GeneralTallController:
                 input=json.dumps({"params": params}, ensure_ascii=False),
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=120,
             )
         except Exception as ex:

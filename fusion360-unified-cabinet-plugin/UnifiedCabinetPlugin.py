@@ -94,6 +94,7 @@ class UnifiedCabinetPluginApp:
 
         general_tall_module = importlib.reload(importlib.import_module("modules.general_tall.controller"))
         overhead_module = importlib.reload(importlib.import_module("modules.overhead.controller"))
+        u_shape_overhead_module = importlib.reload(importlib.import_module("modules.u_shape_overhead.controller"))
         kitchen_module = importlib.reload(importlib.import_module("modules.kitchen.controller"))
         lounge_module = importlib.reload(importlib.import_module("modules.lounge.controller"))
         tools_module = importlib.reload(importlib.import_module("modules.tools.controller"))
@@ -107,6 +108,7 @@ class UnifiedCabinetPluginApp:
         gt_arity = max(0, len(inspect.signature(gt_ctor.__init__).parameters) - 1)
         general_tall = gt_ctor(self.plugin_dir, self.fusion) if gt_arity >= 2 else gt_ctor(self.plugin_dir)
         overhead = overhead_module.OverheadController(self.plugin_dir, self.fusion)
+        u_shape_overhead = u_shape_overhead_module.UShapeOverheadController(self.plugin_dir, self.fusion)
         kitchen = kitchen_module.KitchenController(self.plugin_dir, self.fusion)
         lounge = lounge_module.LoungeController(self.plugin_dir, self.fusion)
         tools = tools_module.ToolsController()
@@ -120,6 +122,9 @@ class UnifiedCabinetPluginApp:
             "overhead.status": overhead.status,
             "overhead.generate": overhead.generate,
             "overhead.createFusionRoughBodies": overhead.create_fusion_rough_bodies,
+            "uShapeOverhead.generate": u_shape_overhead.generate,
+            "uShapeOverhead.createFusionBodies": u_shape_overhead.create_fusion_bodies,
+            "uShapeOverhead.runSelfCheck": u_shape_overhead.run_self_check,
             "kitchen.generateGeometry": kitchen.generate_geometry,
             "kitchen.createFusionPreview": kitchen.create_fusion_preview,
             "kitchen.createFlatBodyPreview": kitchen.create_flat_body_preview,

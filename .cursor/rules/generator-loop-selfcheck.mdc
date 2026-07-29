@@ -1,0 +1,31 @@
+---
+description: Every generator/geometry change must pass the reusable loop self-check before claiming done.
+alwaysApply: true
+---
+
+# Generator loop self-check (mandatory)
+
+After any change that affects cabinet generators, Fusion adapters, palette create/self-check paths, or assembly geometry, **run the module loop and treat a red loop as unfinished work**.
+
+## Default command (U Shape OHC)
+
+```bash
+node fusion360-unified-cabinet-plugin/tests/run_u_shape_ohc_autoloop.js
+```
+
+- Exit code must be `0` for offline preflight to count as passed.
+- Read `fusion360-unified-cabinet-plugin/logs/u_shape_ohc_loop_report.json` when it fails.
+- `stale_fusion` / `mismatched_fusion_case` / `offline_preflight` means offline may be green but Fusion evidence is not certified — say so explicitly; do not call the change Fusion-verified.
+
+## Other modules
+
+- Prefer the module’s `*_autoloop.js` if it exists.
+- New modules must plug into `generator_loop_framework.js` + `assembly_loop_core.js` (see `fusion360-unified-cabinet-plugin/tests/GENERATOR_LOOP_GUIDE.md`) and ship an autoloop entrypoint.
+- Until a module loop exists, run that module’s existing self-check/regression scripts and say that a full generator loop is not wired yet.
+
+## What “done” means
+
+1. Autoloop (or equivalent) was executed after the change.
+2. Failures were fixed or reported with findings codes — never ignored.
+3. Do not claim UI validation “None” as loop/Fusion proof.
+4. Geometry expectations must use the **final Adapter pose** (placement offsets, rotations, postprocess), not raw generator-only boards when the Adapter moves bodies.

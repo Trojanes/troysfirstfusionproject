@@ -137,8 +137,17 @@ def capture_position_snapshot(root_comp):
     """Commit pending occurrence transforms so later timeline edits keep them."""
     try:
         design = root_comp.parentDesign
-        if design and design.snapshots and design.snapshots.hasPendingSnapshot:
+        if not design or not design.snapshots:
+            return
+        if design.snapshots.hasPendingSnapshot:
             design.snapshots.add()
+            return
+        # Some Fusion builds leave hasPendingSnapshot false after occurrence.transform=
+        # even though the pose still needs committing. Try a forced add; ignore if empty.
+        try:
+            design.snapshots.add()
+        except Exception:
+            pass
     except Exception:
         pass
 

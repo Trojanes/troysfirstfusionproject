@@ -1,7 +1,9 @@
 import json
 import math
 import os
+import re
 import time
+import copy
 
 import adsk.core
 import adsk.fusion
@@ -37,7 +39,1706 @@ except Exception:
         write_panel_metadata_to_body,
     )
 
-ADAPTER_BUILD = "2026-07-28-oh-rangehood-nce-2"
+ADAPTER_BUILD = "2026-07-29-u-shape-ohc-21"
+U_SHAPE_CASE_FINGERPRINT_KEYS = (
+    "totalWidth",
+    "leftArmLength",
+    "rightArmLength",
+    "cabinetDepth",
+    "cabinetHeight",
+    "topClearanceHeight",
+    "frontPanelThickness",
+    "featureWidth",
+    "clearance",
+    "sideClearance",
+    "geometryRevision",
+)
+
+
+def _plugin_root_dir():
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".."))
+
+
+def _u_shape_case_fingerprint(params):
+    source = params if isinstance(params, dict) else {}
+    values = []
+    for key in U_SHAPE_CASE_FINGERPRINT_KEYS:
+        value = source.get(key)
+        if isinstance(value, float) and value.is_integer():
+            value = int(value)
+        values.append([key, value])
+    return json.dumps(values, ensure_ascii=False, separators=(",", ":"))
+
+
+def _matrix_transform_point_cm(matrix, x_cm, y_cm, z_cm):
+    point = adsk.core.Point3D.create(float(x_cm), float(y_cm), float(z_cm))
+    point.transformBy(matrix)
+    return point.x, point.y, point.z
+
+
+def _occurrence_bbox_in_parent_mm(occurrence):
+    try:
+        bb = occurrence.boundingBox
+    except Exception:
+        return None
+    return {
+        "x0": bb.minPoint.x * 10.0,
+        "y0": bb.minPoint.y * 10.0,
+        "z0": bb.minPoint.z * 10.0,
+        "x1": bb.maxPoint.x * 10.0,
+        "y1": bb.maxPoint.y * 10.0,
+        "z1": bb.maxPoint.z * 10.0,
+    }
+
+
+def _world_bbox_corners_mm(local_bbox_mm, *matrices):
+    corners = []
+    for x in (local_bbox_mm["x0"] / 10.0, local_bbox_mm["x1"] / 10.0):
+        for y in (local_bbox_mm["y0"] / 10.0, local_bbox_mm["y1"] / 10.0):
+            for z in (local_bbox_mm["z0"] / 10.0, local_bbox_mm["z1"] / 10.0):
+                px, py, pz = x, y, z
+                for matrix in matrices:
+                    if matrix is None:
+                        continue
+                    px, py, pz = _matrix_transform_point_cm(matrix, px, py, pz)
+                corners.append((px * 10.0, py * 10.0, pz * 10.0))
+    xs = [c[0] for c in corners]
+    ys = [c[1] for c in corners]
+    zs = [c[2] for c in corners]
+    return {
+        "x0": min(xs), "x1": max(xs),
+        "y0": min(ys), "y1": max(ys),
+        "z0": min(zs), "z1": max(zs),
+    }
+
+
+def _infer_u_run_id(name):
+    upper = str(name or "").upper()
+    if upper.endswith("_LEFT") or ".LEFT" in upper or upper.endswith("LEFT"):
+        return "LEFT"
+    if upper.endswith("_BACK") or ".BACK" in upper or upper.endswith("BACK"):
+        return "BACK"
+    if upper.endswith("_RIGHT") or ".RIGHT" in upper or upper.endswith("RIGHT"):
+        return "RIGHT"
+    return None
+
+
+def _board_id_from_entity(entity):
+    try:
+        attrs = entity.attributes
+        attr = attrs.itemByName(ATTRIBUTE_GROUP, "boardId") if attrs else None
+        if attr and attr.value:
+            return str(attr.value)
+    except Exception:
+        pass
+    try:
+        name = str(getattr(entity, "name", "") or "")
+    except Exception:
+        name = ""
+    upper = name.upper().replace("-", "_")
+    for token in ("U_CONNECTOR_LEFT", "U_CONNECTOR_RIGHT", "D_CORNER_LEFT", "D_CORNER_RIGHT", "U_CONNECTOR", "T4", "T3", "T2", "T1", "BP"):
+        if token in upper:
+            return token
+    # Names like UOH_LEFT_D1 / ..._FP2 / ..._G0
+    match = re.search(r"(?:^|_)((?:D|G|FP|S|L|R)\d+|BP|T[1-5]|U_CONNECTOR)(?:$|_)", upper)
+    if match:
+        return match.group(1)
+    return None
+
+
+def _bbox_center_size(bbox):
+    return {
+        "centerMm": {
+            "x": (bbox["x0"] + bbox["x1"]) * 0.5,
+            "y": (bbox["y0"] + bbox["y1"]) * 0.5,
+            "z": (bbox["z0"] + bbox["z1"]) * 0.5,
+        },
+        "sizeMm": {
+            "x": abs(bbox["x1"] - bbox["x0"]),
+            "y": abs(bbox["y1"] - bbox["y0"]),
+            "z": abs(bbox["z1"] - bbox["z0"]),
+        },
+    }
+
+
+def audit_board_contact_contracts(boards, contracts, tol_mm=2.5):
+    """Generic final-AABB face-contact audit reusable by assembly modules."""
+    by_id = {str(row.get("id") or ""): row for row in boards or []}
+    contacts = []
+    findings = []
+
+    def _overlap(a, b, axis):
+        return max(
+            0.0,
+            min(float(a.get(axis + "1") or 0.0), float(b.get(axis + "1") or 0.0))
+            - max(float(a.get(axis + "0") or 0.0), float(b.get(axis + "0") or 0.0)),
+        )
+
+    for contract in contracts or []:
+        a = by_id.get(str(contract.get("a") or ""))
+        b = by_id.get(str(contract.get("b") or ""))
+        contract_id = str(contract.get("id") or "contact")
+        if not a or not b:
+            missing = contract.get("a") if not a else contract.get("b")
+            findings.append({
+                "severity": "error",
+                "code": "contact_missing_board",
+                "contractId": contract_id,
+                "detail": "{}: missing {}".format(contract_id, missing),
+            })
+            continue
+        abb = a.get("bboxMm") or a
+        bbb = b.get("bboxMm") or b
+        a_face = str(contract.get("aFace") or "")
+        b_face = str(contract.get("bFace") or "")
+        av = float(abb.get(a_face) or 0.0)
+        bv = float(bbb.get(b_face) or 0.0)
+        delta = av - bv
+        overlap_axes = contract.get("overlapAxes") or []
+        overlaps = {axis: _overlap(abb, bbb, axis) for axis in overlap_axes}
+        face_ok = abs(delta) <= float(contract.get("toleranceMm") or tol_mm)
+        overlap_ok = all(value > float(contract.get("toleranceMm") or tol_mm) for value in overlaps.values())
+        contacts.append({
+            "id": contract_id,
+            "a": contract.get("a"),
+            "b": contract.get("b"),
+            "aFace": a_face,
+            "bFace": b_face,
+            "deltaMm": round(delta, 3),
+            "overlapMm": overlaps,
+            "ok": face_ok and overlap_ok,
+        })
+        if not face_ok:
+            findings.append({
+                "severity": "error",
+                "code": "contact_gap",
+                "contractId": contract_id,
+                "detail": "{}: {}.{}={:.2f} vs {}.{}={:.2f} (delta={:.2f} mm)".format(
+                    contract_id,
+                    contract.get("a"), a_face, av,
+                    contract.get("b"), b_face, bv,
+                    delta,
+                ),
+            })
+        elif not overlap_ok:
+            findings.append({
+                "severity": "error",
+                "code": "contact_no_face_overlap",
+                "contractId": contract_id,
+                "detail": "{}: aligned faces have insufficient overlap {}".format(contract_id, overlaps),
+            })
+    return {
+        "ok": not findings,
+        "contacts": contacts,
+        "findings": findings,
+    }
+
+
+def audit_u_shape_top_contacts(boards, tol_mm=2.5):
+    """Semantic Style-1 T1/T2 corner contracts on final Fusion geometry."""
+    contracts = [
+        {"id": "left_t1_to_back_t2", "a": "LEFT.T1", "b": "BACK.T2", "aFace": "y0", "bFace": "y1", "overlapAxes": ["x", "z"]},
+        {"id": "right_t1_to_back_t2", "a": "RIGHT.T1", "b": "BACK.T2", "aFace": "y0", "bFace": "y1", "overlapAxes": ["x", "z"]},
+        {"id": "left_t2_to_back_t2", "a": "LEFT.T2", "b": "BACK.T2", "aFace": "y0", "bFace": "y1", "overlapAxes": ["x", "z"]},
+        {"id": "right_t2_to_back_t2", "a": "RIGHT.T2", "b": "BACK.T2", "aFace": "y0", "bFace": "y1", "overlapAxes": ["x", "z"]},
+        {"id": "back_t1_to_left_t1", "a": "BACK.T1", "b": "LEFT.T1", "aFace": "x0", "bFace": "x1", "overlapAxes": ["y", "z"]},
+        {"id": "back_t1_to_right_t1", "a": "BACK.T1", "b": "RIGHT.T1", "aFace": "x1", "bFace": "x0", "overlapAxes": ["y", "z"]},
+    ]
+    return audit_board_contact_contracts(boards, contracts, tol_mm=tol_mm)
+
+
+def audit_u_shape_clearance_fronts(boards, params=None, tol_mm=2.5):
+    """Independent final-BRep contract for the two side clearance fixed fronts."""
+    params = params if isinstance(params, dict) else {}
+    by_id = {str(row.get("id") or ""): row for row in (boards or []) if isinstance(row, dict)}
+    required = (
+        "BACK.BP",
+        "LEFT.FP_CLEARANCE_SIDE",
+        "RIGHT.FP_CLEARANCE_SIDE",
+        "BACK.FP_CLEARANCE_LEFT",
+        "BACK.FP_CLEARANCE_RIGHT",
+    )
+    missing = [board_id for board_id in required if board_id not in by_id]
+    if missing:
+        finding = {
+            "severity": "error",
+            "code": "clearance_front_missing",
+            "detail": "Missing clearance-front measure(s): {}.".format(", ".join(missing)),
+        }
+        return {"ok": False, "findings": [finding], "checks": []}
+
+    def _bb(board_id):
+        return by_id[board_id].get("bboxMm") or {}
+
+    def _span(bb, axis):
+        return abs(float(bb.get(axis + "1", 0.0)) - float(bb.get(axis + "0", 0.0)))
+
+    def _close(a, b):
+        return abs(float(a) - float(b)) <= float(tol_mm)
+
+    def _overlap_1d(a0, a1, b0, b1):
+        return max(0.0, min(float(a1), float(b1)) - max(float(a0), float(b0)))
+
+    back_bp = _bb("BACK.BP")
+    left = _bb("LEFT.FP_CLEARANCE_SIDE")
+    right = _bb("RIGHT.FP_CLEARANCE_SIDE")
+    back_left_corner = _bb("BACK.FP_CLEARANCE_RIGHT")
+    back_right_corner = _bb("BACK.FP_CLEARANCE_LEFT")
+    fpt = float(params.get("frontPanelThickness") or 16.0)
+    side_clearance = float(params.get("sideClearance") or 50.0)
+    cabinet_depth = float(params.get("cabinetDepth") or 400.0)
+    expected_y0 = float(back_bp["y1"]) + fpt
+    expected_y1 = expected_y0 + side_clearance
+    expected = {
+        "LEFT": {
+            "x0": float(back_bp["x0"]) + cabinet_depth,
+            "x1": float(back_bp["x0"]) + cabinet_depth + fpt,
+            "y0": expected_y0,
+            "y1": expected_y1,
+        },
+        "RIGHT": {
+            "x0": float(back_bp["x1"]) - cabinet_depth - fpt,
+            "x1": float(back_bp["x1"]) - cabinet_depth,
+            "y0": expected_y0,
+            "y1": expected_y1,
+        },
+    }
+    findings = []
+    checks = []
+    for run_id, actual in (("LEFT", left), ("RIGHT", right)):
+        target = expected[run_id]
+        checks.append({"runId": run_id, "bboxMm": actual, "expectedBboxXYMm": target})
+        size_ok = _close(_span(actual, "x"), fpt) and _close(_span(actual, "y"), side_clearance)
+        pose_ok = all(_close(actual.get(key), target[key]) for key in ("x0", "x1", "y0", "y1"))
+        if not size_ok:
+            findings.append({
+                "severity": "error",
+                "code": "clearance_front_size",
+                "runId": run_id,
+                "detail": "{} side clearance front is {:.2f}×{:.2f}; expected {:.2f}×{:.2f} mm.".format(
+                    run_id, _span(actual, "y"), _span(actual, "x"), side_clearance, fpt
+                ),
+            })
+        if not pose_ok:
+            findings.append({
+                "severity": "error",
+                "code": "clearance_front_pose",
+                "runId": run_id,
+                "detail": "{} side clearance front XY {} expected {}.".format(run_id, actual, target),
+            })
+
+    for run_id, side_bb, back_bb in (
+        ("LEFT", left, back_left_corner),
+        ("RIGHT", right, back_right_corner),
+    ):
+        x_overlap = _overlap_1d(side_bb["x0"], side_bb["x1"], back_bb["x0"], back_bb["x1"])
+        y_overlap = _overlap_1d(side_bb["y0"], side_bb["y1"], back_bb["y0"], back_bb["y1"])
+        face_touch = _close(side_bb["y0"], back_bb["y1"]) and x_overlap > tol_mm
+        if not face_touch or y_overlap > tol_mm:
+            findings.append({
+                "severity": "error",
+                "code": "clearance_front_joint",
+                "runId": run_id,
+                "detail": "{} side/BACK clearance fronts must face-touch without volume overlap.".format(run_id),
+            })
+
+    for run_id, side_bb in (("LEFT", left), ("RIGHT", right)):
+        for row in boards or []:
+            if str(row.get("runId") or "") != run_id:
+                continue
+            if not re.match(r"^FP\d+$", str(row.get("localBoardId") or "")):
+                continue
+            front_bb = row.get("bboxMm") or {}
+            if (
+                _overlap_1d(side_bb["x0"], side_bb["x1"], front_bb["x0"], front_bb["x1"]) > tol_mm
+                and _overlap_1d(side_bb["y0"], side_bb["y1"], front_bb["y0"], front_bb["y1"]) > tol_mm
+            ):
+                findings.append({
+                    "severity": "error",
+                    "code": "clearance_front_function_overlap",
+                    "runId": run_id,
+                    "detail": "{} side clearance front overlaps {}.".format(run_id, row.get("id")),
+                })
+                break
+    return {"ok": not findings, "checks": checks, "findings": findings}
+
+
+def audit_u_shape_corner_ownership(boards, params=None, tol_mm=2.5):
+    """Final-world contract: BACK owns both depth×depth corner cells."""
+    params = params if isinstance(params, dict) else {}
+    by_id = {str(row.get("id") or ""): row for row in (boards or []) if isinstance(row, dict)}
+    required = ("LEFT.BP", "BACK.BP", "RIGHT.BP")
+    missing = [board_id for board_id in required if board_id not in by_id]
+    if missing:
+        finding = {
+            "severity": "error",
+            "code": "back_corner_ownership",
+            "detail": "Corner ownership audit missing {}.".format(", ".join(missing)),
+        }
+        return {"ok": False, "checks": [], "findings": [finding]}
+
+    left = by_id["LEFT.BP"].get("bboxMm") or {}
+    back = by_id["BACK.BP"].get("bboxMm") or {}
+    right = by_id["RIGHT.BP"].get("bboxMm") or {}
+    depth = float(params.get("cabinetDepth") or 400.0)
+    total_width = float(params.get("totalWidth") or (float(back["x1"]) - float(back["x0"])))
+    left_length = float(params.get("leftArmLength") or 0.0)
+    right_length = float(params.get("rightArmLength") or 0.0)
+
+    def _close(a, b):
+        return abs(float(a) - float(b)) <= float(tol_mm)
+
+    def _overlap_volume(a, b):
+        return (
+            max(0.0, min(float(a["x1"]), float(b["x1"])) - max(float(a["x0"]), float(b["x0"])))
+            * max(0.0, min(float(a["y1"]), float(b["y1"])) - max(float(a["y0"]), float(b["y0"])))
+            * max(0.0, min(float(a["z1"]), float(b["z1"])) - max(float(a["z0"]), float(b["z0"])))
+        )
+
+    ox = float(back["x0"])
+    oy = float(back["y0"])
+    checks = [{
+        "backBboxMm": back,
+        "leftBboxMm": left,
+        "rightBboxMm": right,
+        "expectedBackSizeMm": {"x": total_width, "y": depth},
+        "expectedSideStartY": oy + depth,
+    }]
+    findings = []
+    if not (
+        _close(float(back["x1"]) - float(back["x0"]), total_width)
+        and _close(float(back["y1"]) - float(back["y0"]), depth)
+    ):
+        findings.append({
+            "severity": "error",
+            "code": "back_corner_ownership",
+            "detail": "BACK.BP must be full width {:.2f}×{:.2f} mm.".format(total_width, depth),
+        })
+    side_contracts = (
+        ("LEFT", left, ox, ox + depth, left_length - depth),
+        ("RIGHT", right, ox + total_width - depth, ox + total_width, right_length - depth),
+    )
+    for run_id, bb, x0, x1, expected_length in side_contracts:
+        if not (_close(bb["x0"], x0) and _close(bb["x1"], x1) and _close(bb["y0"], oy + depth)):
+            findings.append({
+                "severity": "error",
+                "code": "{}_corner_not_side".format(run_id.lower()),
+                "runId": run_id,
+                "detail": "{}.BP must start at y=BACK.BP.y1 and stay outside BACK-owned corner.".format(run_id),
+            })
+        if expected_length > 0 and not _close(float(bb["y1"]) - float(bb["y0"]), expected_length):
+            findings.append({
+                "severity": "error",
+                "code": "{}_arm_back_seam".format(run_id.lower()),
+                "runId": run_id,
+                "detail": "{}.BP length {:.2f} expected {:.2f}.".format(
+                    run_id, float(bb["y1"]) - float(bb["y0"]), expected_length
+                ),
+            })
+        if _overlap_volume(bb, back) > 1.0:
+            findings.append({
+                "severity": "error",
+                "code": "corner_double_occupancy",
+                "runId": run_id,
+                "detail": "{}.BP positively overlaps BACK.BP in a corner.".format(run_id),
+            })
+    return {"ok": not findings, "checks": checks, "findings": findings}
+
+
+def audit_u_shape_back_t3_profile(result, measured_boards=None, tol_mm=0.1):
+    """Require every BACK divider notch to be present in generated T3/T4 outlines."""
+    findings = []
+    if not isinstance(result, dict):
+        return {
+            "ok": False,
+            "findings": [{"severity": "error", "code": "back_t3_notch_expected_missing", "detail": "Missing generator result."}],
+            "checks": [],
+        }
+    back_run = next(
+        (run for run in (result.get("runs") or []) if isinstance(run, dict) and str(run.get("id") or "") == "BACK"),
+        None,
+    )
+    run_result = back_run.get("result") if isinstance(back_run, dict) and isinstance(back_run.get("result"), dict) else {}
+    boards = run_result.get("boards") or []
+    t3 = next((board for board in boards if isinstance(board, dict) and board.get("id") == "T3"), None)
+    t4 = next((board for board in boards if isinstance(board, dict) and board.get("id") == "T4"), None)
+    notch_ranges = []
+    for feature in run_result.get("features") or []:
+        notch = feature.get("t3_notch") if isinstance(feature, dict) else None
+        x_range = notch.get("x") if isinstance(notch, dict) else None
+        if isinstance(x_range, list) and len(x_range) == 2:
+            notch_ranges.append([float(x_range[0]), float(x_range[1])])
+
+    def _profile_xs(board):
+        return [
+            float(point.get("x"))
+            for point in (board.get("profileVector") or []) if isinstance(point, dict) and point.get("x") is not None
+        ] if isinstance(board, dict) else []
+
+    def _contains(xs, target):
+        return any(abs(value - target) <= tol_mm for value in xs)
+
+    t3_xs = _profile_xs(t3)
+    t4_xs = _profile_xs(t4)
+    for x0, x1 in notch_ranges:
+        if not (_contains(t3_xs, x0) and _contains(t3_xs, x1)):
+            findings.append({
+                "severity": "error",
+                "code": "back_t3_notch_profile",
+                "detail": "BACK.T3 profile missing divider notch [{:.2f},{:.2f}].".format(x0, x1),
+            })
+        if not (_contains(t4_xs, x0) and _contains(t4_xs, x1)):
+            findings.append({
+                "severity": "error",
+                "code": "back_t4_notch_profile",
+                "detail": "BACK.T4 profile missing divider notch [{:.2f},{:.2f}].".format(x0, x1),
+            })
+    measured_ids = {str(row.get("id") or "") for row in (measured_boards or []) if isinstance(row, dict)}
+    if measured_boards is not None and "BACK.T3" not in measured_ids:
+        findings.append({"severity": "error", "code": "back_t3_missing_body", "detail": "Final BACK.T3 BRep body is missing."})
+    return {
+        "ok": bool(notch_ranges) and not findings,
+        "checks": [{"notchRanges": notch_ranges, "t3ProfilePointCount": len(t3_xs), "t4ProfilePointCount": len(t4_xs)}],
+        "findings": findings,
+    }
+
+
+def audit_u_shape_t4_geometry(boards, params=None, tol_mm=2.5):
+    """Final BRep T4 must be a folded 50 mm strip, never a cabinet-depth slab."""
+    params = params if isinstance(params, dict) else {}
+    by_id = {str(row.get("id") or ""): row for row in (boards or []) if isinstance(row, dict)}
+    feature_width = float(params.get("featureWidth") or 15.0)
+    findings = []
+    checks = []
+    for run_id in ("LEFT", "BACK", "RIGHT"):
+        row = by_id.get("{}.T4".format(run_id))
+        if not row:
+            findings.append({"severity": "error", "code": "t4_missing_body", "runId": run_id, "detail": "{}.T4 is missing.".format(run_id)})
+            continue
+        bb = row.get("bboxMm") or {}
+        sizes = {
+            "x": abs(float(bb["x1"]) - float(bb["x0"])),
+            "y": abs(float(bb["y1"]) - float(bb["y0"])),
+            "z": abs(float(bb["z1"]) - float(bb["z0"])),
+        }
+        checks.append({"runId": run_id, "sizeMm": sizes})
+        thin_axis = sizes["x"] if run_id in ("LEFT", "RIGHT") else sizes["y"]
+        if abs(sizes["z"] - 50.0) > tol_mm:
+            findings.append({
+                "severity": "error",
+                "code": "t4_geometry_height",
+                "runId": run_id,
+                "detail": "{}.T4 final height {:.2f} mm expected 50 mm.".format(run_id, sizes["z"]),
+            })
+        if abs(thin_axis - feature_width) > tol_mm:
+            findings.append({
+                "severity": "error",
+                "code": "t4_geometry_thickness",
+                "runId": run_id,
+                "detail": "{}.T4 folded thickness {:.2f} mm expected {:.2f}.".format(run_id, thin_axis, feature_width),
+            })
+    return {"ok": not findings, "checks": checks, "findings": findings}
+
+
+def _expected_world_boards_from_result(result, origin_offset_mm=None):
+    """Build expected final Adapter AABBs (+ assembly origin), not raw generator poses."""
+    origin = origin_offset_mm if isinstance(origin_offset_mm, dict) else {}
+    ox = float(origin.get("x") or 0.0)
+    oy = float(origin.get("y") or 0.0)
+    oz = float(origin.get("z") or 0.0)
+    params = result.get("params") if isinstance(result, dict) and isinstance(result.get("params"), dict) else {}
+    fg = float(params.get("featureWidth") or 15.0)
+    top_clearance = float(params.get("topClearanceHeight") or 40.0)
+    run_rotations = {}
+    for run in (result.get("runs") or []) if isinstance(result, dict) else []:
+        if not isinstance(run, dict):
+            continue
+        transform = run.get("transform") if isinstance(run.get("transform"), dict) else {}
+        run_rotations[str(run.get("id") or "")] = float(transform.get("rotationDeg") or 0.0)
+    rows = []
+    world_boards = result.get("worldBoards") if isinstance(result, dict) else None
+    if not isinstance(world_boards, list):
+        return rows
+    for board in world_boards:
+        if not isinstance(board, dict):
+            continue
+        local_id = str(board.get("localBoardId") or board.get("id") or "")
+        run_id = str(board.get("runId") or "")
+        board_key = str(board.get("id") or "{}.{}".format(run_id, local_id))
+        z0 = float(board.get("z0") or 0.0) + oz
+        z1 = float(board.get("z1") or 0.0) + oz
+        x_shift = 0.0
+        y_shift = 0.0
+        if local_id in ("T1", "T2"):
+            # `_placement_offset_mm`: local +Y by TCH-1 before the run's Z pose.
+            local_y_shift = top_clearance - 1.0
+            rad = math.radians(run_rotations.get(run_id, 0.0))
+            x_shift = -math.sin(rad) * local_y_shift
+            y_shift = math.cos(rad) * local_y_shift
+        # Style-1 Fusion support shift: BP/T1/T2 move +FGw in Z.
+        if local_id in ("BP", "T1", "T2"):
+            z0 += fg
+            z1 += fg
+        bbox = {
+            "x0": float(board.get("x0") or 0.0) + ox + x_shift,
+            "x1": float(board.get("x1") or 0.0) + ox + x_shift,
+            "y0": float(board.get("y0") or 0.0) + oy + y_shift,
+            "y1": float(board.get("y1") or 0.0) + oy + y_shift,
+            "z0": z0,
+            "z1": z1,
+        }
+        # Side clearance fronts require final XY certification; ignore only the
+        # known global FP Z postprocess offset.
+        # T1/T2 keep XY from generator (only Z shifts) — full AABB after Z bake.
+        if local_id == "FP_CLEARANCE_SIDE":
+            compare_mode = "xy_aabb"
+        elif local_id in ("T3", "T4") or local_id.startswith("FP"):
+            compare_mode = "height_band"
+        else:
+            compare_mode = "aabb"
+        row = {
+            "id": board_key,
+            "runId": run_id,
+            "localBoardId": local_id,
+            "bboxMm": bbox,
+            "compareMode": compare_mode,
+            **_bbox_center_size(bbox),
+        }
+        rows.append(row)
+    return rows
+
+
+def compare_u_shape_board_poses(expected_boards, measured_boards, tol_mm=2.5, cabinet_height_mm=400.0):
+    """Math pose audit: expected generator AABB vs Fusion-measured world AABB."""
+    findings = []
+    measured_by_id = {}
+    for row in measured_boards or []:
+        key = str(row.get("id") or "")
+        if key:
+            measured_by_id[key] = row
+        # Also index local under run for attribute-only ids.
+        run_id = str(row.get("runId") or "")
+        local = str(row.get("localBoardId") or "")
+        if run_id and local:
+            measured_by_id.setdefault("{}.{}".format(run_id, local), row)
+
+    matched = 0
+    for expected in expected_boards or []:
+        key = str(expected.get("id") or "")
+        measured = measured_by_id.get(key)
+        if measured is None:
+            # Front panels / optional boards may be absent depending on zone type.
+            if expected.get("compareMode") == "height_band":
+                continue
+            findings.append({
+                "severity": "error",
+                "code": "missing_board",
+                "detail": "{} not found in Fusion measure".format(key),
+            })
+            continue
+        matched += 1
+        mode = expected.get("compareMode") or "aabb"
+        e_bb = expected.get("bboxMm") or {}
+        m_bb = measured.get("bboxMm") or {}
+        if mode == "height_band":
+            m_h = abs(float(m_bb.get("z1", 0.0)) - float(m_bb.get("z0", 0.0)))
+            if m_h > float(cabinet_height_mm) + 120.0:
+                findings.append({
+                    "severity": "error",
+                    "code": "postprocess_spike",
+                    "detail": "{} measured Z span {:.2f} > cabinetHeight+120".format(key, m_h),
+                })
+            continue
+        axis_rows = (
+            (("x", "x0", "x1"), ("y", "y0", "y1"))
+            if mode == "xy_aabb"
+            else (("x", "x0", "x1"), ("y", "y0", "y1"), ("z", "z0", "z1"))
+        )
+        for axis, a0, a1 in axis_rows:
+            for corner in (a0, a1):
+                ev = float(e_bb.get(corner, 0.0))
+                mv = float(m_bb.get(corner, 0.0))
+                if abs(ev - mv) > tol_mm:
+                    findings.append({
+                        "severity": "error",
+                        "code": "pose_mismatch",
+                        "detail": "{} {} expected {:.2f} measured {:.2f} (tol={})".format(
+                            key, corner, ev, mv, tol_mm
+                        ),
+                    })
+                    break
+            else:
+                continue
+            break
+        # Size check (order-independent) as a second signal.
+        e_size = expected.get("sizeMm") or _bbox_center_size(e_bb)["sizeMm"]
+        m_size = measured.get("sizeMm") or _bbox_center_size(m_bb)["sizeMm"]
+        size_axes = ("x", "y") if mode == "xy_aabb" else ("x", "y", "z")
+        for axis in size_axes:
+            if abs(float(e_size.get(axis, 0.0)) - float(m_size.get(axis, 0.0))) > tol_mm:
+                findings.append({
+                    "severity": "error",
+                    "code": "size_mismatch",
+                    "detail": "{} size.{} expected {:.2f} measured {:.2f}".format(
+                        key, axis, float(e_size.get(axis, 0.0)), float(m_size.get(axis, 0.0))
+                    ),
+                })
+    return {
+        "ok": not any(row.get("severity") == "error" for row in findings),
+        "matched": matched,
+        "expectedCount": len(expected_boards or []),
+        "measuredCount": len(measured_boards or []),
+        "tolMm": tol_mm,
+        "findings": findings,
+    }
+
+
+def write_u_shape_fusion_measure_log(payload, plugin_dir=None):
+    """Persist Fusion AABB / spike measurements for the offline agent loop."""
+    root = plugin_dir or _plugin_root_dir()
+    log_dir = os.path.join(root, "logs")
+    log_path = os.path.join(log_dir, "u_shape_ohc_fusion_measure.json")
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        with open(log_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, ensure_ascii=False, default=str)
+        return log_path
+    except Exception as ex:
+        return "write_failed:{}".format(ex)
+
+
+def find_u_shape_assemblies(root_component):
+    """Return [{component, occurrence, name, params, origin}] for module=u_shape_overhead."""
+    rows = []
+    if root_component is None:
+        return rows
+    try:
+        occurrences = root_component.occurrences
+    except Exception:
+        return rows
+    for index in range(occurrences.count):
+        try:
+            occurrence = occurrences.item(index)
+            component = occurrence.component
+            attrs = component.attributes
+            module_attr = attrs.itemByName(ATTRIBUTE_GROUP, "module") if attrs else None
+            if not module_attr or str(module_attr.value) != "u_shape_overhead":
+                continue
+            params = {}
+            params_attr = attrs.itemByName(ATTRIBUTE_GROUP, "uShapeParams") if attrs else None
+            if params_attr and params_attr.value:
+                try:
+                    params = json.loads(params_attr.value)
+                except Exception:
+                    params = {}
+            revision_attr = attrs.itemByName(ATTRIBUTE_GROUP, "uShapeGeometryRevision") if attrs else None
+            if isinstance(params, dict):
+                params["geometryRevision"] = (
+                    str(revision_attr.value)
+                    if revision_attr and revision_attr.value
+                    else "legacy_side_owns_corners"
+                )
+            origin = {}
+            origin_attr = attrs.itemByName(ATTRIBUTE_GROUP, "uShapeOriginMm") if attrs else None
+            if origin_attr and origin_attr.value:
+                try:
+                    origin = json.loads(origin_attr.value)
+                except Exception:
+                    origin = {}
+            if not origin:
+                try:
+                    translation = occurrence.transform.translation
+                    origin = {
+                        "x": translation.x * 10.0,
+                        "y": translation.y * 10.0,
+                        "z": translation.z * 10.0,
+                    }
+                except Exception:
+                    origin = {"x": 0.0, "y": 0.0, "z": 0.0}
+            rows.append({
+                "component": component,
+                "occurrence": occurrence,
+                "name": str(component.name or occurrence.name or "UOHC"),
+                "params": params if isinstance(params, dict) else {},
+                "origin": origin if isinstance(origin, dict) else {},
+            })
+        except Exception:
+            continue
+    return rows
+
+
+def _bbox_volume_mm(bbox):
+    if not bbox:
+        return 0.0
+    return abs(bbox["x1"] - bbox["x0"]) * abs(bbox["y1"] - bbox["y0"]) * abs(bbox["z1"] - bbox["z0"])
+
+
+def _body_bbox_mm(body):
+    try:
+        body_bb = body.boundingBox
+    except Exception:
+        return None
+    return {
+        "x0": body_bb.minPoint.x * 10.0,
+        "y0": body_bb.minPoint.y * 10.0,
+        "z0": body_bb.minPoint.z * 10.0,
+        "x1": body_bb.maxPoint.x * 10.0,
+        "y1": body_bb.maxPoint.y * 10.0,
+        "z1": body_bb.maxPoint.z * 10.0,
+    }
+
+
+def _brep_face_bbox_mm(face):
+    try:
+        bb = face.boundingBox
+    except Exception:
+        return None
+    return {
+        "x0": bb.minPoint.x * 10.0,
+        "y0": bb.minPoint.y * 10.0,
+        "z0": bb.minPoint.z * 10.0,
+        "x1": bb.maxPoint.x * 10.0,
+        "y1": bb.maxPoint.y * 10.0,
+        "z1": bb.maxPoint.z * 10.0,
+    }
+
+
+def _union_bboxes_mm(boxes):
+    boxes = [row for row in (boxes or []) if isinstance(row, dict)]
+    if not boxes:
+        return None
+    return {
+        "x0": min(row["x0"] for row in boxes),
+        "y0": min(row["y0"] for row in boxes),
+        "z0": min(row["z0"] for row in boxes),
+        "x1": max(row["x1"] for row in boxes),
+        "y1": max(row["y1"] for row in boxes),
+        "z1": max(row["z1"] for row in boxes),
+    }
+
+
+def _led_segment_label_from_feature_name(name):
+    token = str(name or "").lower()
+    for label in ("main", "branch1", "branch2"):
+        if token.endswith("_{}".format(label)):
+            return label
+    return None
+
+
+def _measure_t3_led_cut_features(component, run_id, child_matrix=None, run_matrix=None, parent_matrix=None):
+    """Measure actual BRep floor faces produced by named T3 LED cuts.
+
+    Names identify segments only. Endpoint/depth values come from resulting
+    end faces after body MoveFeatures, not from input groove rectangles.
+    """
+    rows = []
+    try:
+        extrudes = component.features.extrudeFeatures
+        feature_count = extrudes.count
+    except Exception:
+        return rows
+    for feature_index in range(feature_count):
+        try:
+            feature = extrudes.item(feature_index)
+            feature_name = str(feature.name or "")
+        except Exception:
+            continue
+        if not feature_name.upper().startswith("OH_T3_LED_CUT_"):
+            continue
+        label = _led_segment_label_from_feature_name(feature_name) or "unknown"
+        feature_token = feature_name[len("OH_T3_LED_CUT_"):]
+        feature_id = (
+            feature_token[:-(len(label) + 1)]
+            if label != "unknown" and feature_token.lower().endswith("_{}".format(label))
+            else feature_token
+        )
+        face_boxes = []
+        floor_area_mm2 = 0.0
+        try:
+            end_faces = feature.endFaces
+            for face_index in range(end_faces.count):
+                face = end_faces.item(face_index)
+                local = _brep_face_bbox_mm(face)
+                if local:
+                    face_boxes.append(local)
+                try:
+                    floor_area_mm2 += float(face.area) * 100.0
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        if not face_boxes:
+            # Fusion may drop `endFaces` references after downstream body MoveFeatures.
+            # `feature.faces` still exposes the resulting planar groove floor; reject
+            # vertical walls by requiring near-zero Z span and positive XY area.
+            try:
+                feature_faces = feature.faces
+                for face_index in range(feature_faces.count):
+                    face = feature_faces.item(face_index)
+                    local = _brep_face_bbox_mm(face)
+                    if not local:
+                        continue
+                    z_span = abs(float(local["z1"]) - float(local["z0"]))
+                    xy_area = abs(float(local["x1"]) - float(local["x0"])) * abs(
+                        float(local["y1"]) - float(local["y0"])
+                    )
+                    if z_span <= 0.1 and xy_area > 0.1:
+                        face_boxes.append(local)
+                        try:
+                            floor_area_mm2 += float(face.area) * 100.0
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+        local_floor = _union_bboxes_mm(face_boxes)
+        if not local_floor:
+            rows.append({
+                "runId": str(run_id),
+                "segment": label,
+                "featureId": feature_id,
+                "featureName": feature_name,
+                "status": "missing_end_face",
+            })
+            continue
+        world_floor = _world_bbox_corners_mm(local_floor, child_matrix, run_matrix, parent_matrix)
+        rows.append({
+            "runId": str(run_id),
+            "segment": label,
+            "featureId": feature_id,
+            "featureName": feature_name,
+            "status": "measured",
+            "source": "BRepExtrudeEndFace",
+            "bboxMm": world_floor,
+            "sizeMm": _bbox_center_size(world_floor)["sizeMm"],
+            "floorAreaMm2": round(floor_area_mm2, 4),
+        })
+    return rows
+
+
+def audit_u_shape_led_grooves(measurements, boards, result, tol_mm=2.0):
+    """Audit final BRep LED cuts by feature and BACK-owned corner continuity."""
+    findings = []
+    checks = []
+    if not isinstance(result, dict) or not isinstance(result.get("runs"), list):
+        finding = {
+            "severity": "error",
+            "code": "led_expected_missing",
+            "detail": "LED audit has no regenerated U Shape result; Fusion evidence cannot be certified.",
+        }
+        return {"ok": False, "measured": list(measurements or []), "checks": [], "findings": [finding]}
+
+    expected_by_run = {}
+    for run in result.get("runs") or []:
+        if not isinstance(run, dict):
+            continue
+        run_id = str(run.get("id") or "").upper()
+        run_result = run.get("result") if isinstance(run.get("result"), dict) else {}
+        expected_by_run[run_id] = [
+            row for row in (run_result.get("features") or [])
+            if isinstance(row, dict) and row.get("type") == "t3_groove" and row.get("targetBoardId") == "T3"
+        ]
+    boards_by_id = {str(row.get("id") or "").upper(): row for row in (boards or []) if isinstance(row, dict)}
+
+    def _error(code, detail, run_id, segment=None, feature_id=None):
+        finding = {"severity": "error", "code": code, "runId": run_id, "detail": detail}
+        if segment:
+            finding["segment"] = segment
+        if feature_id:
+            finding["featureId"] = feature_id
+        findings.append(finding)
+
+    expected_keys = set()
+    measured_main_by_run = {}
+    for run_id in ("LEFT", "BACK", "RIGHT"):
+        body_row = boards_by_id.get("{}.T3".format(run_id))
+        body_bb = body_row.get("bboxMm") if isinstance(body_row, dict) else None
+        features = expected_by_run.get(run_id) or []
+        if features and not isinstance(body_bb, dict):
+            _error("led_missing_cut", "{}.T3 body measure is missing.".format(run_id), run_id)
+            continue
+        for feature in features:
+            feature_id = str(feature.get("id") or "T3_led_groove")
+            feature_key = feature_id.lower()
+            expected_keys.add((run_id, feature_key))
+            feature_rows = [
+                row for row in (measurements or [])
+                if str(row.get("runId") or "").upper() == run_id
+                and str(row.get("featureId") or "").lower() == feature_key
+            ]
+            required = []
+            if isinstance(feature.get("main"), dict):
+                required.append("main")
+            required.extend(
+                "branch{}".format(index + 1)
+                for index, branch in enumerate(feature.get("branches") or [])
+                if isinstance(branch, dict)
+            )
+            by_segment = {
+                str(row.get("segment") or ""): row
+                for row in feature_rows
+                if row.get("status") == "measured" and isinstance(row.get("bboxMm"), dict)
+            }
+            missing = [segment for segment in required if segment not in by_segment]
+            if missing:
+                _error(
+                    "led_missing_cut",
+                    "{} {} missing final BRep segment(s): {}.".format(run_id, feature_id, ", ".join(missing)),
+                    run_id,
+                    feature_id=feature_id,
+                )
+                continue
+            expected_depth = float(feature.get("depth") or 6.5)
+            expected_width = float(feature.get("width") or 14.5)
+            for segment in required:
+                row = by_segment[segment]
+                bb = row["bboxMm"]
+                floor_z = (float(bb["z0"]) + float(bb["z1"])) / 2.0
+                groove_depth = float(body_bb["z1"]) - floor_z
+                size = _bbox_center_size(bb)["sizeMm"]
+                planar_sizes = [float(size["x"]), float(size["y"])]
+                width_value = min(value for value in planar_sizes if value > 0.05)
+                row["floorZMm"] = round(floor_z, 4)
+                row["floorDepthMm"] = round(groove_depth, 4)
+                row["measuredWidthMm"] = round(width_value, 4)
+                if float(row.get("floorAreaMm2") or 0.0) <= 0.1:
+                    _error("led_wrong_face", "{} {} has no positive-area groove floor.".format(feature_id, segment), run_id, segment, feature_id)
+                if abs(groove_depth - expected_depth) > tol_mm:
+                    _error("led_wrong_face", "{} {} depth {:.2f} expected {:.2f}.".format(feature_id, segment, groove_depth, expected_depth), run_id, segment, feature_id)
+                if abs(width_value - expected_width) > tol_mm:
+                    _error("led_width", "{} {} width {:.2f} expected {:.2f}.".format(feature_id, segment, width_value, expected_width), run_id, segment, feature_id)
+
+            role = str(feature.get("role") or "")
+            if role == "u_corner_continuation":
+                continuation_rows = [by_segment[name]["bboxMm"] for name in required]
+                expected_span = float(result.get("params", {}).get("frontPanelThickness") or 16.0) \
+                    + float(result.get("params", {}).get("featureWidth") or 15.0) + 10.0
+                back_seam = float(body_bb["y1"])
+                for bb in continuation_rows:
+                    if abs(float(bb["y1"]) - back_seam) > tol_mm or abs((float(bb["y1"]) - float(bb["y0"])) - expected_span) > tol_mm:
+                        _error(
+                            "led_corner_continuation",
+                            "BACK continuation Y [{:.2f},{:.2f}] must end at seam {:.2f} with span {:.2f}.".format(
+                                float(bb["y0"]), float(bb["y1"]), back_seam, expected_span
+                            ),
+                            run_id,
+                            feature_id=feature_id,
+                        )
+                checks.append({"runId": run_id, "featureId": feature_id, "role": role, "segmentCount": len(continuation_rows)})
+                continue
+
+            main_row = by_segment.get("main")
+            if main_row:
+                main_bb = main_row["bboxMm"]
+                measured_main_by_run[run_id] = main_bb
+                if run_id in ("LEFT", "RIGHT"):
+                    rear_gap = float(main_bb["y0"]) - float(body_bb["y0"])
+                    front_gap = float(body_bb["y1"]) - float(main_bb["y1"])
+                    branch_centers = sorted(
+                        (float(by_segment[name]["bboxMm"]["y0"]) + float(by_segment[name]["bboxMm"]["y1"])) / 2.0
+                        for name in required if name.startswith("branch")
+                    )
+                    expected_centers = [float(body_bb["y0"]) + 80.0, float(body_bb["y1"]) - 80.0]
+                    checks.append({"runId": run_id, "featureId": feature_id, "rearSeamGapMm": rear_gap, "frontLandMm": front_gap})
+                    if abs(rear_gap) > tol_mm or abs(front_gap) > tol_mm:
+                        _error("led_side_extent", "{} side LED must span seam to open tip.".format(run_id), run_id, "main", feature_id)
+                    if len(branch_centers) != 2 or any(abs(a - b) > tol_mm for a, b in zip(branch_centers, expected_centers)):
+                        _error("led_branch_offset", "{} branch centers {} expected {}.".format(run_id, branch_centers, expected_centers), run_id, feature_id=feature_id)
+                else:
+                    start_gap = float(main_bb["x0"]) - float(body_bb["x0"])
+                    end_gap = float(body_bb["x1"]) - float(main_bb["x1"])
+                    params_row = result.get("params") if isinstance(result.get("params"), dict) else {}
+                    expected_inset = (
+                        float(params_row.get("cabinetDepth") or 400.0)
+                        - float(params_row.get("frontPanelThickness") or 16.0)
+                        - float(params_row.get("featureWidth") or 15.0)
+                        - (float(params_row.get("topClearanceHeight") or 40.0) - 1.0)
+                        - 10.0
+                    )
+                    branch_centers = sorted(
+                        (float(by_segment[name]["bboxMm"]["x0"]) + float(by_segment[name]["bboxMm"]["x1"])) / 2.0
+                        for name in required if name.startswith("branch")
+                    )
+                    expected_centers = sorted(
+                        float(body_bb["x1"]) - (
+                            float(branch.get("x0", 0.0)) + float(branch.get("x1", 0.0))
+                        ) / 2.0
+                        for branch in (feature.get("branches") or []) if isinstance(branch, dict)
+                    )
+                    checks.append({
+                        "runId": run_id,
+                        "featureId": feature_id,
+                        "startGapMm": start_gap,
+                        "endGapMm": end_gap,
+                        "expectedInsetMm": expected_inset,
+                    })
+                    if abs(start_gap - expected_inset) > tol_mm or abs(end_gap - expected_inset) > tol_mm:
+                        _error("led_back_extent", "BACK LED must stop 10 mm past both side T2 faces.", run_id, "main", feature_id)
+                    if len(branch_centers) != 2 or any(abs(a - b) > tol_mm for a, b in zip(branch_centers, expected_centers)):
+                        _error("led_branch_offset", "BACK branch centers {} expected {}.".format(branch_centers, expected_centers), run_id, feature_id=feature_id)
+
+    for row in measurements or []:
+        key = (str(row.get("runId") or "").upper(), str(row.get("featureId") or "").lower())
+        if key not in expected_keys:
+            _error("led_extra_cut", "Unexpected measured LED feature {}.".format(row.get("featureName")), key[0], feature_id=row.get("featureId"))
+
+    continuation_feature = next(
+        (
+            feature for feature in (expected_by_run.get("BACK") or [])
+            if str(feature.get("role") or "") == "u_corner_continuation"
+        ),
+        None,
+    )
+    if continuation_feature:
+        continuation_rows = [
+            row for row in (measurements or [])
+            if str(row.get("runId") or "").upper() == "BACK"
+            and str(row.get("featureId") or "").lower() == str(continuation_feature.get("id") or "").lower()
+            and isinstance(row.get("bboxMm"), dict)
+        ]
+        continuation_centers = sorted(
+            (float(row["bboxMm"]["x0"]) + float(row["bboxMm"]["x1"])) / 2.0 for row in continuation_rows
+        )
+        side_centers = sorted(
+            (float(bb["x0"]) + float(bb["x1"])) / 2.0
+            for run_id, bb in measured_main_by_run.items() if run_id in ("LEFT", "RIGHT")
+        )
+        if len(continuation_centers) != len(side_centers) or any(
+            abs(a - b) > tol_mm for a, b in zip(continuation_centers, side_centers)
+        ):
+            _error(
+                "led_cross_run_gap",
+                "BACK continuation X centers {} do not align with side mains {}.".format(continuation_centers, side_centers),
+                "BACK",
+                feature_id=continuation_feature.get("id"),
+            )
+
+    return {
+        "ok": not any(row.get("severity") == "error" for row in findings),
+        "toleranceMm": tol_mm,
+        "measured": list(measurements or []),
+        "checks": checks,
+        "findings": findings,
+    }
+
+
+def _append_measured_board(measure, run_id, local_board_id, component_name, world_bb, board_index=None):
+    if not world_bb or not local_board_id:
+        return False
+    if _bbox_volume_mm(world_bb) <= 1e-3:
+        return False
+    board_key = "{}.{}".format(run_id or "RUN", local_board_id)
+    meta = _bbox_center_size(world_bb)
+    height = meta["sizeMm"]["z"]
+    row = {
+        "id": board_key,
+        "runId": run_id or "RUN",
+        "localBoardId": local_board_id,
+        "componentName": component_name,
+        "bboxMm": world_bb,
+        "heightMm": height,
+        "spikeDetected": height > measure["spikeLimitMm"],
+        **meta,
+    }
+    if board_index is not None and 0 <= board_index < len(measure["boards"]):
+        measure["boards"][board_index] = row
+    else:
+        measure["boards"].append(row)
+    if local_board_id == "T4":
+        # Keep t4 list in sync with latest row.
+        measure["t4Boards"] = [entry for entry in measure["t4Boards"] if entry.get("id") != board_key]
+        measure["t4Boards"].append(row)
+    if row["spikeDetected"]:
+        measure["spikeDetected"] = True
+        measure["ok"] = False
+        measure["findings"].append(
+            "{} height {:.1f} mm exceeds spike limit.".format(board_key, height)
+        )
+    return True
+
+
+def measure_u_shape_assembly(
+    parent_component,
+    result=None,
+    parent_occurrence=None,
+    params=None,
+    origin_offset_mm=None,
+    tol_mm=2.5,
+):
+    """Measure every board's world XYZ AABB and math-compare to generator poses.
+
+    Writes the basis for autonomous assembly checks — no viewport required.
+    """
+    resolved_params = {}
+    expected_revision = None
+    assembly_revision = params.get("geometryRevision") if isinstance(params, dict) else None
+    if isinstance(result, dict) and isinstance(result.get("params"), dict):
+        resolved_params.update(result.get("params"))
+        meta = result.get("meta") if isinstance(result.get("meta"), dict) else {}
+        if meta.get("geometryRevision"):
+            expected_revision = meta.get("geometryRevision")
+            resolved_params["geometryRevision"] = expected_revision
+    if isinstance(params, dict):
+        resolved_params.update(params)
+    cabinet_height = float(resolved_params.get("cabinetHeight") or 400.0)
+    origin = origin_offset_mm if isinstance(origin_offset_mm, dict) else {}
+    if not origin and parent_occurrence is not None:
+        try:
+            translation = parent_occurrence.transform.translation
+            origin = {
+                "x": translation.x * 10.0,
+                "y": translation.y * 10.0,
+                "z": translation.z * 10.0,
+            }
+        except Exception:
+            origin = {"x": 0.0, "y": 0.0, "z": 0.0}
+    measure = {
+        "ok": True,
+        "adapterBuild": ADAPTER_BUILD,
+        "cabinetHeightMm": cabinet_height,
+        "assemblyHeightMm": None,
+        "spikeDetected": False,
+        "spikeLimitMm": cabinet_height + 120.0,
+        "originOffsetMm": origin or {"x": 0.0, "y": 0.0, "z": 0.0},
+        "runs": [],
+        "boards": [],
+        "t4Boards": [],
+        "ledGrooveMeasurements": [],
+        "ledGrooveAudit": None,
+        "clearanceFrontAudit": None,
+        "cornerOwnershipAudit": None,
+        "backT3NotchAudit": None,
+        "t4GeometryAudit": None,
+        "expectedBoards": [],
+        "poseCompare": None,
+        "errors": [],
+        "findings": [],
+        "params": {
+            "cabinetHeight": cabinet_height,
+            "totalWidth": resolved_params.get("totalWidth"),
+            "cabinetDepth": resolved_params.get("cabinetDepth"),
+            "leftArmLength": resolved_params.get("leftArmLength"),
+            "rightArmLength": resolved_params.get("rightArmLength"),
+            "topClearanceHeight": resolved_params.get("topClearanceHeight"),
+            "frontPanelThickness": resolved_params.get("frontPanelThickness"),
+            "featureWidth": resolved_params.get("featureWidth"),
+            "clearance": resolved_params.get("clearance"),
+            "sideClearance": resolved_params.get("sideClearance"),
+            "geometryRevision": resolved_params.get("geometryRevision"),
+        },
+    }
+    if expected_revision and assembly_revision and str(expected_revision) != str(assembly_revision):
+        detail = "Assembly geometry revision {} != expected {}.".format(assembly_revision, expected_revision)
+        measure["ok"] = False
+        measure["errors"].append(detail)
+        measure["findings"].append({
+            "severity": "error",
+            "code": "geometry_revision_mismatch",
+            "detail": detail,
+        })
+    measure["caseFingerprint"] = _u_shape_case_fingerprint(measure["params"])
+    if parent_component is None:
+        measure["ok"] = False
+        measure["errors"].append("Missing parent assembly component.")
+        return measure
+
+    parent_matrix = None
+    if parent_occurrence is not None:
+        try:
+            parent_matrix = parent_occurrence.transform
+        except Exception:
+            parent_matrix = None
+
+    try:
+        if parent_occurrence is not None:
+            parent_bb = _occurrence_bbox_in_parent_mm(parent_occurrence)
+            if parent_bb:
+                measure["assemblyHeightMm"] = abs(parent_bb["z1"] - parent_bb["z0"])
+                if measure["assemblyHeightMm"] > measure["spikeLimitMm"]:
+                    measure["spikeDetected"] = True
+                    measure["ok"] = False
+                    measure["findings"].append(
+                        "Assembly Z span {:.1f} mm exceeds spike limit {:.1f} mm.".format(
+                            measure["assemblyHeightMm"], measure["spikeLimitMm"]
+                        )
+                    )
+    except Exception as ex:
+        measure["errors"].append("Assembly bbox failed: {}".format(ex))
+
+    seen_board_keys = {}
+    try:
+        # Force bbox recompute — nested occurrence.boundingBox is often empty
+        # until the design is computed after the final run pose snapshot.
+        try:
+            design = parent_component.parentDesign
+            if design is not None:
+                design.computeAll()
+        except Exception:
+            pass
+
+        occurrences = parent_component.occurrences
+        for index in range(occurrences.count):
+            occurrence = occurrences.item(index)
+            component = occurrence.component
+            name = str(component.name or "")
+            run_id = _infer_u_run_id(name)
+            bb = _occurrence_bbox_in_parent_mm(occurrence)
+            if bb is None:
+                continue
+            if parent_matrix is not None:
+                bb = _world_bbox_corners_mm(bb, parent_matrix)
+            height = abs(bb["z1"] - bb["z0"])
+            row = {
+                "runId": run_id or name,
+                "componentName": name,
+                "bboxMm": bb,
+                "heightMm": height,
+                "spikeDetected": height > measure["spikeLimitMm"],
+                **_bbox_center_size(bb),
+            }
+            measure["runs"].append(row)
+            if row["spikeDetected"]:
+                measure["spikeDetected"] = True
+                measure["ok"] = False
+                measure["findings"].append(
+                    "{} height {:.1f} mm looks like a T4 spike.".format(row["runId"], height)
+                )
+
+            run_matrix = occurrence.transform
+
+            def _record_world_bb(local_board_id, component_name, world_bb):
+                key = "{}.{}".format(run_id or "RUN", local_board_id)
+                if _bbox_volume_mm(world_bb) <= 1e-3:
+                    return
+                if key in seen_board_keys:
+                    existing_index = seen_board_keys[key]
+                    existing = measure["boards"][existing_index]
+                    if _bbox_volume_mm(existing.get("bboxMm")) >= _bbox_volume_mm(world_bb):
+                        return
+                    _append_measured_board(
+                        measure, run_id, local_board_id, component_name, world_bb, board_index=existing_index
+                    )
+                    return
+                if _append_measured_board(measure, run_id, local_board_id, component_name, world_bb):
+                    seen_board_keys[key] = len(measure["boards"]) - 1
+
+            # Prefer real BRep body boxes inside each board child component.
+            # occurrence.boundingBox is frequently a zero-volume point for nested
+            # board components right after transform — that previously locked T1/T2
+            # (and every board) to size 0 and poisoned pose compare.
+            try:
+                child_occs = component.occurrences
+                for child_index in range(child_occs.count):
+                    child = child_occs.item(child_index)
+                    child_comp = child.component
+                    board_id = _board_id_from_entity(child_comp) or _board_id_from_entity(child)
+                    if not board_id:
+                        continue
+                    child_matrix = child.transform
+                    body_found = False
+                    try:
+                        bodies = child_comp.bRepBodies
+                        for body_index in range(bodies.count):
+                            local = _body_bbox_mm(bodies.item(body_index))
+                            if not local or _bbox_volume_mm(local) <= 1e-3:
+                                continue
+                            world_bb = _world_bbox_corners_mm(local, child_matrix, run_matrix, parent_matrix)
+                            _record_world_bb(board_id, str(child_comp.name or board_id), world_bb)
+                            body_found = True
+                    except Exception:
+                        pass
+                    if str(board_id).upper() == "T3":
+                        measure["ledGrooveMeasurements"].extend(
+                            _measure_t3_led_cut_features(
+                                child_comp,
+                                run_id,
+                                child_matrix=child_matrix,
+                                run_matrix=run_matrix,
+                                parent_matrix=parent_matrix,
+                            )
+                        )
+                    if body_found:
+                        continue
+                    child_bb = _occurrence_bbox_in_parent_mm(child)
+                    if child_bb and _bbox_volume_mm(child_bb) > 1e-3:
+                        world_bb = _world_bbox_corners_mm(child_bb, run_matrix, parent_matrix)
+                        _record_world_bb(board_id, str(child_comp.name or board_id), world_bb)
+            except Exception:
+                pass
+
+            try:
+                bodies = component.bRepBodies
+                for body_index in range(bodies.count):
+                    body = bodies.item(body_index)
+                    board_id = _board_id_from_entity(body)
+                    if not board_id:
+                        continue
+                    local = _body_bbox_mm(body)
+                    if not local:
+                        continue
+                    world_bb = _world_bbox_corners_mm(local, run_matrix, parent_matrix)
+                    _record_world_bb(board_id, str(body.name or board_id), world_bb)
+                    if str(board_id).upper() == "T3":
+                        measure["ledGrooveMeasurements"].extend(
+                            _measure_t3_led_cut_features(
+                                component,
+                                run_id,
+                                run_matrix=run_matrix,
+                                parent_matrix=parent_matrix,
+                            )
+                        )
+            except Exception:
+                pass
+    except Exception as ex:
+        measure["ok"] = False
+        measure["errors"].append("Run measurement failed: {}".format(ex))
+
+    if not measure["boards"]:
+        measure["ok"] = False
+        measure["errors"].append("No positive-volume board bboxes measured under U assembly.")
+
+    footprint = audit_u_shape_footprint(measure.get("boards") or [], resolved_params)
+    measure["footprint"] = footprint
+    measure["findings"].extend(footprint.get("findings") or [])
+    if not footprint.get("ok"):
+        measure["ok"] = False
+        measure["errors"].extend(footprint.get("errors") or [])
+
+    corner_audit = audit_u_shape_corner_ownership(
+        measure.get("boards") or [],
+        resolved_params,
+        tol_mm=tol_mm,
+    )
+    measure["cornerOwnershipAudit"] = corner_audit
+    measure["findings"].extend(corner_audit.get("findings") or [])
+    if not corner_audit.get("ok"):
+        measure["ok"] = False
+        measure["errors"].extend(
+            [row.get("detail") for row in (corner_audit.get("findings") or []) if row.get("detail")]
+        )
+
+    back_t3_notch_audit = audit_u_shape_back_t3_profile(
+        result,
+        measured_boards=measure.get("boards") or [],
+    )
+    measure["backT3NotchAudit"] = back_t3_notch_audit
+    measure["findings"].extend(back_t3_notch_audit.get("findings") or [])
+    if not back_t3_notch_audit.get("ok"):
+        measure["ok"] = False
+        measure["errors"].extend(
+            [row.get("detail") for row in (back_t3_notch_audit.get("findings") or []) if row.get("detail")]
+            or ["BACK.T3/T4 notch profile audit failed."]
+        )
+
+    t4_geometry_audit = audit_u_shape_t4_geometry(
+        measure.get("boards") or [],
+        resolved_params,
+        tol_mm=tol_mm,
+    )
+    measure["t4GeometryAudit"] = t4_geometry_audit
+    measure["findings"].extend(t4_geometry_audit.get("findings") or [])
+    if not t4_geometry_audit.get("ok"):
+        measure["ok"] = False
+        measure["errors"].extend(
+            [row.get("detail") for row in (t4_geometry_audit.get("findings") or []) if row.get("detail")]
+        )
+
+    contact_audit = audit_u_shape_top_contacts(measure.get("boards") or [], tol_mm=tol_mm)
+    measure["contactAudit"] = contact_audit
+    measure["findings"].extend(contact_audit.get("findings") or [])
+    if not contact_audit.get("ok"):
+        measure["ok"] = False
+        measure["errors"].extend(
+            [row.get("detail") for row in (contact_audit.get("findings") or []) if row.get("detail")]
+        )
+
+    clearance_front_audit = audit_u_shape_clearance_fronts(
+        measure.get("boards") or [],
+        resolved_params,
+        tol_mm=tol_mm,
+    )
+    measure["clearanceFrontAudit"] = clearance_front_audit
+    measure["findings"].extend(clearance_front_audit.get("findings") or [])
+    if not clearance_front_audit.get("ok"):
+        measure["ok"] = False
+        measure["errors"].extend(
+            [row.get("detail") for row in (clearance_front_audit.get("findings") or []) if row.get("detail")]
+        )
+
+    led_audit = audit_u_shape_led_grooves(
+        measure.get("ledGrooveMeasurements") or [],
+        measure.get("boards") or [],
+        result,
+        tol_mm=min(float(tol_mm), 2.0),
+    )
+    measure["ledGrooveAudit"] = led_audit
+    measure["findings"].extend(led_audit.get("findings") or [])
+    if not led_audit.get("ok"):
+        measure["ok"] = False
+        measure["errors"].extend(
+            [row.get("detail") for row in (led_audit.get("findings") or []) if row.get("detail")]
+        )
+
+    # Math compare vs generator world poses when available.
+    if isinstance(result, dict) and isinstance(result.get("worldBoards"), list):
+        expected = _expected_world_boards_from_result(result, origin_offset_mm=measure["originOffsetMm"])
+        measure["expectedBoards"] = expected
+        pose = compare_u_shape_board_poses(
+            expected,
+            measure["boards"],
+            tol_mm=tol_mm,
+            cabinet_height_mm=cabinet_height,
+        )
+        measure["poseCompare"] = pose
+        measure["findings"].extend(pose.get("findings") or [])
+        if not pose.get("ok"):
+            measure["ok"] = False
+    return measure
+
+
+def audit_u_shape_footprint(boards, params=None):
+    """Hard fail when measured BPs are still three parallel straight cabinets."""
+    params = params if isinstance(params, dict) else {}
+    depth = float(params.get("cabinetDepth") or 400.0)
+    left_len = float(params.get("leftArmLength") or 0.0)
+    right_len = float(params.get("rightArmLength") or 0.0)
+    total_w = float(params.get("totalWidth") or 0.0)
+    findings = []
+    errors = []
+    by_id = {str(row.get("id") or ""): row for row in boards or []}
+
+    def _size(row):
+        size = row.get("sizeMm") if isinstance(row, dict) else None
+        if isinstance(size, dict):
+            return float(size.get("x") or 0.0), float(size.get("y") or 0.0)
+        bb = row.get("bboxMm") or {}
+        return abs(float(bb.get("x1", 0.0)) - float(bb.get("x0", 0.0))), abs(
+            float(bb.get("y1", 0.0)) - float(bb.get("y0", 0.0))
+        )
+
+    left = by_id.get("LEFT.BP")
+    back = by_id.get("BACK.BP")
+    right = by_id.get("RIGHT.BP")
+    if not left or not back or not right:
+        errors.append("U footprint audit missing LEFT/BACK/RIGHT BP measures.")
+        return {"ok": False, "isUShape": False, "errors": errors, "findings": findings}
+
+    lx, ly = _size(left)
+    bx, by = _size(back)
+    rx, ry = _size(right)
+
+    # Straight/local pose: side BP long in X. U pose: side BP long in Y, depth in X.
+    left_is_straight = lx > ly and lx > depth + 80
+    right_is_straight = rx > ry and rx > depth + 80
+    back_is_sideways = by > bx and by > depth + 80  # back wrongly rotated like a side
+
+    if left_is_straight or right_is_straight:
+        errors.append(
+            "NOT_U_FOOTPRINT: side BP still long in X (LEFT {}x{}, RIGHT {}x{}). "
+            "Runs look like parallel straight cabinets — occurrence Z pose did not apply.".format(
+                round(lx, 1), round(ly, 1), round(rx, 1), round(ry, 1)
+            )
+        )
+        findings.append({"severity": "error", "code": "not_u_footprint", "detail": errors[-1]})
+    expected_left = max(0.0, left_len - depth)
+    expected_right = max(0.0, right_len - depth)
+    if left_len and not left_is_straight and abs(ly - expected_left) > 30:
+        findings.append({
+            "severity": "error",
+            "code": "left_arm_length",
+            "detail": "LEFT.BP Y span {:.1f} expected ~{:.1f}".format(ly, expected_left),
+        })
+    if right_len and not right_is_straight and abs(ry - expected_right) > 30:
+        findings.append({
+            "severity": "error",
+            "code": "right_arm_length",
+            "detail": "RIGHT.BP Y span {:.1f} expected ~{:.1f}".format(ry, expected_right),
+        })
+    if total_w and not left_is_straight and abs(bx - total_w) > 30:
+        findings.append({
+            "severity": "error",
+            "code": "back_width",
+            "detail": "BACK.BP X span {:.1f} expected ~{:.1f}".format(bx, total_w),
+        })
+    if back_is_sideways:
+        errors.append("NOT_U_FOOTPRINT: BACK.BP is oriented like a side run.")
+        findings.append({"severity": "error", "code": "back_wrong_orientation", "detail": errors[-1]})
+
+    ok = not errors and not any(row.get("severity") == "error" for row in findings)
+    return {
+        "ok": ok,
+        "isUShape": ok and not left_is_straight and not right_is_straight,
+        "sizes": {
+            "LEFT.BP": {"x": lx, "y": ly},
+            "BACK.BP": {"x": bx, "y": by},
+            "RIGHT.BP": {"x": rx, "y": ry},
+        },
+        "errors": errors,
+        "findings": findings,
+    }
+
+
+def measure_and_log_u_shape_assemblies(
+    root_component,
+    source="runSelfCheck",
+    cases=None,
+    plugin_dir=None,
+    expected_result=None,
+    result_by_params=None,
+):
+    """Measure one or more U assemblies and write the Fusion measure log.
+
+    expected_result: generator payload used for XYZ pose compare (create path).
+    result_by_params: optional callable(params)->result for self-check regeneration.
+    """
+    measured_cases = list(cases or [])
+    if not measured_cases:
+        for row in find_u_shape_assemblies(root_component):
+            result = None
+            if callable(result_by_params) and row.get("params"):
+                try:
+                    result = result_by_params(row["params"])
+                except Exception:
+                    result = None
+            if result is None:
+                result = expected_result
+            measure = measure_u_shape_assembly(
+                row["component"],
+                result=result,
+                parent_occurrence=row["occurrence"],
+                params=row.get("params"),
+                origin_offset_mm=row.get("origin"),
+            )
+            measured_cases.append({
+                "caseId": row["name"],
+                "assemblyComponentName": row["name"],
+                **measure,
+            })
+    findings = []
+    errors = []
+    ok = True
+    not_u = False
+    contact_failed = False
+    led_groove_failed = False
+    clearance_front_failed = False
+    corner_ownership_failed = False
+    back_t3_notch_failed = False
+    t4_geometry_failed = False
+    footprint_details = []
+    for case in measured_cases:
+        if case.get("ok") is False or case.get("spikeDetected"):
+            ok = False
+        pose = case.get("poseCompare") or {}
+        if pose and pose.get("ok") is False:
+            ok = False
+        footprint = case.get("footprint") if isinstance(case.get("footprint"), dict) else {}
+        if footprint.get("isUShape") is False or not footprint.get("ok", True):
+            ok = False
+            not_u = True
+            for msg in footprint.get("errors") or ["NOT_U_FOOTPRINT"]:
+                if msg not in errors:
+                    errors.append(msg)
+                footprint_details.append(msg)
+        contact = case.get("contactAudit") if isinstance(case.get("contactAudit"), dict) else {}
+        if contact and contact.get("ok") is False:
+            ok = False
+            contact_failed = True
+        led_audit = case.get("ledGrooveAudit") if isinstance(case.get("ledGrooveAudit"), dict) else {}
+        if not led_audit or led_audit.get("ok") is not True:
+            ok = False
+            led_groove_failed = True
+        clearance_audit = case.get("clearanceFrontAudit") if isinstance(case.get("clearanceFrontAudit"), dict) else {}
+        if not clearance_audit or clearance_audit.get("ok") is not True:
+            ok = False
+            clearance_front_failed = True
+        corner_audit = case.get("cornerOwnershipAudit") if isinstance(case.get("cornerOwnershipAudit"), dict) else {}
+        if not corner_audit or corner_audit.get("ok") is not True:
+            ok = False
+            corner_ownership_failed = True
+        notch_audit = case.get("backT3NotchAudit") if isinstance(case.get("backT3NotchAudit"), dict) else {}
+        if not notch_audit or notch_audit.get("ok") is not True:
+            ok = False
+            back_t3_notch_failed = True
+        t4_audit = case.get("t4GeometryAudit") if isinstance(case.get("t4GeometryAudit"), dict) else {}
+        if not t4_audit or t4_audit.get("ok") is not True:
+            ok = False
+            t4_geometry_failed = True
+        findings.extend(case.get("findings") or [])
+        errors.extend(case.get("errors") or [])
+    # Dedupe errors while preserving order.
+    deduped = []
+    seen_err = set()
+    for msg in errors:
+        key = str(msg)
+        if key in seen_err:
+            continue
+        seen_err.add(key)
+        deduped.append(msg)
+    errors = deduped
+    if not_u:
+        summary_line = "NOT_U_FOOTPRINT: measured assembly is not U-shaped (side runs still long in X)"
+        if footprint_details:
+            summary_line = str(footprint_details[0])
+    elif contact_failed:
+        contact_rows = [
+            row.get("detail") for row in findings
+            if isinstance(row, dict) and row.get("code") in ("contact_gap", "contact_no_face_overlap")
+        ]
+        summary_line = str(contact_rows[0]) if contact_rows else "Final board contact audit failed"
+    elif led_groove_failed:
+        led_rows = [
+            row.get("detail") for row in findings
+            if isinstance(row, dict) and str(row.get("code") or "").startswith("led_")
+        ]
+        summary_line = str(led_rows[0]) if led_rows else "Final LED BRep geometry audit failed"
+    elif clearance_front_failed:
+        clearance_rows = [
+            row.get("detail") for row in findings
+            if isinstance(row, dict) and str(row.get("code") or "").startswith("clearance_front_")
+        ]
+        summary_line = str(clearance_rows[0]) if clearance_rows else "Final clearance-front geometry audit failed"
+    elif corner_ownership_failed:
+        corner_rows = [
+            row.get("detail") for row in findings
+            if isinstance(row, dict) and (
+                "corner" in str(row.get("code") or "") or str(row.get("code") or "").endswith("_arm_back_seam")
+            )
+        ]
+        summary_line = str(corner_rows[0]) if corner_rows else "Final BACK corner-ownership audit failed"
+    elif back_t3_notch_failed:
+        notch_rows = [
+            row.get("detail") for row in findings
+            if isinstance(row, dict) and "notch" in str(row.get("code") or "")
+        ]
+        summary_line = str(notch_rows[0]) if notch_rows else "BACK.T3/T4 notch profile audit failed"
+    elif t4_geometry_failed:
+        t4_rows = [
+            row.get("detail") for row in findings
+            if isinstance(row, dict) and str(row.get("code") or "").startswith("t4_geometry_")
+        ]
+        summary_line = str(t4_rows[0]) if t4_rows else "Final T4 geometry audit failed"
+    elif not ok:
+        summary_line = str(errors[0]) if errors else "U Shape OHC self-check failed"
+    else:
+        summary_line = "U Shape OHC self-check OK"
+    payload = {
+        "ok": ok and not errors,
+        "notUShape": not_u,
+        "contactFailed": contact_failed,
+        "ledGrooveFailed": led_groove_failed,
+        "clearanceFrontFailed": clearance_front_failed,
+        "cornerOwnershipFailed": corner_ownership_failed,
+        "backT3NotchFailed": back_t3_notch_failed,
+        "t4GeometryFailed": t4_geometry_failed,
+        "summaryLine": summary_line,
+        "adapterBuild": ADAPTER_BUILD,
+        "generatedAt": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "source": source,
+        "cases": measured_cases,
+        "findings": findings,
+        "errors": errors,
+    }
+    payload["logPath"] = write_u_shape_fusion_measure_log(payload, plugin_dir=plugin_dir)
+    return payload
 
 
 def _write_placement_debug(payload):
@@ -93,7 +1794,71 @@ def _rough_size_mm(bbox):
     )
 
 
-def _new_container_component(root_comp, run_label, module_name="generalTall", create_component=False, component_prefix=None, component_name=None, origin_x_mm=0.0, origin_y_mm=0.0, origin_z_mm=MODEL_Z_OFFSET_MM):
+def _compose_occurrence_matrix(origin_x_mm=0.0, origin_y_mm=0.0, origin_z_mm=0.0, rotation_deg=0.0):
+    """Build parent-space occurrence matrix: Z-rotate about origin, then translate.
+
+    Cells are set explicitly so translation cannot drop the rotation (a failure
+    mode that left U runs stacked as three parallel straight cabinets).
+    """
+    degrees = float(rotation_deg or 0.0)
+    rad = math.radians(degrees)
+    cos_a = math.cos(rad)
+    sin_a = math.sin(rad)
+    # Round near-90 multiples to exact 0/±1 to match generator integer trig.
+    if abs(abs(degrees) % 90.0) < 1e-6 or abs(abs(degrees) % 90.0 - 90.0) < 1e-6:
+        cos_a = float(round(cos_a))
+        sin_a = float(round(sin_a))
+    tx = mm_to_cm(float(origin_x_mm or 0.0))
+    ty = mm_to_cm(float(origin_y_mm or 0.0))
+    tz = mm_to_cm(float(origin_z_mm or 0.0))
+    matrix = adsk.core.Matrix3D.create()
+    # x' =  cos*x - sin*y + tx
+    # y' =  sin*x + cos*y + ty
+    matrix.setCell(0, 0, cos_a)
+    matrix.setCell(0, 1, -sin_a)
+    matrix.setCell(0, 2, 0.0)
+    matrix.setCell(0, 3, tx)
+    matrix.setCell(1, 0, sin_a)
+    matrix.setCell(1, 1, cos_a)
+    matrix.setCell(1, 2, 0.0)
+    matrix.setCell(1, 3, ty)
+    matrix.setCell(2, 0, 0.0)
+    matrix.setCell(2, 1, 0.0)
+    matrix.setCell(2, 2, 1.0)
+    matrix.setCell(2, 3, tz)
+    matrix.setCell(3, 0, 0.0)
+    matrix.setCell(3, 1, 0.0)
+    matrix.setCell(3, 2, 0.0)
+    matrix.setCell(3, 3, 1.0)
+    return matrix
+
+
+def _matrix_z_rotation_deg(matrix):
+    """Extract Z Euler angle (degrees) from an occurrence matrix."""
+    try:
+        cos_a = float(matrix.getCell(0, 0))
+        sin_a = float(matrix.getCell(1, 0))
+        return math.degrees(math.atan2(sin_a, cos_a))
+    except Exception:
+        return 0.0
+
+
+def _angle_close(a, b, tol=1.0):
+    return abs(((float(a) - float(b) + 180.0) % 360.0) - 180.0) <= tol
+
+
+def _new_container_component(
+    root_comp,
+    run_label,
+    module_name="generalTall",
+    create_component=False,
+    component_prefix=None,
+    component_name=None,
+    origin_x_mm=0.0,
+    origin_y_mm=0.0,
+    origin_z_mm=MODEL_Z_OFFSET_MM,
+    origin_rotation_deg=0.0,
+):
     if component_name:
         resolved_component_name = sanitize_token(component_name, fallback="assembly", limit=80)
     else:
@@ -105,13 +1870,15 @@ def _new_container_component(root_comp, run_label, module_name="generalTall", cr
         return root_comp, "Using root component container for {} rough bodies.".format(module_name), None
 
     try:
-        transform = adsk.core.Matrix3D.create()
         # Work-zone placement uses real model coordinates: generation origin
         # lives on z=0. Legacy no-zone calls keep MODEL_Z_OFFSET_MM staging.
-        transform.translation = adsk.core.Vector3D.create(
-            mm_to_cm(float(origin_x_mm or 0.0)),
-            mm_to_cm(float(origin_y_mm or 0.0)),
-            mm_to_cm(float(origin_z_mm if origin_z_mm is not None else MODEL_Z_OFFSET_MM)),
+        # U-Shape OHC passes a non-zero Z rotation so each run is born already
+        # oriented; post-hoc occurrence moves are too easy for the timeline to drop.
+        transform = _compose_occurrence_matrix(
+            origin_x_mm=origin_x_mm,
+            origin_y_mm=origin_y_mm,
+            origin_z_mm=origin_z_mm if origin_z_mm is not None else MODEL_Z_OFFSET_MM,
+            rotation_deg=origin_rotation_deg,
         )
         occurrence = root_comp.occurrences.addNewComponent(transform)
         component = occurrence.component
@@ -735,6 +2502,26 @@ def _led_groove_segments(feature):
         if isinstance(branch, dict):
             segments.append(("branch{}".format(index + 1), branch))
     return segments
+
+
+def _mirror_led_segment_x(segment, board_width):
+    """Mirror one LED segment in board-local X while preserving Y.
+
+    Style-1 T3 profiles are corrected by 180 degrees during body creation.
+    U-shape side grooves use semantic generator coordinates (apex/open end),
+    so their pocket rectangles need this Adapter-space compensation.
+    """
+    if not isinstance(segment, dict):
+        return segment
+    x0 = _as_float(segment.get("x0"))
+    x1 = _as_float(segment.get("x1"))
+    width = _as_float(board_width)
+    if x0 is None or x1 is None or width is None or width <= 0:
+        return segment
+    mirrored = dict(segment)
+    mirrored["x0"] = width - max(x0, x1)
+    mirrored["x1"] = width - min(x0, x1)
+    return mirrored
 
 
 def _led_segment_world_rect(target_bbox, segment):
@@ -1656,6 +3443,7 @@ def _oh_cut_t3_led_grooves(component, t3_body, t3_board, result):
     rows = []
     thickness = max(0.0, t3_bbox["z1"] - t3_bbox["z0"])
     top_z = t3_bbox["z1"]
+    board_width = max(0.0, t3_bbox["x1"] - t3_bbox["x0"])
 
     for feature in features:
         feature_id = str(feature.get("id") or "T3_led_groove")
@@ -1686,7 +3474,12 @@ def _oh_cut_t3_led_grooves(component, t3_body, t3_board, result):
         for label, segment in segments:
             segment_id = "{}_{}".format(feature_id, label)
             try:
-                rect = _led_segment_world_rect(t3_bbox, segment)
+                cut_segment = (
+                    _mirror_led_segment_x(segment, board_width)
+                    if feature.get("adapterMirrorX") is True
+                    else segment
+                )
+                rect = _led_segment_world_rect(t3_bbox, cut_segment)
                 if rect is None:
                     failures.append("{}: outside bbox".format(label))
                     segment_rows.append({"id": segment_id, "status": "skipped", "reason": "outside bbox"})
@@ -1728,6 +3521,7 @@ def _oh_cut_t3_led_grooves(component, t3_body, t3_board, result):
                 segment_rows.append({
                     "id": segment_id,
                     "status": "created",
+                    "adapterMirrorX": feature.get("adapterMirrorX") is True,
                     "xRange": [x0, x1],
                     "yRange": [y0, y1],
                     "planeZ": top_z,
@@ -1811,6 +3605,8 @@ def _oh_postprocess_bodies(component, result, bodies_by_id, boards_by_id, compon
         "rangehoodBpCutouts": [],
         "rangehoodTopGrooves": [],
         "rangehoodDividerSideGrooves": [],
+        "uConnectorBpGrooves": [],
+        "uConnectorT3Grooves": [],
         "ledGrooveCuts": [],
         "hingeCuts": [],
         "rotations": [],
@@ -1835,6 +3631,13 @@ def _oh_postprocess_bodies(component, result, bodies_by_id, boards_by_id, compon
             bp_board,
             _oh_collect_features_by_type(result, "rangehood_bp_cutout"),
             "OH_RGHD_BP_CUTOUT",
+        )
+        rows["uConnectorBpGrooves"] = _oh_cut_xy_rect_features(
+            bp_component,
+            bp_body,
+            bp_board,
+            _oh_collect_features_by_type(result, "u_connector_bp_groove"),
+            "UOH_CONNECTOR_BP_GROOVE",
         )
 
     rangehood_top_board = boards_by_id.get("RGHD_TOP")
@@ -1864,6 +3667,13 @@ def _oh_postprocess_bodies(component, result, bodies_by_id, boards_by_id, compon
     if t3_board:
         t3_component = components_by_id.get("T3") or component
         t3_body = bodies_by_id.get("T3")
+        rows["uConnectorT3Grooves"] = _oh_cut_xy_rect_features(
+            t3_component,
+            t3_body,
+            t3_board,
+            _oh_collect_features_by_type(result, "u_connector_t3_through_groove"),
+            "UOH_CONNECTOR_T3_GROOVE",
+        )
         # Cut LED on T3 top face before the top-panel Z translation.
         rows["ledGrooveCuts"] = _oh_cut_t3_led_grooves(t3_component, t3_body, t3_board, result)
 
@@ -1927,6 +3737,8 @@ def create_rough_bodies_from_board_result(
     component_name=None,
     origin_x_mm=None,
     origin_y_mm=None,
+    avoid_existing_origin=True,
+    origin_rotation_deg=0.0,
 ):
     # None = "auto": place at the generation-zone centre from the saved layout.
     # This also covers callers that predate the origin parameters, because this
@@ -2044,7 +3856,10 @@ def create_rough_bodies_from_board_result(
             )
     except Exception:
         footprint = None
-    origin_x_mm, origin_y_mm, avoidance_info = _avoid_existing_at_origin(root_comp, origin_x_mm, origin_y_mm, footprint)
+    if avoid_existing_origin:
+        origin_x_mm, origin_y_mm, avoidance_info = _avoid_existing_at_origin(root_comp, origin_x_mm, origin_y_mm, footprint)
+    else:
+        avoidance_info = {"shifted": False, "disabled": True, "reason": "nested composite run"}
     summary["originAvoidance"] = avoidance_info
     placement_debug["avoidance"] = avoidance_info
     placement_debug["resolvedOrigin"] = [origin_x_mm, origin_y_mm, origin_z_mm]
@@ -2065,9 +3880,15 @@ def create_rough_bodies_from_board_result(
         origin_x_mm=origin_x_mm,
         origin_y_mm=origin_y_mm,
         origin_z_mm=origin_z_mm,
+        origin_rotation_deg=origin_rotation_deg,
     )
     summary["assemblyComponentName"] = assembly_component_name
-    summary["originOffsetMm"] = {"x": float(origin_x_mm or 0.0), "y": float(origin_y_mm or 0.0), "z": float(origin_z_mm)}
+    summary["originOffsetMm"] = {
+        "x": float(origin_x_mm or 0.0),
+        "y": float(origin_y_mm or 0.0),
+        "z": float(origin_z_mm),
+        "rotationDeg": float(origin_rotation_deg or 0.0),
+    }
     placement_debug["assemblyComponentName"] = assembly_component_name
     placement_debug["containerWarning"] = container_warning
     placement_debug["containerIsRoot"] = container is root_comp
@@ -2285,6 +4106,8 @@ def create_rough_bodies_from_board_result(
         summary["rangehoodBpCutoutsCreated"] = len([row for row in postprocess.get("rangehoodBpCutouts", []) if row.get("status") == "created"])
         summary["rangehoodTopGroovesCreated"] = len([row for row in postprocess.get("rangehoodTopGrooves", []) if row.get("status") == "created"])
         summary["rangehoodDividerSideGroovesCreated"] = len([row for row in postprocess.get("rangehoodDividerSideGrooves", []) if row.get("status") == "created"])
+        summary["uConnectorBpGroovesCreated"] = len([row for row in postprocess.get("uConnectorBpGrooves", []) if row.get("status") == "created"])
+        summary["uConnectorT3GroovesCreated"] = len([row for row in postprocess.get("uConnectorT3Grooves", []) if row.get("status") == "created"])
         oh_led_rows = postprocess.get("ledGrooveCuts", [])
         summary["ledGrooveCutsCreated"] = len([row for row in oh_led_rows if row.get("status") == "created"])
         summary["ledGrooveCutsFailed"] = len([row for row in oh_led_rows if row.get("status") == "failed"])
@@ -2389,15 +4212,23 @@ def create_rough_bodies_from_board_result(
             occurrences = root_comp.allOccurrencesByComponent(container)
             occurrence = occurrences.item(0) if occurrences and occurrences.count else None
             if occurrence is not None:
+                expected_matrix = _compose_occurrence_matrix(
+                    origin_x_mm=origin_x_mm,
+                    origin_y_mm=origin_y_mm,
+                    origin_z_mm=origin_z_mm,
+                    rotation_deg=origin_rotation_deg,
+                )
                 translation = occurrence.transform.translation
                 current = (translation.x * 10.0, translation.y * 10.0, translation.z * 10.0)
                 expected = (origin_x_mm, origin_y_mm, float(origin_z_mm))
-                if any(abs(current[i] - expected[i]) > 0.5 for i in range(3)):
-                    transform = occurrence.transform
-                    transform.translation = adsk.core.Vector3D.create(
-                        mm_to_cm(expected[0]), mm_to_cm(expected[1]), mm_to_cm(expected[2])
-                    )
-                    occurrence.transform = transform
+                # Always re-assert when a non-zero rotation is part of the pose.
+                # Translation-only repair previously left U-Shape runs unrotated.
+                needs_repair = (
+                    abs(float(origin_rotation_deg or 0.0)) > 1e-9
+                    or any(abs(current[i] - expected[i]) > 0.5 for i in range(3))
+                )
+                if needs_repair:
+                    occurrence.transform = expected_matrix
                     _capture_position_snapshot(root_comp)
                     translation = occurrence.transform.translation
                     current = (translation.x * 10.0, translation.y * 10.0, translation.z * 10.0)
@@ -2405,6 +4236,7 @@ def create_rough_bodies_from_board_result(
                     "x": round(current[0], 2),
                     "y": round(current[1], 2),
                     "z": round(current[2], 2),
+                    "rotationDeg": float(origin_rotation_deg or 0.0),
                 }
         except Exception as ex:
             summary["warnings"].append("Container placement read-back failed: {}".format(ex))
@@ -2695,4 +4527,428 @@ def create_rough_bodies_from_general_tall_result(fusion_adapter, result, run_lab
                         row.get("kind"), row.get("panelId"), row.get("reason") or "unknown"
                     )
                 )
+    return summary
+
+
+class _NestedFusionAdapter:
+    def __init__(self, root_component):
+        self._root_component = root_component
+
+    def get_root_component(self):
+        return self._root_component
+
+
+def _set_nested_occurrence_transform(parent_component, child_component, transform_spec):
+    """Legacy occurrence-matrix pose (kept for contract/tests). Prefer body moves for U."""
+    occurrences = parent_component.allOccurrencesByComponent(child_component)
+    occurrence = occurrences.item(0) if occurrences and occurrences.count else None
+    if occurrence is None:
+        raise RuntimeError("nested run occurrence was not found")
+    rotation_deg = float((transform_spec or {}).get("rotationDeg") or 0.0)
+    tx = float((transform_spec or {}).get("translateX") or 0.0)
+    ty = float((transform_spec or {}).get("translateY") or 0.0)
+    matrix = _compose_occurrence_matrix(
+        origin_x_mm=tx,
+        origin_y_mm=ty,
+        origin_z_mm=0.0,
+        rotation_deg=rotation_deg,
+    )
+    # Grounded occurrences ignore transform writes — always unground first.
+    try:
+        if hasattr(occurrence, "isGroundToParent") and occurrence.isGroundToParent:
+            occurrence.isGroundToParent = False
+    except Exception:
+        pass
+
+    last_error = None
+    for attempt in range(3):
+        try:
+            occurrence.transform = matrix
+        except Exception as ex:
+            last_error = str(ex)
+            continue
+        _capture_position_snapshot(parent_component)
+        try:
+            design = parent_component.parentDesign
+            if design is not None:
+                design.computeAll()
+        except Exception:
+            pass
+        read_matrix = occurrence.transform
+        translation = read_matrix.translation
+        read_rot = _matrix_z_rotation_deg(read_matrix)
+        read_x = translation.x * 10.0
+        read_y = translation.y * 10.0
+        if _angle_close(read_rot, rotation_deg, 1.0) and abs(read_x - tx) <= 1.0 and abs(read_y - ty) <= 1.0:
+            return {
+                "rotationDeg": rotation_deg,
+                "translateX": tx,
+                "translateY": ty,
+                "readBackMm": {
+                    "x": round(read_x, 2),
+                    "y": round(read_y, 2),
+                    "z": round(translation.z * 10.0, 2),
+                },
+                "readBackRotationDeg": round(read_rot, 2),
+                "attempts": attempt + 1,
+            }
+        last_error = "readBack rot={:.1f} expected={:.1f} xy=({:.1f},{:.1f})".format(
+            read_rot, rotation_deg, read_x, read_y
+        )
+    raise RuntimeError(
+        "Run pose did not persist after retries ({})".format(last_error or "unknown")
+    )
+
+
+def _iter_run_bodies(run_component):
+    """Yield (owning_component, body) for every BRep under a run, including board children."""
+    components = [run_component]
+    try:
+        occurrences = run_component.allOccurrences
+        for occurrence_index in range(occurrences.count):
+            occurrence = occurrences.item(occurrence_index)
+            child = occurrence.component
+            if child is not None and child not in components:
+                components.append(child)
+    except Exception:
+        pass
+    seen = set()
+    for component in components:
+        try:
+            bodies = component.bRepBodies
+        except Exception:
+            continue
+        for index in range(bodies.count):
+            body = bodies.item(index)
+            token = getattr(body, "entityToken", None) or id(body)
+            if token in seen:
+                continue
+            seen.add(token)
+            yield component, body
+
+
+def _pose_run_via_body_moves(run_component, transform_spec, feature_prefix="UOH_POSE_"):
+    """Bake run Z-rotation + XY translation into board bodies via MoveFeature.
+
+    Occurrence.transform after a long Style-1 postprocess timeline is unreliable
+    in parametric designs (ohc-6 produced three stacked straight cabinets).
+    Free-move features persist on the timeline and survive recompute.
+    """
+    rotation_deg = float((transform_spec or {}).get("rotationDeg") or 0.0)
+    tx = float((transform_spec or {}).get("translateX") or 0.0)
+    ty = float((transform_spec or {}).get("translateY") or 0.0)
+    if abs(rotation_deg) < 1e-9 and abs(tx) < 1e-9 and abs(ty) < 1e-9:
+        return {
+            "mode": "identity",
+            "movedBodies": 0,
+            "rotationDeg": 0.0,
+            "translateX": 0.0,
+            "translateY": 0.0,
+        }
+    matrix = _compose_occurrence_matrix(
+        origin_x_mm=tx,
+        origin_y_mm=ty,
+        origin_z_mm=0.0,
+        rotation_deg=rotation_deg,
+    )
+    moved = 0
+    errors = []
+    for owner, body in _iter_run_bodies(run_component):
+        try:
+            _move_body_rigid_transform(owner, body, matrix, feature_prefix=feature_prefix)
+            moved += 1
+        except Exception as ex:
+            errors.append("{}: {}".format(getattr(body, "name", "body"), ex))
+    if moved <= 0:
+        raise RuntimeError(
+            "body-move pose moved 0 bodies ({})".format("; ".join(errors[:3]) or "no bodies")
+        )
+    return {
+        "mode": "bodyMove",
+        "movedBodies": moved,
+        "rotationDeg": rotation_deg,
+        "translateX": tx,
+        "translateY": ty,
+        "errors": errors[:5],
+    }
+
+
+def _rotate_cardinal_direction_z(direction, degrees):
+    cycle = ["+X", "+Y", "-X", "-Y"]
+    token = str(direction or "").upper()
+    if token not in cycle:
+        return token
+    steps = int(round(float(degrees or 0.0) / 90.0)) % 4
+    return cycle[(cycle.index(token) + steps) % 4]
+
+
+def _update_run_body_metadata_to_world(run_component, run_id, rotation_deg):
+    rows = []
+    components = [run_component]
+    try:
+        occurrences = run_component.allOccurrences
+        for occurrence_index in range(occurrences.count):
+            occurrence = occurrences.item(occurrence_index)
+            if occurrence.component not in components:
+                components.append(occurrence.component)
+    except Exception:
+        pass
+    seen = set()
+    for component in components:
+        bodies = component.bRepBodies
+        for index in range(bodies.count):
+            body = bodies.item(index)
+            token = getattr(body, "entityToken", None) or id(body)
+            if token in seen:
+                continue
+            seen.add(token)
+            try:
+                attrs = body.attributes
+                metadata_attr = attrs.itemByName(PANEL_ATTRIBUTE_GROUP, PANEL_METADATA_ATTR)
+                if metadata_attr is None or not metadata_attr.value:
+                    continue
+                metadata = json.loads(metadata_attr.value)
+                defaults = metadata.get("defaultAttributes") if isinstance(metadata.get("defaultAttributes"), dict) else {}
+                geometry = metadata.get("designGeometry") if isinstance(metadata.get("designGeometry"), dict) else {}
+                for host in (defaults, geometry):
+                    if host.get("millingDirection"):
+                        host["millingDirection"] = _rotate_cardinal_direction_z(host["millingDirection"], rotation_deg)
+                    if host.get("colourDirection"):
+                        host["colourDirection"] = _rotate_cardinal_direction_z(host["colourDirection"], rotation_deg)
+                identity = metadata.get("identity") if isinstance(metadata.get("identity"), dict) else {}
+                identity["uShapeRunId"] = str(run_id)
+                identity["worldRotationDeg"] = float(rotation_deg)
+                metadata_attr.value = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
+                rows.append({"bodyName": body.name, "status": "updated"})
+            except Exception as ex:
+                rows.append({"bodyName": getattr(body, "name", "body"), "status": "failed", "reason": str(ex)})
+    return rows
+
+
+def create_u_shape_overhead_assembly(
+    fusion_adapter,
+    result,
+    run_label=None,
+    component_name=None,
+    origin_x_mm=None,
+    origin_y_mm=None,
+):
+    root = fusion_adapter.get_root_component()
+    summary = {
+        "createdBodies": 0,
+        "createdBoardIds": [],
+        "errors": [],
+        "warnings": [],
+        "runs": [],
+        "assemblyComponentName": None,
+        "uConnectorBpGroovesCreated": 0,
+        "uConnectorT3GroovesCreated": 0,
+        "ledGrooveCutsCreated": 0,
+        "hingeCutsCreated": 0,
+        "adapterBuild": ADAPTER_BUILD,
+    }
+    if root is None:
+        summary["errors"].append("No active Fusion design/root component.")
+        return summary
+    runs = result.get("runs") if isinstance(result, dict) else None
+    if not isinstance(runs, list) or not runs:
+        summary["errors"].append("U Shape OHC result has no runs.")
+        return summary
+
+    params = result.get("params") if isinstance(result.get("params"), dict) else {}
+    footprint = (
+        0.0,
+        float(params.get("totalWidth") or 0.0),
+        0.0,
+        max(float(params.get("leftArmLength") or 0.0), float(params.get("rightArmLength") or 0.0)),
+    )
+    resolved_x = float(origin_x_mm or 0.0)
+    resolved_y = float(origin_y_mm or 0.0)
+    resolved_x, resolved_y, avoidance = _avoid_existing_at_origin(root, resolved_x, resolved_y, footprint)
+    parent, warning, resolved_name = _new_container_component(
+        root,
+        run_label or "UOHC",
+        module_name="u_shape_overhead",
+        create_component=True,
+        component_prefix="UOHC",
+        component_name=component_name or "U Shape OHC",
+        origin_x_mm=resolved_x,
+        origin_y_mm=resolved_y,
+        origin_z_mm=0.0,
+    )
+    summary["assemblyComponentName"] = resolved_name
+    summary["originOffsetMm"] = {"x": resolved_x, "y": resolved_y, "z": 0.0}
+    summary["originAvoidance"] = avoidance
+    if warning:
+        summary["warnings"].append(warning)
+    if parent is root:
+        summary["errors"].append("U Shape OHC requires an Assembly/Design document with component support.")
+        return summary
+    try:
+        result_meta = result.get("meta") if isinstance(result.get("meta"), dict) else {}
+        geometry_revision = str(result_meta.get("geometryRevision") or "legacy_side_owns_corners")
+        stored_params = dict(params)
+        stored_params["geometryRevision"] = geometry_revision
+        parent.attributes.add(ATTRIBUTE_GROUP, "module", "u_shape_overhead")
+        parent.attributes.add(ATTRIBUTE_GROUP, "runLabel", str(run_label or "UOHC"))
+        parent.attributes.add(ATTRIBUTE_GROUP, "uShapeParams", json.dumps(stored_params, ensure_ascii=False))
+        parent.attributes.add(ATTRIBUTE_GROUP, "uShapeGeometryRevision", geometry_revision)
+        parent.attributes.add(
+            ATTRIBUTE_GROUP,
+            "uShapeOriginMm",
+            json.dumps({"x": resolved_x, "y": resolved_y, "z": 0.0}, ensure_ascii=False),
+        )
+    except Exception:
+        pass
+
+    nested_adapter = _NestedFusionAdapter(parent)
+    posed_runs = []
+    for run_entry in runs:
+        if not isinstance(run_entry, dict):
+            summary["errors"].append("Invalid U Shape OHC run entry.")
+            continue
+        run_id = str(run_entry.get("id") or "RUN").upper()
+        run_result = run_entry.get("result")
+        if not isinstance(run_result, dict):
+            summary["errors"].append("{} run has no straight OHC result.".format(run_id))
+            continue
+        oriented_result = copy.deepcopy(run_result)
+        transform_spec = run_entry.get("transform") if isinstance(run_entry.get("transform"), dict) else {}
+        rotation_deg = float(transform_spec.get("rotationDeg") or 0.0)
+        # Build each run in LOCAL identity first so Style-1 T4's 90° about X
+        # (and BP/T3 cuts) stay in the straight-OHC frame. Creating the run
+        # already Z-rotated made MoveFeature's "world X" tip T4's 1500 mm length
+        # upright — the two corner spikes in the Fusion screenshot.
+        run_summary = create_rough_bodies_from_board_result(
+            nested_adapter,
+            oriented_result,
+            module_name="overhead",
+            body_prefix="UOH_{}".format(run_id),
+            run_label="{}.{}".format(run_label or "UOHC", run_id.lower()),
+            placement_feature_prefix="UOH_{}_PLACE_".format(run_id),
+            move_feature_prefix="UOH_{}_MOVE_".format(run_id),
+            align_feature_prefix="UOH_{}_ALIGN_".format(run_id),
+            enable_zi_groove_cuts=False,
+            enable_overhead_postprocess=True,
+            create_container_component=True,
+            component_prefix="UOH",
+            component_name="{}_{}".format(component_name or "U Shape OHC", run_id),
+            origin_x_mm=0.0,
+            origin_y_mm=0.0,
+            avoid_existing_origin=False,
+            origin_rotation_deg=0.0,
+        )
+        run_component = run_summary.get("_containerComponent")
+        try:
+            # Bake U footprint into bodies AFTER cuts/T4. Do not rely on
+            # occurrence.transform — it often fails to persist (straight stack).
+            applied_transform = _pose_run_via_body_moves(
+                run_component,
+                transform_spec,
+                feature_prefix="UOH_{}_POSE_".format(run_id),
+            )
+            world_metadata = _update_run_body_metadata_to_world(run_component, run_id, rotation_deg)
+        except Exception as ex:
+            applied_transform = None
+            world_metadata = []
+            run_summary.setdefault("errors", []).append("Could not place {} run: {}".format(run_id, ex))
+        public_run_summary = {key: value for key, value in run_summary.items() if not key.startswith("_")}
+        public_run_summary["runId"] = run_id
+        public_run_summary["worldTransform"] = applied_transform
+        public_run_summary["worldMetadata"] = world_metadata
+        summary["runs"].append(public_run_summary)
+        posed_runs.append({
+            "runId": run_id,
+            "component": run_component,
+            "transform": transform_spec,
+            "summaryIndex": len(summary["runs"]) - 1,
+            "applied": applied_transform,
+        })
+        summary["createdBodies"] += int(run_summary.get("createdBodies") or 0)
+        summary["createdBoardIds"].extend(
+            ["{}.{}".format(run_id, board_id) for board_id in (run_summary.get("createdBoardIds") or [])]
+        )
+        summary["uConnectorBpGroovesCreated"] += int(run_summary.get("uConnectorBpGroovesCreated") or 0)
+        summary["uConnectorT3GroovesCreated"] += int(run_summary.get("uConnectorT3GroovesCreated") or 0)
+        summary["ledGrooveCutsCreated"] += int(run_summary.get("ledGrooveCutsCreated") or 0)
+        summary["hingeCutsCreated"] += int(run_summary.get("hingeCutsCreated") or 0)
+        summary["warnings"].extend(["{}: {}".format(run_id, row) for row in (run_summary.get("warnings") or [])])
+        summary["errors"].extend(["{}: {}".format(run_id, row) for row in (run_summary.get("errors") or [])])
+
+    # Final pass: verify every run received a body-move pose (or identity).
+    for posed in posed_runs:
+        applied = posed.get("applied") if isinstance(posed.get("applied"), dict) else None
+        if posed["component"] is None:
+            summary["errors"].append("Final {} pose missing run component.".format(posed["runId"]))
+            continue
+        if applied is None:
+            summary["errors"].append(
+                "Final {} pose missing — body-move U footprint was not applied.".format(posed["runId"])
+            )
+            continue
+        if applied.get("mode") == "bodyMove" and int(applied.get("movedBodies") or 0) <= 0:
+            summary["errors"].append(
+                "Final {} pose moved 0 bodies — footprint will not be U-shaped.".format(posed["runId"])
+            )
+
+    _capture_position_snapshot(root)
+    try:
+        design = root.parentDesign
+        if design is not None:
+            design.computeAll()
+    except Exception:
+        pass
+
+    parent_occurrence = None
+    try:
+        occs = root.allOccurrencesByComponent(parent)
+        if occs and occs.count:
+            parent_occurrence = occs.item(0)
+    except Exception:
+        parent_occurrence = None
+    measure = measure_u_shape_assembly(
+        parent,
+        result=result,
+        parent_occurrence=parent_occurrence,
+        origin_offset_mm={"x": resolved_x, "y": resolved_y, "z": 0.0},
+    )
+    summary["measure"] = measure
+    footprint = measure.get("footprint") if isinstance(measure.get("footprint"), dict) else {}
+    pose = measure.get("poseCompare") if isinstance(measure.get("poseCompare"), dict) else {}
+    led_audit = measure.get("ledGrooveAudit") if isinstance(measure.get("ledGrooveAudit"), dict) else {}
+    summary["ledGrooveAudit"] = led_audit
+    summary["ledGrooveFailed"] = bool(led_audit and led_audit.get("ok") is False)
+    corner_audit = measure.get("cornerOwnershipAudit") if isinstance(measure.get("cornerOwnershipAudit"), dict) else {}
+    summary["cornerOwnershipAudit"] = corner_audit
+    summary["cornerOwnershipFailed"] = bool(corner_audit and corner_audit.get("ok") is False)
+    summary["notUShape"] = footprint.get("isUShape") is False
+    contact = measure.get("contactAudit") if isinstance(measure.get("contactAudit"), dict) else {}
+    summary["contactFailed"] = bool(contact and contact.get("ok") is False)
+    summary["summaryLine"] = None
+    if not measure.get("ok") or footprint.get("isUShape") is False or pose.get("ok") is False:
+        detail = "; ".join(
+            list(measure.get("errors") or [])[:3]
+            or list(footprint.get("errors") or [])[:2]
+            or ["pose/footprint self-check failed"]
+        )
+        summary["summaryLine"] = detail
+        summary["errors"].append("U self-check FAILED: {}".format(detail))
+        summary["warnings"].append(
+            "See logs/u_shape_ohc_fusion_measure.json (boards={}, findings={}).".format(
+                len(measure.get("boards") or []),
+                len(measure.get("findings") or []),
+            )
+        )
+    try:
+        summary["measureLog"] = measure_and_log_u_shape_assemblies(
+            root,
+            source="createFusionBodies",
+            cases=[{
+                "caseId": str(run_label or resolved_name or "UOHC"),
+                "assemblyComponentName": resolved_name,
+                **measure,
+            }],
+        ).get("logPath")
+    except Exception as ex:
+        summary["warnings"].append("Could not write Fusion measure log: {}".format(ex))
     return summary

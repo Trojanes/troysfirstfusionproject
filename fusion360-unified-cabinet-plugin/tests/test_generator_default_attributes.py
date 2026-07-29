@@ -137,6 +137,38 @@ class GeneratorDefaultAttributesTests(unittest.TestCase):
         self.assertEqual(flap["panelClass"], "door")
         self.assertEqual(flap["boardType"], "rangehood_flap_door_panel")
 
+    def test_u_shape_overhead_semantics_and_world_milling(self):
+        connector = self.mod.overhead_board_semantics(
+            {"id": "U_CONNECTOR", "boardType": "u_back_connector_panel"},
+        )
+        clearance = self.mod.overhead_board_semantics(
+            {"id": "FP_CLEARANCE_SIDE", "boardType": "u_clearance_fixed_panel"},
+        )
+        self.assertEqual(connector["boardType"], "u_back_connector_panel")
+        self.assertEqual(connector["panelClass"], "carcass")
+        self.assertIn("connector", connector["tags"])
+        self.assertEqual(clearance["boardType"], "u_clearance_fixed_front_panel")
+        self.assertEqual(clearance["panelClass"], "door")
+        self.assertIn("clearance", clearance["tags"])
+
+        cases = [
+            (90, "-X", "+X"),
+            (180, "-Y", "+Y"),
+            (-90, "+X", "-X"),
+        ]
+        for degrees, milling, colour in cases:
+            direction = self.mod.overhead_milling_direction({
+                "id": "FP0",
+                "boardType": "up_flap",
+                "worldRotationDeg": degrees,
+            })
+            self.assertEqual(direction["millingDirection"], milling)
+            self.assertEqual(direction["colourDirection"], colour)
+        self.assertEqual(
+            self.mod.overhead_milling_direction({"id": "BP", "worldRotationDeg": 90})["millingDirection"],
+            "+Z",
+        )
+
     def test_kitchen_b1_door_t1_carcass_and_v_panel_door(self):
         b1 = self.mod.kitchen_board_semantics({"id": "B1", "type": "B1"})
         t1 = self.mod.kitchen_board_semantics({"id": "cab-T1", "type": "T1"})

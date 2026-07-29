@@ -998,6 +998,7 @@
       width: 10px;
       height: 100%;
       cursor: ew-resize;
+      touch-action: none;
       z-index: 2;
       display: grid;
       place-items: center;
@@ -1204,6 +1205,40 @@
       background: #fff;
       border: 1px solid #d8e2ef;
       border-radius: 8px;
+    }
+    .uoh-plan-view {
+      min-height: 0;
+      height: 245px;
+      overflow: hidden;
+      padding: 8px;
+    }
+    .uoh-plan-view svg {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+    .uoh-zone-focus {
+      position: sticky;
+      top: 0;
+      z-index: 3;
+      margin: 8px 0;
+      border-left: 3px solid var(--blue);
+      background: #f3f8ff;
+      color: var(--text);
+      padding: 7px 9px;
+      font-size: 12px;
+    }
+    .uoh-secondary-details {
+      margin-top: 8px;
+    }
+    .uoh-secondary-details > summary {
+      cursor: pointer;
+      color: var(--muted);
+      font-size: 12px;
+      user-select: none;
+    }
+    .uoh-secondary-details[open] > summary {
+      margin-bottom: 8px;
     }
     .lounge-summary {
       margin-top: 10px;
@@ -1799,6 +1834,7 @@
       <div class="nav-rail-label" data-i18n="col.cabinetType">柜型</div>
       <div class="module active" data-module="generalTall" data-ui-tier="formal" data-i18n-title="mod.gt.sub" title="含冰箱腔 · 竖向分区"><span data-i18n="mod.gt">高柜</span><span class="module-sub" data-i18n="mod.gt.sub">含冰箱腔 · 竖向分区</span></div>
       <div class="module" data-module="overhead" data-ui-tier="formal" data-i18n-title="mod.oh.sub" title="横向分区 · 上柜"><span data-i18n="mod.oh">吊柜</span><span class="module-sub" data-i18n="mod.oh.sub">横向分区 · 上柜</span></div>
+      <div class="module" data-module="uShapeOverhead" data-ui-tier="formal" data-i18n-title="mod.uoh.sub" title="U形布局 · 三段吊柜"><span data-i18n="mod.uoh">U形吊柜</span><span class="module-sub" data-i18n="mod.uoh.sub">三段 · 俯视分区</span></div>
       <div class="module" data-module="kitchen" data-ui-tier="formal" data-i18n-title="mod.kitchen.sub" title="地柜列 · Preview"><span data-i18n="mod.kitchen">地柜</span><span class="module-sub" data-i18n="mod.kitchen.sub">地柜列 · Preview</span></div>
       <div class="module" data-module="lounge" data-ui-tier="formal" data-i18n-title="mod.lounge.sub" title="L型 · 一字 · Preview"><span data-i18n="mod.lounge">客厅柜</span><span class="module-sub" data-i18n="mod.lounge.sub">L型 · 一字 · Preview</span></div>
       <div class="module disabled" data-module="tools" data-ui-tier="formal" data-i18n-title="mod.tools.title" title="预留 — 尚未开通"><span data-i18n="mod.tools">自动化工具</span><span class="module-sub" data-i18n="mod.tools.sub">未开通</span></div>
@@ -1964,6 +2000,39 @@
               <label><span data-i18n="oh.clearance">间隙 (mm)</span> <input id="ohClearance" type="number" value="2.5" step="0.1"></label>
               <label style="grid-column:1/-1;"><span data-i18n="common.carcassColor">柜体颜色（双面）</span> <input id="ohCarcassColor" type="text" value="White Stipple"></label>
             </div>
+          </div>
+        </div>
+      </div>
+      <div class="module-panel" id="uohParamsPanel" data-module-panel="uShapeOverhead" hidden>
+        <div class="params-head">
+          <div class="params-head-title" data-i18n="uoh.params.title">U Shape OHC 参数</div>
+          <div class="params-head-hint" data-i18n="uoh.params.desc">外形与板厚在此设置；分区宽度在中间区编辑。</div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="uoh.global">全局设置</h3>
+          <div class="card-body">
+            <div class="oh-global-grid params-compact">
+              <label><span data-i18n="uoh.totalWidth">总外宽 (mm)</span><input id="uohTotalWidth" type="number" value="2275"></label>
+              <label><span data-i18n="uoh.depth">统一深度 (mm)</span><input id="uohDepth" type="number" value="400"></label>
+              <label><span data-i18n="uoh.leftLength">左臂长度 (mm)</span><input id="uohLeftLength" type="number" value="1500"></label>
+              <label><span data-i18n="uoh.rightLength">右臂长度 (mm)</span><input id="uohRightLength" type="number" value="1500"></label>
+              <label><span data-i18n="uoh.height">统一高度 (mm)</span><input id="uohHeight" type="number" value="400"></label>
+              <label><span data-i18n="uoh.sideClearance">侧边固定区 (mm)</span><input id="uohSideClearance" type="number" value="50"></label>
+              <label><span data-i18n="oh.dividerT">分隔板厚度</span><input id="uohCpt" type="number" value="15" step="0.1"></label>
+              <label><span data-i18n="oh.frontT">门板厚度</span><input id="uohFpt" type="number" value="16" step="0.1"></label>
+              <label><span data-i18n="oh.topClearance">顶部间隙高度</span><input id="uohTopClearance" type="number" value="40"></label>
+              <label><span data-i18n="oh.clearance">门板间隙</span><input id="uohClearance" type="number" value="2.5" step="0.1"></label>
+              <label style="grid-column:1/-1;"><span data-i18n="common.carcassColor">柜体颜色（双面）</span><input id="uohCarcassColor" type="text" value="White Stipple"></label>
+              <div style="grid-column:1/-1;">
+                <div class="muted" style="margin-bottom:6px;" data-i18n="uoh.led.title">顶部 LED 槽（可按柜段开启）</div>
+                <div class="grid2">
+                  <label><span><input id="uohLedLeft" type="checkbox" checked style="width:auto"> <span data-i18n="uoh.run.left">左臂</span></span></label>
+                  <label><span><input id="uohLedBack" type="checkbox" checked style="width:auto"> <span data-i18n="uoh.run.back">后柜</span></span></label>
+                  <label><span><input id="uohLedRight" type="checkbox" checked style="width:auto"> <span data-i18n="uoh.run.right">右臂</span></span></label>
+                </div>
+              </div>
+            </div>
+            <div class="message" style="margin-top:8px;" data-i18n="uoh.params.measureHint">总外宽量左右最外侧；左右臂长度从后柜外边量到开放端。侧边固定区不参与门板分区。</div>
           </div>
         </div>
       </div>
@@ -2368,6 +2437,102 @@
           </div>
         </div>
       </div>
+      <div class="module-panel" id="uohWorkspacePanel" data-module-panel="uShapeOverhead" hidden>
+        <div class="page-purpose">
+          <div class="page-purpose-title" data-i18n="uoh.workspace.title">U Shape OHC 工作区</div>
+          <div class="page-purpose-desc" data-i18n="uoh.workspace.desc">按步骤：生成数据 → 选左/后/右段编辑分区 → 看摘要 → 需要时再看板件明细。</div>
+        </div>
+        <div class="ui-section">
+          <div class="ui-section-head">
+            <span class="ui-section-step">1</span>
+            <span class="ui-section-title" data-i18n="common.ws.s1.title">生成与建体</span>
+            <span class="ui-section-desc" data-i18n="common.ws.s1.desc">主操作：生成板件数据 → 在 Fusion 建体</span>
+          </div>
+          <div class="ui-section-body">
+            <div class="actions">
+              <button class="primary" id="uohGenerateBtn" data-i18n="oh.gen">生成数据</button>
+              <button class="ghost" id="uohCreateFusionBtn" disabled data-i18n="oh.createBodies">创建 Fusion 实体</button>
+            </div>
+            <details class="uoh-secondary-details">
+              <summary data-i18n="uoh.preset.manage">预设管理</summary>
+              <div class="actions" style="gap:8px;align-items:flex-end;flex-wrap:wrap;">
+                <label style="font-size:12px;"><span data-i18n="common.preset">预设</span>
+                  <select id="uohPresetSelect" style="min-width:170px;">
+                    <option value="" data-i18n="common.noSavedPresets">（暂无预设）</option>
+                  </select>
+                </label>
+                <label style="font-size:12px;"><span data-i18n="common.name">名称</span> <input type="text" id="uohPresetName" data-i18n-placeholder="common.presetName.ph" placeholder="新预设名称" style="width:140px;"></label>
+                <button class="ghost" id="uohPresetLoadBtn" data-i18n="common.load">加载</button>
+                <button class="ghost" id="uohPresetSaveNewBtn" data-i18n="common.saveNew">另存</button>
+                <button class="ghost" id="uohPresetUpdateBtn" data-i18n="common.update">更新</button>
+                <button class="ghost" id="uohPresetDeleteBtn" data-i18n="common.delete">删除</button>
+              </div>
+            </details>
+            <div class="actions" style="gap:8px;align-items:flex-end;flex-wrap:wrap;">
+              <label style="font-size:12px;"><span data-i18n="common.assembly">装配名</span><input id="uohAssemblyName" value="U Shape OHC" style="width:160px;"></label>
+              <label style="font-size:12px;"><span data-i18n="common.originX">原点 X (mm)</span><input id="uohOriginX" type="number" placeholder="auto" step="100" style="width:110px;"></label>
+              <label style="font-size:12px;"><span data-i18n="common.originY">原点 Y (mm)</span><input id="uohOriginY" type="number" placeholder="auto" step="100" style="width:110px;"></label>
+            </div>
+          </div>
+        </div>
+        <div class="ui-section">
+          <div class="ui-section-head">
+            <span class="ui-section-step">2</span>
+            <span class="ui-section-title" data-i18n="common.ws.s2.title">分区编辑</span>
+            <span class="ui-section-desc" data-i18n="uoh.ws.s2.desc">先选左臂、后柜或右臂；拖拽分区宽度，右侧改类型</span>
+          </div>
+          <div class="ui-section-body">
+            <div class="card">
+              <h3 data-i18n="uoh.plan.title">U 形俯视图 + 当前段分区</h3>
+              <div class="card-body">
+                <div class="oh-editor-tools">
+                  <button class="ghost" data-uoh-run="LEFT" data-i18n="uoh.run.left">左臂</button>
+                  <button class="ghost" data-uoh-run="BACK" data-i18n="uoh.run.back">后柜</button>
+                  <button class="ghost" data-uoh-run="RIGHT" data-i18n="uoh.run.right">右臂</button>
+                  <button class="ghost" id="uohAddZoneBtn" data-i18n="gt.addZone">添加分区</button>
+                  <button class="ghost" id="uohDeleteZoneBtn" data-i18n="gt.delZone">删除分区</button>
+                </div>
+                <div class="uoh-zone-focus" id="uohZoneStripHint"></div>
+                <div class="lounge-top-view uoh-plan-view" id="uohPlanView" data-empty="0"></div>
+                <div class="oh-zone-strip" id="uohZoneStrip"></div>
+                <div class="oh-axis-row" id="uohZoneWidthRow"></div>
+                <div class="oh-axis-row" id="uohZoneCumulativeRow"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="ui-section">
+          <div class="ui-section-head">
+            <span class="ui-section-step">3</span>
+            <span class="ui-section-title" data-i18n="common.ws.s3.title">检查结果</span>
+            <span class="ui-section-desc" data-i18n="common.ws.s3.desc">生成后先看摘要，确认分区是否合理</span>
+          </div>
+          <div class="ui-section-body">
+            <div class="card">
+              <h3 data-i18n="oh.summary">摘要</h3>
+              <div class="card-body"><div id="uohSummary" class="oh-stat-grid"></div></div>
+            </div>
+          </div>
+        </div>
+        <div class="ui-section">
+          <div class="ui-section-head">
+            <span class="ui-section-step">4</span>
+            <span class="ui-section-title" data-i18n="common.ws.s4.title">板件预览</span>
+            <span class="ui-section-desc" data-i18n="common.ws.s4.desc">明细与 SVG；日常生成可不展开</span>
+          </div>
+          <div class="ui-section-body">
+            <details class="card uoh-secondary-details">
+              <summary style="padding:10px 12px;font-weight:700;" data-i18n="uoh.boards.expand">展开生成板件明细</summary>
+              <div class="card-body table-scroll">
+                <table>
+                  <thead><tr><th>run</th><th>id</th><th>boardType</th><th>t</th><th>x0</th><th>x1</th><th>y0</th><th>y1</th><th>z0</th><th>z1</th></tr></thead>
+                  <tbody id="uohBoardRows"></tbody>
+                </table>
+              </div>
+            </details>
+          </div>
+        </div>
+      </div>
       <div class="module-panel" id="kitchenWorkspacePanel" data-module-panel="kitchen" hidden>
         <div class="page-purpose">
           <div class="page-purpose-title"><span data-i18n="kitchen.ws.purpose.title">地柜工作区</span> <span class="pill-preview" data-i18n="pill.preview">Preview</span></div>
@@ -2698,6 +2863,44 @@
           <h3>Overhead Result (JSON) <span class="pill pill-test" data-i18n="pill.test">测试</span></h3>
           <div class="card-body">
             <pre id="ohResultBox" style="white-space:pre-wrap;margin:0;max-height:260px;overflow:auto" data-i18n-empty="common.noResultYet" data-empty="1">尚无结果。</pre>
+          </div>
+        </div>
+      </div>
+      <div class="module-panel" id="uohValidationPanel" data-module-panel="uShapeOverhead" hidden>
+        <div class="validation-head">
+          <div class="validation-head-title" data-i18n="uoh.validation.title">分区与校验</div>
+          <div class="validation-head-hint" data-i18n="uoh.validation.desc">选中柜段和分区后改选项；生成后查看错误与警告。</div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="oh.zoneProps">分区属性</h3>
+          <div class="card-body">
+            <div id="uohSelectedRun" class="message" data-empty="0">后柜 · 分区 1</div>
+            <div class="oh-property-grid">
+              <label><span data-i18n="oh.zoneType">分区类型</span>
+                <select id="uohZoneType">
+                  <option value="up_flap" data-i18n="oh.zone.upFlap">上翻门</option>
+                  <option value="fixed_panel" data-i18n="oh.zone.fixed">固定板</option>
+                  <option value="open" data-i18n="oh.zone.open">开放格</option>
+                </select>
+              </label>
+              <label><span data-i18n="oh.zoneWidth">宽度 (mm)</span><input id="uohZoneWidth" type="number" min="120" step="1"></label>
+              <label><span data-i18n="oh.zoneX0">计算位置 X0 (mm)</span><input id="uohZoneX0" class="oh-readonly" readonly></label>
+              <label><span data-i18n="oh.zoneX1">计算位置 X1 (mm)</span><input id="uohZoneX1" class="oh-readonly" readonly></label>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="oh.warnings">警告</h3>
+          <div class="card-body">
+            <div id="uohErrors" data-empty="1" data-i18n-empty="oh.empty.errors">生成后查看错误。</div>
+            <div id="uohWarnings" style="margin-top:6px;" data-empty="1" data-i18n-empty="oh.empty.warnings">生成后查看警告。</div>
+          </div>
+        </div>
+        <div class="card ui-test-zone" data-ui-tier="test">
+          <h3>U Shape OHC Result (JSON) <span class="pill pill-test" data-i18n="pill.test">测试</span></h3>
+          <div class="card-body">
+            <div class="actions"><button class="ghost" id="uohSelfCheckBtn" data-i18n="uoh.selfCheck">自检 / 写 log</button></div>
+            <pre id="uohResultBox" style="white-space:pre-wrap;margin:8px 0 0;max-height:240px;overflow:auto" data-i18n-empty="common.noResultYet" data-empty="1">尚无结果。</pre>
           </div>
         </div>
       </div>
@@ -3848,6 +4051,32 @@
         { id: "oh-zone-2", type: "fixed_panel", width: 750 },
         { id: "oh-zone-3", type: "up_flap", width: 600 },
       ],
+    };
+    const uShapeOverheadState = {
+      result: null,
+      selectedRunId: "BACK",
+      selectedZoneIndex: 0,
+      dragBoundaryIndex: null,
+      dragStartX: 0,
+      dragLeftStart: 0,
+      dragRightStart: 0,
+      zones: {
+        LEFT: [
+          { id: "uoh-left-1", type: "up_flap", width: 350 },
+          { id: "uoh-left-2", type: "fixed_panel", width: 350 },
+          { id: "uoh-left-3", type: "up_flap", width: 350 },
+        ],
+        BACK: [
+          { id: "uoh-back-1", type: "up_flap", width: 448 },
+          { id: "uoh-back-2", type: "fixed_panel", width: 447 },
+          { id: "uoh-back-3", type: "up_flap", width: 448 },
+        ],
+        RIGHT: [
+          { id: "uoh-right-1", type: "up_flap", width: 350 },
+          { id: "uoh-right-2", type: "fixed_panel", width: 350 },
+          { id: "uoh-right-3", type: "up_flap", width: 350 },
+        ],
+      },
     };
     const attrOverheadState = {
       result: null,
@@ -9488,6 +9717,38 @@
     }
     const ohPresetManager = createOverheadPresetManager(overheadMainBench);
     const aohPresetManager = createOverheadPresetManager(attrOverheadBench);
+    const uohPresetManager = createPresetManager({
+      moduleKey: "uShapeOverhead",
+      storageKey: "cabinetnc.uShapeOverhead.presets.v2",
+      legacyKey: "cabinetnc.uShapeOverhead.preset.v1",
+      uiPrefix: "uohPreset",
+      statusLabel: "U Shape OHC",
+      serialize() {
+        return {
+          version: 3,
+          module: "uShapeOverhead",
+          geometryRevision: "back_owns_corners_v5",
+          savedAt: new Date().toISOString(),
+          controls: presetReadControlsFromPanels(["uohParamsPanel", "uohWorkspacePanel"]),
+          params: buildUohUiParams(),
+          zones: JSON.parse(JSON.stringify(uShapeOverheadState.zones)),
+          selectedRunId: uShapeOverheadState.selectedRunId,
+          selectedZoneIndex: uShapeOverheadState.selectedZoneIndex,
+        };
+      },
+      apply(preset) {
+        applyUohPresetData(preset);
+        uohGenerate();
+      },
+      defaultName() {
+        const assembly = document.getElementById("uohAssemblyName")?.value?.trim();
+        return assembly || `UOHC ${new Date().toISOString().slice(0, 16).replace("T", " ")}`;
+      },
+      onError(message) {
+        const host = document.getElementById("uohWarnings");
+        if (host) host.innerHTML = `<div class="message error">${escapeHtml(message)}</div>`;
+      },
+    });
 
     const kitchenPresetManager = createPresetManager({
       moduleKey: "kitchen",
@@ -9803,6 +10064,508 @@
       });
     }
 
+    function uohNumber(id, fallback = 0) {
+      const value = Number(document.getElementById(id)?.value);
+      return Number.isFinite(value) ? value : fallback;
+    }
+
+    function uohUsableWidth(runId) {
+      const total = uohNumber("uohTotalWidth", 2275);
+      const depth = uohNumber("uohDepth", 400);
+      const left = uohNumber("uohLeftLength", 1500);
+      const right = uohNumber("uohRightLength", 1500);
+      const side = uohNumber("uohSideClearance", 50);
+      const fpt = uohNumber("uohFpt", 16);
+      if (runId === "BACK") return Math.max(0, total - 2 * depth - 2 * (side + fpt));
+      return Math.max(0, (runId === "LEFT" ? left : right) - depth - fpt - side);
+    }
+
+    function normalizeUohZones(runId) {
+      const zones = uShapeOverheadState.zones[runId] || [];
+      const usable = uohUsableWidth(runId);
+      if (!zones.length) {
+        uShapeOverheadState.zones[runId] = [{ id: `uoh-${runId.toLowerCase()}-1`, type: "up_flap", width: usable }];
+        return;
+      }
+      // Keep the last valid proportions while footprint inputs are temporarily
+      // invalid; otherwise typing through zero destroys the user's zone layout.
+      if (usable <= 0) return;
+      const total = zones.reduce((sum, zone) => sum + Math.max(0, Number(zone.width) || 0), 0);
+      if (total <= 0) {
+        const equalWidth = usable / zones.length;
+        zones.forEach((zone, index) => {
+          zone.width = index === zones.length - 1 ? usable - equalWidth * index : equalWidth;
+        });
+        return;
+      }
+      const scale = usable / total;
+      let used = 0;
+      zones.forEach((zone, index) => {
+        zone.width = index === zones.length - 1 ? Math.max(0, usable - used) : Math.max(0, (Number(zone.width) || 0) * scale);
+        used += zone.width;
+      });
+    }
+
+    function buildUohUiParams() {
+      ["LEFT", "BACK", "RIGHT"].forEach(normalizeUohZones);
+      return {
+        style: "style_1",
+        totalWidth: uohNumber("uohTotalWidth", 2275),
+        leftArmLength: uohNumber("uohLeftLength", 1500),
+        rightArmLength: uohNumber("uohRightLength", 1500),
+        cabinetDepth: uohNumber("uohDepth", 400),
+        cabinetHeight: uohNumber("uohHeight", 400),
+        sideClearance: uohNumber("uohSideClearance", 50),
+        featureWidth: uohNumber("uohCpt", 15),
+        frontPanelThickness: uohNumber("uohFpt", 16),
+        topClearanceHeight: uohNumber("uohTopClearance", 40),
+        clearance: uohNumber("uohClearance", 2.5),
+        carcassColorName: document.getElementById("uohCarcassColor")?.value || "White Stipple",
+        ledGroove: true,
+        runLedGroove: {
+          LEFT: Boolean(document.getElementById("uohLedLeft")?.checked),
+          BACK: Boolean(document.getElementById("uohLedBack")?.checked),
+          RIGHT: Boolean(document.getElementById("uohLedRight")?.checked),
+        },
+        zones: JSON.parse(JSON.stringify(uShapeOverheadState.zones)),
+      };
+    }
+
+    function uohParamsForModel(uiParams) {
+      // The Fusion assembly's stable coordinate IDs are opposite the
+      // front-view LEFT/RIGHT convention used by the palette.
+      return {
+        ...uiParams,
+        leftArmLength: uiParams.rightArmLength,
+        rightArmLength: uiParams.leftArmLength,
+        runLedGroove: {
+          LEFT: uiParams.runLedGroove?.RIGHT,
+          BACK: uiParams.runLedGroove?.BACK,
+          RIGHT: uiParams.runLedGroove?.LEFT,
+        },
+        zones: {
+          LEFT: JSON.parse(JSON.stringify(uiParams.zones?.RIGHT || [])),
+          BACK: JSON.parse(JSON.stringify(uiParams.zones?.BACK || [])),
+          RIGHT: JSON.parse(JSON.stringify(uiParams.zones?.LEFT || [])),
+        },
+      };
+    }
+
+    function buildUohParams() {
+      return uohParamsForModel(buildUohUiParams());
+    }
+
+    function uohRunLabel(runId) {
+      return t(`uoh.run.${String(runId).toLowerCase()}`);
+    }
+
+    function uohModelRunToUi(runId) {
+      return runId === "LEFT" ? "RIGHT" : runId === "RIGHT" ? "LEFT" : runId;
+    }
+
+    function uohZoneBounds(runId = uShapeOverheadState.selectedRunId) {
+      normalizeUohZones(runId);
+      let x = 0;
+      return (uShapeOverheadState.zones[runId] || []).map((zone, index) => {
+        const width = Math.max(0, Number(zone.width) || 0);
+        const bound = { zone, index, width, x0: x, x1: x + width };
+        x += width;
+        return bound;
+      });
+    }
+
+    function selectedUohZoneBound() {
+      const bounds = uohZoneBounds();
+      const index = Math.min(Math.max(uShapeOverheadState.selectedZoneIndex, 0), Math.max(0, bounds.length - 1));
+      uShapeOverheadState.selectedZoneIndex = index;
+      return bounds[index] || null;
+    }
+
+    function invalidateUohResult() {
+      uShapeOverheadState.result = null;
+      const button = document.getElementById("uohCreateFusionBtn");
+      if (button) button.disabled = true;
+    }
+
+    function renderUohPlanPreview() {
+      const host = document.getElementById("uohPlanView");
+      if (!host) return;
+      const totalWidth = Math.max(1, uohNumber("uohTotalWidth", 2275));
+      const depth = Math.max(1, uohNumber("uohDepth", 400));
+      const leftLength = Math.max(depth, uohNumber("uohLeftLength", 1500));
+      const rightLength = Math.max(depth, uohNumber("uohRightLength", 1500));
+      const maxLength = Math.max(leftLength, rightLength);
+      const svgWidth = 720;
+      const svgHeight = 300;
+      const pad = 32;
+      const scale = Math.min((svgWidth - pad * 2) / totalWidth, (svgHeight - pad * 2) / maxLength);
+      const ox = (svgWidth - totalWidth * scale) / 2;
+      const oy = pad;
+      const selected = uShapeOverheadState.selectedRunId;
+      const sideClearance = Math.max(0, uohNumber("uohSideClearance", 50));
+      const frontThickness = Math.max(0, uohNumber("uohFpt", 16));
+      const rect = (runId, x, y, width, height) => {
+        const active = selected === runId;
+        return `<g data-uoh-run-shape="${runId}" role="button" style="cursor:pointer">
+          <rect x="${(ox + x * scale).toFixed(2)}" y="${(oy + y * scale).toFixed(2)}" width="${Math.max(1, width * scale).toFixed(2)}" height="${Math.max(1, height * scale).toFixed(2)}"
+            fill="${active ? "#dbeaff" : "#f4f0e6"}" stroke="${active ? "#0f6bff" : "#6e5a42"}" stroke-width="${active ? 3 : 1.5}"></rect>
+        </g>`;
+      };
+      const label = (runId, x, y) => `<text x="${(ox + x * scale).toFixed(2)}" y="${(oy + y * scale).toFixed(2)}" text-anchor="middle" dominant-baseline="middle" fill="#22344d" font-size="12" pointer-events="none">${escapeHtml(uohRunLabel(runId))}</text>`;
+      const selectedZoneOverlay = uohZoneBounds(selected).map(({ zone, index, x0, x1 }) => {
+        let vx0;
+        let vy0;
+        let vw;
+        let vh;
+        if (selected === "LEFT") {
+          vx0 = 0;
+          vy0 = depth + frontThickness + sideClearance + x0;
+          vw = depth;
+          vh = x1 - x0;
+        } else if (selected === "RIGHT") {
+          vx0 = totalWidth - depth;
+          vy0 = rightLength - x1;
+          vw = depth;
+          vh = x1 - x0;
+        } else {
+          vx0 = totalWidth - depth - sideClearance - frontThickness - x1;
+          vy0 = 0;
+          vw = x1 - x0;
+          vh = depth;
+        }
+        const colors = overheadZoneColors(zone.type);
+        const px = ox + vx0 * scale;
+        const py = oy + vy0 * scale;
+        const pw = Math.max(1, vw * scale);
+        const ph = Math.max(1, vh * scale);
+        const active = index === uShapeOverheadState.selectedZoneIndex;
+        return `<g data-uoh-plan-zone="${index}" style="cursor:pointer">
+          <rect x="${px.toFixed(2)}" y="${py.toFixed(2)}" width="${pw.toFixed(2)}" height="${ph.toFixed(2)}"
+            fill="${colors.bg}" fill-opacity="0.92" stroke="${active ? "#0f6bff" : colors.border}" stroke-width="${active ? 3 : 1.5}"></rect>
+          <text x="${(px + pw / 2).toFixed(2)}" y="${(py + ph / 2).toFixed(2)}" text-anchor="middle" dominant-baseline="middle"
+            fill="${colors.text}" font-size="10" pointer-events="none">Z${index + 1}</text>
+        </g>`;
+      }).join("");
+      markI18nFilled(host);
+      host.innerHTML = `<svg viewBox="0 0 ${svgWidth} ${svgHeight}" role="img" aria-label="${escapeHtml(t("uoh.plan.aria"))}">
+        <rect x="0" y="0" width="${svgWidth}" height="${svgHeight}" fill="#f8fbff"></rect>
+        ${rect("LEFT", 0, depth, depth, Math.max(1, leftLength - depth))}
+        ${rect("BACK", 0, 0, totalWidth, depth)}
+        ${rect("RIGHT", totalWidth - depth, depth, depth, Math.max(1, rightLength - depth))}
+        ${selectedZoneOverlay}
+        ${label("LEFT", depth / 2, Math.min(leftLength * 0.56, depth + 170))}
+        ${label("BACK", totalWidth / 2, depth / 2)}
+        ${label("RIGHT", totalWidth - depth / 2, Math.min(rightLength * 0.56, depth + 170))}
+        <line x1="${ox.toFixed(2)}" y1="${(oy - 16).toFixed(2)}" x2="${(ox + totalWidth * scale).toFixed(2)}" y2="${(oy - 16).toFixed(2)}" stroke="#22344d"></line>
+        <text x="${(ox + totalWidth * scale / 2).toFixed(2)}" y="${(oy - 21).toFixed(2)}" text-anchor="middle" fill="#22344d" font-size="11">${Math.round(totalWidth)} mm</text>
+      </svg>`;
+      host.querySelectorAll("[data-uoh-run-shape]").forEach((shape) => {
+        shape.addEventListener("click", () => selectUohRun(shape.getAttribute("data-uoh-run-shape") || "BACK"));
+      });
+      host.querySelectorAll("[data-uoh-plan-zone]").forEach((shape) => {
+        shape.addEventListener("click", (event) => {
+          uShapeOverheadState.selectedZoneIndex = Number(shape.getAttribute("data-uoh-plan-zone")) || 0;
+          renderUohUi();
+          event.stopPropagation();
+        });
+      });
+    }
+
+    function renderUohZoneProperties() {
+      const selected = selectedUohZoneBound();
+      if (!selected) return;
+      const { zone, index, x0, x1, width } = selected;
+      const badge = document.getElementById("uohSelectedRun");
+      const colors = overheadZoneColors(zone.type);
+      if (badge) {
+        badge.className = "message";
+        badge.style.background = colors.bg;
+        badge.style.border = `1px solid ${colors.border}`;
+        badge.style.color = colors.text;
+        badge.textContent = tf("uoh.zone.selected", {
+          run: uohRunLabel(uShapeOverheadState.selectedRunId),
+          n: index + 1,
+          type: overheadZoneLabel(zone.type),
+        });
+      }
+      const type = document.getElementById("uohZoneType");
+      const widthInput = document.getElementById("uohZoneWidth");
+      const x0Input = document.getElementById("uohZoneX0");
+      const x1Input = document.getElementById("uohZoneX1");
+      if (type) type.value = zone.type;
+      if (widthInput) widthInput.value = String(Math.round(width));
+      if (x0Input) x0Input.value = String(Math.round(x0));
+      if (x1Input) x1Input.value = String(Math.round(x1));
+    }
+
+    function renderUohZoneEditor() {
+      const runId = uShapeOverheadState.selectedRunId;
+      const bounds = uohZoneBounds(runId);
+      const usable = Math.max(1, uohUsableWidth(runId));
+      const strip = document.getElementById("uohZoneStrip");
+      const widthRow = document.getElementById("uohZoneWidthRow");
+      const cumulativeRow = document.getElementById("uohZoneCumulativeRow");
+      const hint = document.getElementById("uohZoneStripHint");
+      document.querySelectorAll("[data-uoh-run]").forEach((button) => {
+        button.classList.toggle("primary", button.dataset.uohRun === runId);
+      });
+      if (hint) {
+        hint.textContent = bounds.length > 1
+          ? tf("uoh.zone.hint", { run: uohRunLabel(runId), width: Math.round(usable) })
+          : tf("uoh.zone.singleHint", { run: uohRunLabel(runId), width: Math.round(usable) });
+      }
+      if (strip && widthRow && cumulativeRow) {
+        strip.innerHTML = bounds.map(({ zone, index, width }) => `
+          <div class="oh-zone ${escapeHtml(zone.type)} ${index === uShapeOverheadState.selectedZoneIndex ? "selected" : ""}" data-uoh-zone="${index}" style="width:${(width / usable * 100).toFixed(4)}%">
+            <div>
+              <div class="oh-zone-title">${escapeHtml(tf("common.zoneN", { n: index + 1 }))}</div>
+              <div>${escapeHtml(overheadZoneLabel(zone.type))}</div>
+              <div>${Math.round(width)} mm</div>
+            </div>
+            ${index < bounds.length - 1 ? `<div class="oh-zone-boundary" data-uoh-boundary="${index}" title="${escapeHtml(t("common.dragBoundary"))}"></div>` : ""}
+          </div>`).join("");
+        widthRow.innerHTML = bounds.map(({ width }) => `<span style="width:${(width / usable * 100).toFixed(4)}%">${Math.round(width)}</span>`).join("");
+        cumulativeRow.innerHTML = bounds.map(({ x0, x1, width }, index) => `<span style="width:${(width / usable * 100).toFixed(4)}%">${index === 0 ? `${Math.round(x0)} | ` : ""}${Math.round(x1)}</span>`).join("");
+        strip.querySelectorAll("[data-uoh-zone]").forEach((zoneEl) => {
+          zoneEl.addEventListener("click", () => {
+            uShapeOverheadState.selectedZoneIndex = Number(zoneEl.dataset.uohZone);
+            renderUohUi();
+          });
+        });
+        strip.querySelectorAll("[data-uoh-boundary]").forEach((boundary) => {
+          boundary.addEventListener("pointerdown", (event) => startUohBoundaryDrag(event, Number(boundary.dataset.uohBoundary)));
+        });
+      }
+      renderUohPlanPreview();
+      renderUohZoneProperties();
+    }
+
+    function selectUohRun(runId) {
+      if (!["LEFT", "BACK", "RIGHT"].includes(runId)) return;
+      uShapeOverheadState.selectedRunId = runId;
+      uShapeOverheadState.selectedZoneIndex = 0;
+      renderUohUi();
+    }
+
+    function startUohBoundaryDrag(event, boundaryIndex) {
+      const zones = uShapeOverheadState.zones[uShapeOverheadState.selectedRunId] || [];
+      uShapeOverheadState.dragBoundaryIndex = boundaryIndex;
+      uShapeOverheadState.dragStartX = event.clientX;
+      uShapeOverheadState.dragLeftStart = Number(zones[boundaryIndex]?.width) || 0;
+      uShapeOverheadState.dragRightStart = Number(zones[boundaryIndex + 1]?.width) || 0;
+      document.addEventListener("pointermove", moveUohBoundaryDrag);
+      document.addEventListener("pointerup", finishUohBoundaryDrag, { once: true });
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
+    function moveUohBoundaryDrag(event) {
+      const index = uShapeOverheadState.dragBoundaryIndex;
+      if (!Number.isInteger(index)) return;
+      const strip = document.getElementById("uohZoneStrip");
+      const rect = strip?.getBoundingClientRect();
+      if (!rect) return;
+      const zones = uShapeOverheadState.zones[uShapeOverheadState.selectedRunId] || [];
+      const pairTotal = uShapeOverheadState.dragLeftStart + uShapeOverheadState.dragRightStart;
+      const deltaMm = (event.clientX - uShapeOverheadState.dragStartX) / Math.max(rect.width, 1) * uohUsableWidth(uShapeOverheadState.selectedRunId);
+      const minWidth = Math.min(120, pairTotal / 2);
+      const nextLeft = Math.min(Math.max(uShapeOverheadState.dragLeftStart + deltaMm, minWidth), pairTotal - minWidth);
+      zones[index].width = Math.round(nextLeft);
+      zones[index + 1].width = Math.round(pairTotal - nextLeft);
+      invalidateUohResult();
+      renderUohZoneEditor();
+      event.preventDefault();
+    }
+
+    function finishUohBoundaryDrag() {
+      uShapeOverheadState.dragBoundaryIndex = null;
+      document.removeEventListener("pointermove", moveUohBoundaryDrag);
+    }
+
+    function bindUohZoneProperties() {
+      const type = document.getElementById("uohZoneType");
+      const widthInput = document.getElementById("uohZoneWidth");
+      if (type && !type.dataset.bound) {
+        type.dataset.bound = "1";
+        type.addEventListener("change", () => {
+          const selected = selectedUohZoneBound();
+          if (!selected) return;
+          selected.zone.type = type.value;
+          invalidateUohResult();
+          renderUohUi();
+        });
+      }
+      if (widthInput && !widthInput.dataset.bound) {
+        widthInput.dataset.bound = "1";
+        widthInput.addEventListener("change", () => {
+          const selected = selectedUohZoneBound();
+          if (!selected) return;
+          const zones = uShapeOverheadState.zones[uShapeOverheadState.selectedRunId] || [];
+          const oldWidth = selected.width;
+          const nextWidth = Math.max(120, Number(widthInput.value) || oldWidth);
+          const delta = nextWidth - oldWidth;
+          const neighbor = zones[selected.index + 1] || zones[selected.index - 1];
+          if (neighbor && (Number(neighbor.width) || 0) - delta >= 120) {
+            selected.zone.width = Math.round(nextWidth);
+            neighbor.width = Math.round((Number(neighbor.width) || 0) - delta);
+            invalidateUohResult();
+          }
+          renderUohUi();
+        });
+      }
+    }
+
+    function addUohZone() {
+      const runId = uShapeOverheadState.selectedRunId;
+      const zones = uShapeOverheadState.zones[runId] || [];
+      const index = Math.min(Math.max(uShapeOverheadState.selectedZoneIndex, 0), Math.max(0, zones.length - 1));
+      const source = zones[index] || { type: "up_flap", width: uohUsableWidth(runId) };
+      if ((Number(source.width) || 0) < 240) return;
+      const splitWidth = Math.floor(Number(source.width) / 2);
+      source.width = Number(source.width) - splitWidth;
+      zones.splice(index + 1, 0, { id: `uoh-${runId.toLowerCase()}-${Date.now()}`, type: "up_flap", width: splitWidth });
+      uShapeOverheadState.selectedZoneIndex = index + 1;
+      invalidateUohResult();
+      renderUohUi();
+    }
+
+    function deleteUohZone() {
+      const runId = uShapeOverheadState.selectedRunId;
+      const zones = uShapeOverheadState.zones[runId] || [];
+      if (zones.length <= 1) return;
+      const index = Math.min(Math.max(uShapeOverheadState.selectedZoneIndex, 0), zones.length - 1);
+      const [removed] = zones.splice(index, 1);
+      const receiver = zones[Math.max(0, index - 1)] || zones[0];
+      receiver.width = Number(receiver.width || 0) + Number(removed?.width || 0);
+      uShapeOverheadState.selectedZoneIndex = Math.min(index, zones.length - 1);
+      invalidateUohResult();
+      renderUohUi();
+    }
+
+    function renderUohClientValidation() {
+      if (uShapeOverheadState.result) return;
+      const totalWidth = uohNumber("uohTotalWidth", 2275);
+      const depth = uohNumber("uohDepth", 400);
+      const height = uohNumber("uohHeight", 400);
+      const topClearance = uohNumber("uohTopClearance", 40);
+      const dividerThickness = uohNumber("uohCpt", 15);
+      const errors = [];
+      const warnings = [];
+      if (!(totalWidth > 2 * depth)) errors.push(t("uoh.validation.totalWidth"));
+      if (!(height > topClearance + 3 * dividerThickness)) errors.push(t("uoh.validation.height"));
+      if (!(depth > dividerThickness + 30)) errors.push(t("uoh.validation.depth"));
+      ["LEFT", "BACK", "RIGHT"].forEach((runId) => {
+        const usable = uohUsableWidth(runId);
+        if (usable < 120) errors.push(tf("uoh.validation.usable", { run: uohRunLabel(runId), width: Math.round(usable) }));
+        const small = (uShapeOverheadState.zones[runId] || []).filter((zone) => Number(zone.width) < 120).length;
+        if (small) warnings.push(tf("uoh.validation.smallZones", { run: uohRunLabel(runId), count: small }));
+      });
+      const render = (id, list, cls, emptyText) => {
+        const host = document.getElementById(id);
+        if (!host) return;
+        markI18nFilled(host);
+        host.innerHTML = list.length
+          ? list.map((message) => `<div class="message ${cls}">${escapeHtml(message)}</div>`).join("")
+          : `<div class="message ${cls === "error" ? "ok" : ""}">${escapeHtml(emptyText)}</div>`;
+      };
+      render("uohErrors", errors, "error", t("uoh.validation.ready"));
+      render("uohWarnings", warnings, "warn", t("common.none"));
+    }
+
+    function renderUohUi() {
+      renderUohZoneEditor();
+      renderUohClientValidation();
+    }
+
+    function renderUohResult(result) {
+      uShapeOverheadState.result = result;
+      const errors = result?.validation?.errors || [];
+      const warnings = result?.validation?.warnings || [];
+      const renderMessages = (id, list, cls) => {
+        const host = document.getElementById(id);
+        if (!host) return;
+        markI18nFilled(host);
+        host.innerHTML = list.length ? list.map((text) => `<div class="message ${cls}">${escapeHtml(text)}</div>`).join("") : `<div class="message ok">${escapeHtml(t("common.none"))}</div>`;
+      };
+      renderMessages("uohErrors", errors, "error");
+      renderMessages("uohWarnings", warnings, "warn");
+      const summary = document.getElementById("uohSummary");
+      if (summary) summary.innerHTML = `
+        <div class="oh-stat">${escapeHtml(t("uoh.stat.runs"))}<strong>${result?.runs?.length || 0}</strong></div>
+        <div class="oh-stat">${escapeHtml(t("uoh.stat.boards"))}<strong>${result?.worldBoards?.length || 0}</strong></div>
+        <div class="oh-stat">${escapeHtml(t("uoh.stat.errors"))}<strong>${errors.length}</strong></div>`;
+      const resultBox = document.getElementById("uohResultBox");
+      if (resultBox) {
+        resultBox.textContent = JSON.stringify(result, null, 2);
+        markI18nFilled(resultBox);
+      }
+      const boardRows = document.getElementById("uohBoardRows");
+      if (boardRows) {
+        boardRows.innerHTML = (result?.worldBoards || []).map((board) => `
+          <tr><td>${escapeHtml(uohRunLabel(uohModelRunToUi(board.runId)))}</td><td>${escapeHtml(board.localBoardId || board.id)}</td><td>${escapeHtml(board.boardType || "")}</td>
+          <td>${escapeHtml(board.materialThickness ?? "")}</td><td>${escapeHtml(board.x0 ?? "")}</td><td>${escapeHtml(board.x1 ?? "")}</td>
+          <td>${escapeHtml(board.y0 ?? "")}</td><td>${escapeHtml(board.y1 ?? "")}</td><td>${escapeHtml(board.z0 ?? "")}</td><td>${escapeHtml(board.z1 ?? "")}</td></tr>`).join("");
+      }
+      const button = document.getElementById("uohCreateFusionBtn");
+      if (button) button.disabled = errors.length > 0 || !result?.runs?.length;
+      renderUohUi();
+    }
+
+    function uohGenerate() {
+      const params = buildUohParams();
+      const box = document.getElementById("uohResultBox");
+      if (box) box.textContent = "Generating U Shape OHC...";
+      fusionSend("uShapeOverhead.generate", { params });
+    }
+
+    function uohCreateFusion() {
+      const params = buildUohParams();
+      fusionSend("uShapeOverhead.createFusionBodies", {
+        params,
+        result: uShapeOverheadState.result || undefined,
+        assemblyName: document.getElementById("uohAssemblyName")?.value || "U Shape OHC",
+        originXMm: document.getElementById("uohOriginX")?.value || undefined,
+        originYMm: document.getElementById("uohOriginY")?.value || undefined,
+        caseName: `UOHC_${params.totalWidth}_${Date.now()}`,
+      });
+    }
+
+    function uohRunSelfCheck() {
+      const params = buildUohParams();
+      const box = document.getElementById("uohResultBox");
+      if (box) box.textContent = "Measuring U Shape OHC assemblies → logs/u_shape_ohc_fusion_measure.json ...";
+      document.getElementById("statusText").textContent = "U Shape OHC self-check measuring...";
+      fusionSend("uShapeOverhead.runSelfCheck", {
+        params,
+        createFirst: false,
+        assemblyName: document.getElementById("uohAssemblyName")?.value || "U Shape OHC",
+      });
+    }
+
+    function applyUohPresetData(preset) {
+      if (!preset || typeof preset !== "object") return;
+      if (preset.controls) presetApplyControls(preset.controls);
+      const params = preset.params || {};
+      const values = {
+        uohTotalWidth: params.totalWidth, uohLeftLength: params.leftArmLength, uohRightLength: params.rightArmLength,
+        uohDepth: params.cabinetDepth, uohHeight: params.cabinetHeight, uohSideClearance: params.sideClearance,
+        uohCpt: params.featureWidth, uohFpt: params.frontPanelThickness, uohTopClearance: params.topClearanceHeight,
+        uohClearance: params.clearance, uohCarcassColor: params.carcassColorName,
+      };
+      Object.entries(values).forEach(([id, value]) => { if (value != null && document.getElementById(id)) document.getElementById(id).value = value; });
+      if (preset.zones) uShapeOverheadState.zones = JSON.parse(JSON.stringify(preset.zones));
+      else if (params.zones) uShapeOverheadState.zones = JSON.parse(JSON.stringify(params.zones));
+      uShapeOverheadState.selectedRunId = preset.selectedRunId || "BACK";
+      ["LEFT", "BACK", "RIGHT"].forEach((id) => {
+        const checkbox = document.getElementById(`uohLed${id[0]}${id.slice(1).toLowerCase()}`);
+        if (checkbox) checkbox.checked = params.runLedGroove?.[id] !== false;
+      });
+      uShapeOverheadState.selectedZoneIndex = Math.max(0, Number(preset.selectedZoneIndex) || 0);
+      uShapeOverheadState.result = null;
+      ["LEFT", "BACK", "RIGHT"].forEach(normalizeUohZones);
+      renderUohUi();
+    }
+
     function overheadCreateFusionRoughBodies(bench = ohBench()) {
       return runOverheadBench(bench, () => {
         const params = buildOverheadParams();
@@ -9898,6 +10661,7 @@
       activeModule = moduleName;
       const designPage = document.getElementById("page-design");
       designPage.classList.toggle("overhead-mode", moduleName === "overhead");
+      designPage.classList.toggle("u-shape-overhead-mode", moduleName === "uShapeOverhead");
       designPage.classList.toggle("kitchen-mode", moduleName === "kitchen");
       designPage.classList.toggle("lounge-mode", moduleName === "lounge");
       designPage.classList.toggle("generalTall-mode", moduleName === "generalTall");
@@ -9920,6 +10684,10 @@
           if (ohState().result) renderOverheadResult(ohState().result, overheadMainBench);
         });
         document.getElementById("statusText").textContent = "Overhead ready";
+      } else if (moduleName === "uShapeOverhead") {
+        renderUohUi();
+        if (uShapeOverheadState.result) renderUohResult(uShapeOverheadState.result);
+        document.getElementById("statusText").textContent = "U Shape OHC ready";
       } else if (moduleName === "kitchen") {
         renderKitchenUi();
         document.getElementById("statusText").textContent = "Kitchen ready";
@@ -9951,6 +10719,10 @@
       }
       if (activeModule === "overhead") {
         overheadGenerate(overheadMainBench);
+        return;
+      }
+      if (activeModule === "uShapeOverhead") {
+        uohGenerate();
         return;
       }
       if (activeModule === "kitchen") {
@@ -10076,6 +10848,98 @@
                 ? `Overhead Fusion created ${createdBodies} rough bodies${assemblyName} (${skipped} skipped)${faceLine}${ledLine}`
                 : "Overhead Fusion rough body creation failed",
             );
+          } else if (action === "uShapeOverheadResult") {
+            if (parsed.ok && parsed.result) renderUohResult(parsed.result);
+            else {
+              const box = document.getElementById("uohResultBox");
+              if (box) box.textContent = JSON.stringify(parsed, null, 2);
+              const errors = Array.isArray(parsed.errors) && parsed.errors.length
+                ? parsed.errors
+                : ["U Shape OHC generation failed."];
+              const errorsHost = document.getElementById("uohErrors");
+              if (errorsHost) {
+                errorsHost.innerHTML = errors
+                  .map((text) => `<div class="message error">${escapeHtml(String(text))}</div>`)
+                  .join("");
+                errorsHost.setAttribute("data-empty", "0");
+              }
+            }
+            document.getElementById("statusText").textContent = parsed.ok ? "U Shape OHC generated" : "U Shape OHC generation failed";
+          } else if (action === "uShapeOverheadFusionResult") {
+            const box = document.getElementById("uohResultBox");
+            if (box) box.textContent = JSON.stringify(parsed, null, 2);
+            const measure = parsed.measure || {};
+            const footprint = measure.footprint || {};
+            const notU = footprint.isUShape === false
+              || parsed.notUShape === true
+              || /NOT_U_FOOTPRINT/i.test(String((parsed.errors || []).join(" ")));
+            const contactFail = parsed.contactFailed === true
+              || (measure.contactAudit && measure.contactAudit.ok === false)
+              || /contact_gap/i.test(String((parsed.errors || []).join(" ")));
+            const ledFail = parsed.ledGrooveFailed === true
+              || (measure.ledGrooveAudit && measure.ledGrooveAudit.ok === false)
+              || /led_(apex|back|open|branch|wrong|missing|width)/i.test(String((parsed.errors || []).join(" ")));
+            const clearanceFrontFail = parsed.clearanceFrontFailed === true
+              || (measure.clearanceFrontAudit && measure.clearanceFrontAudit.ok === false)
+              || /clearance_front_/i.test(String((parsed.errors || []).join(" ")));
+            const cornerFail = parsed.cornerOwnershipFailed === true
+              || (measure.cornerOwnershipAudit && measure.cornerOwnershipAudit.ok === false)
+              || /(corner_ownership|corner_not_side|corner_double|arm_back_seam)/i.test(String((parsed.errors || []).join(" ")));
+            const sizes = footprint.sizes || {};
+            const sizeHint = sizes["LEFT.BP"]
+              ? ` LEFT ${Math.round(sizes["LEFT.BP"].x)}×${Math.round(sizes["LEFT.BP"].y)}`
+              : "";
+            const spike = measure.spikeDetected ? ` · SPIKE h=${measure.assemblyHeightMm}` : "";
+            document.getElementById("statusText").textContent = parsed.ok
+              ? `U Shape OHC Fusion created${spike}`
+              : (notU
+                ? `U Shape OHC FAIL: 不是 U 形${sizeHint}（需重载当前插件后重建）`
+                : contactFail
+                  ? `U Shape OHC FAIL: 转角板件未接触 · ${parsed.summaryLine || (parsed.errors || [])[0] || ""}`
+                  : cornerFail
+                    ? `U Shape OHC FAIL: BACK 转角所有权异常 · ${parsed.summaryLine || (parsed.errors || [])[0] || ""}`
+                  : clearanceFrontFail
+                    ? `U Shape OHC FAIL: 侧边 clearance front 尺寸或装配异常 · ${parsed.summaryLine || (parsed.errors || [])[0] || ""}`
+                  : ledFail
+                    ? `U Shape OHC FAIL: LED 槽位异常 · ${parsed.summaryLine || (parsed.errors || [])[0] || ""}`
+                    : `U Shape OHC Fusion creation failed: ${(parsed.errors || [])[0] || ""}`);
+          } else if (action === "uShapeOverheadSelfCheckResult") {
+            const box = document.getElementById("uohResultBox");
+            if (box) box.textContent = JSON.stringify(parsed, null, 2);
+            const cases = Array.isArray(parsed.cases) ? parsed.cases : [];
+            const spikes = cases.filter((row) => row.spikeDetected).length;
+            const boards = cases.reduce((sum, row) => sum + ((row.boards && row.boards.length) || 0), 0);
+            const poseFail = cases.some((row) => row.poseCompare && row.poseCompare.ok === false);
+            const notU = parsed.notUShape === true
+              || cases.some((row) => row.footprint && row.footprint.isUShape === false)
+              || /NOT_U_FOOTPRINT/i.test(String((parsed.errors || []).join(" ")));
+            const contactFail = parsed.contactFailed === true
+              || cases.some((row) => row.contactAudit && row.contactAudit.ok === false)
+              || /contact_gap/i.test(String((parsed.errors || []).join(" ")));
+            const ledFail = cases.some((row) => row.ledGrooveAudit && row.ledGrooveAudit.ok === false)
+              || /led_(apex|back|open|branch|wrong|missing|width)/i.test(String((parsed.errors || []).join(" ")));
+            const clearanceFrontFail = cases.some((row) => row.clearanceFrontAudit && row.clearanceFrontAudit.ok === false)
+              || /clearance_front_/i.test(String((parsed.errors || []).join(" ")));
+            const cornerFail = cases.some((row) => row.cornerOwnershipAudit && row.cornerOwnershipAudit.ok === false)
+              || /(corner_ownership|corner_not_side|corner_double|arm_back_seam)/i.test(String((parsed.errors || []).join(" ")));
+            const fp0 = (cases.find((row) => row.footprint && row.footprint.sizes) || {}).footprint || {};
+            const sizes = fp0.sizes || {};
+            const sizeHint = sizes["LEFT.BP"]
+              ? ` LEFT ${Math.round(sizes["LEFT.BP"].x)}×${Math.round(sizes["LEFT.BP"].y)}`
+              : "";
+            document.getElementById("statusText").textContent = parsed.ok
+              ? `UOHC 自检 OK · ${cases.length} asm · ${boards} boards XYZ · log written`
+              : (notU
+                ? `UOHC 自检 FAIL: 不是 U 形${sizeHint} · ${parsed.summaryLine || "见 fusion_measure.json"}`
+                : contactFail
+                  ? `UOHC 自检 FAIL: 转角接触异常 · ${parsed.summaryLine || "见 fusion_measure.json"}`
+                  : cornerFail
+                    ? `UOHC 自检 FAIL: BACK 转角所有权异常 · ${parsed.summaryLine || "见 fusion_measure.json"}`
+                  : clearanceFrontFail
+                    ? `UOHC 自检 FAIL: 侧边 clearance front 异常 · ${parsed.summaryLine || "见 fusion_measure.json"}`
+                  : ledFail
+                    ? `UOHC 自检 FAIL: LED 槽位异常 · ${parsed.summaryLine || "见 fusion_measure.json"}`
+                    : `UOHC 自检 FAIL · spikes=${spikes}${poseFail ? " · pose≠" : ""} · ${parsed.summaryLine || "logs/u_shape_ohc_fusion_measure.json"}`);
           } else if (action === "kitchenGeometryResult") {
             if (parsed.ok && parsed.result) {
               kitchenState.geometryResult = parsed.result;
@@ -10199,6 +11063,8 @@
             document.getElementById("ohResultBox").textContent = String(data || "");
           } else if (action === "overheadFusionResult") {
             document.getElementById("ohResultBox").textContent = String(data || "");
+          } else if (action === "uShapeOverheadResult" || action === "uShapeOverheadFusionResult" || action === "uShapeOverheadSelfCheckResult") {
+            document.getElementById("uohResultBox").textContent = String(data || "");
           } else if (action === "kitchenGeometryResult") {
             document.getElementById("kitchenResultBox").textContent = String(data || "");
           } else if (action === "kitchenFusionResult") {
@@ -10242,6 +11108,21 @@
     document.getElementById("ohDeleteZoneBtn").addEventListener("click", () => runOverheadBench(overheadMainBench, deleteOverheadZone));
     document.getElementById("ohStyle").addEventListener("change", () => syncOverheadStyle1LedVisibility(overheadMainBench));
     syncOverheadStyle1LedVisibility(overheadMainBench);
+    document.getElementById("uohGenerateBtn").addEventListener("click", uohGenerate);
+    document.getElementById("uohCreateFusionBtn").addEventListener("click", uohCreateFusion);
+    document.getElementById("uohSelfCheckBtn")?.addEventListener("click", uohRunSelfCheck);
+    uohPresetManager.bind();
+    bindUohZoneProperties();
+    document.querySelectorAll("[data-uoh-run]").forEach((button) => button.addEventListener("click", () => {
+      selectUohRun(button.dataset.uohRun || "BACK");
+    }));
+    document.getElementById("uohAddZoneBtn").addEventListener("click", addUohZone);
+    document.getElementById("uohDeleteZoneBtn").addEventListener("click", deleteUohZone);
+    document.querySelectorAll("#uohParamsPanel input").forEach((input) => input.addEventListener("change", () => {
+      invalidateUohResult();
+      ["LEFT", "BACK", "RIGHT"].forEach(normalizeUohZones);
+      renderUohUi();
+    }));
     document.getElementById("aohGenerateBtn").addEventListener("click", () => overheadGenerate(attrOverheadBench));
     document.getElementById("aohCreateFusionBodiesBtn").addEventListener("click", () => overheadCreateFusionRoughBodies(attrOverheadBench));
     aohPresetManager.bind();
@@ -16170,6 +17051,9 @@
           if (generalTallState.result) renderGeneralTallResult(generalTallState.result);
         } else if (activeModule === "overhead") {
           runOverheadBench(overheadMainBench, () => renderOverheadUi(ohState().result));
+        } else if (activeModule === "uShapeOverhead") {
+          renderUohUi();
+          if (uShapeOverheadState.result) renderUohResult(uShapeOverheadState.result);
         } else if (activeModule === "kitchen") {
           if (typeof renderKitchenUi === "function") renderKitchenUi();
           else if (typeof renderKitchenWarnings === "function") renderKitchenWarnings();

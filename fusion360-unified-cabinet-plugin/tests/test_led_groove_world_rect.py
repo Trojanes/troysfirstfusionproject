@@ -100,6 +100,17 @@ class LedGrooveWorldRectTests(unittest.TestCase):
         self.assertAlmostEqual(y0, 27.25)
         self.assertAlmostEqual(y1, 150.0)
 
+    def test_u_shape_side_segment_mirrors_for_final_t3_profile(self):
+        main = {"x0": 0.0, "x1": 1420.0, "y0": 12.75, "y1": 27.25}
+        mirrored = self.adapter._mirror_led_segment_x(main, 1500.0)
+        self.assertEqual(mirrored["x0"], 80.0)
+        self.assertEqual(mirrored["x1"], 1500.0)
+        self.assertEqual(mirrored["y0"], main["y0"])
+        self.assertEqual(mirrored["y1"], main["y1"])
+        # Do not mutate the semantic generator feature.
+        self.assertEqual(main["x0"], 0.0)
+        self.assertEqual(main["x1"], 1420.0)
+
     def test_b3_bottom_cut_opens_downward(self):
         bbox = {"x0": 16.0, "x1": 684.0, "y0": 0.0, "y1": 150.0, "z0": 53.0, "z1": 69.0}
         plane_z, direction, cut_signed, opening = self.adapter._led_cut_plane_and_direction(
