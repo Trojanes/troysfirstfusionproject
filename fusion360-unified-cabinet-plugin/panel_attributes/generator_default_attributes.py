@@ -386,7 +386,8 @@ def kitchen_milling_direction(board, *, v_panels=None, features=None):
 
     ``millingDirection`` is the outward normal of the cutting face (铣削/切割面).
     Evidence:
-      B1 / frontPanels — door fascias & fronts; cutting face +Y (back / into cabinet)
+      B1 / frontPanels / stove_side_panel — door boards; cutting face +Y
+            (back / into cabinet), colour −Y (front / outward)
       B3 — Style 1 LED T-groove opens on bottom face → −Z
       Outer door-side V — colour on outer face; milling on inner face
             (V0 → +X, right outer → −X)
@@ -409,7 +410,9 @@ def kitchen_milling_direction(board, *, v_panels=None, features=None):
         "drawer",
         "down_flap",
         "front_panel",
+        "stove_side_panel",
     ):
+        # Stove left/right fronts are door boards: colour out (−Y), milling in (+Y).
         return _direction_pair("+Y")
     if board_id == "B3" or board_type == "b3":
         return _direction_pair("-Z")
@@ -556,6 +559,17 @@ def kitchen_board_semantics(entry, v_panels=None):
     if panel_type == "B1" or board_id == "B1":
         return _pack("bottom_front_door_fascia", "door", "front_visible", "front", ["kitchen", "front", "door-color", "B1"], door_color_slot=1)
 
+    if panel_type == "stove_side_panel":
+        identity = "stove_left_side_panel" if board_id.endswith("-left") else "stove_right_side_panel"
+        return _pack(
+            identity,
+            "door",
+            "door",
+            "front",
+            ["kitchen", "stove", "front", "door", board_id],
+            door_color_slot=1,
+        )
+
     if kind == "vPanel" or panel_type == "VPanel" or re.fullmatch(r"V\d+", board_id):
         options = entry.get("sidePanelOptions")
         if not isinstance(options, dict) and v_panels:
@@ -590,6 +604,8 @@ def kitchen_board_semantics(entry, v_panels=None):
         "drawer_divider": ("drawer_divider", "carcass"),
         "full_depth_shelf": ("full_depth_shelf", "carcass"),
         "door_shelf": ("door_shelf", "carcass"),
+        "appliance_floor": ("appliance_floor", "carcass"),
+        "underside_support": ("underside_support", "carcass"),
         "avoidance_top": ("wheel_avoidance_top", "carcass"),
         "avoidance_front": ("wheel_avoidance_front", "carcass"),
         "side_strengthening_strip": ("side_strengthening_strip", "carcass"),
@@ -655,6 +671,98 @@ def lounge_milling_direction(board):
         return _direction_pair("+Z")
 
     return _direction_pair("")
+
+
+def small_cabinet_milling_direction(board):
+    """Small Cabinet milling defaults in design-world ±axis buckets.
+
+    Frame: +X right, +Y depth (front carcass at y=0, fronts at y=-FPT..0), +Z up.
+    Fronts / door-colored sides: milling face toward cabinet interior.
+    """
+    board_id = str(board.get("id") or "")
+    board_type = str(board.get("boardType") or "").strip().lower()
+    category = str(board.get("category") or "").strip().lower()
+
+    if category == "front_panel" or board_type in ("left_door", "right_door", "drawer_front"):
+        return _direction_pair("+Y")
+    if board_id == "SIDE_L" or board_type == "left_side_panel":
+        return _direction_pair("+X")
+    if board_id == "SIDE_R" or board_type == "right_side_panel":
+        return _direction_pair("-X")
+    if board_id == "TOP" or board_type == "top_panel":
+        return _direction_pair("-Z")
+    if board_id == "BOTTOM" or board_type == "bottom_panel":
+        return _direction_pair("+Z")
+    if board_id == "BACK" or board_type == "rear_vertical":
+        return _direction_pair("-Y")
+    if board_type == "middle_shelf" or board_id.startswith("MID_"):
+        return _direction_pair("+Z")
+    return _direction_pair("")
+
+
+def small_cabinet_board_semantics(board):
+    board_id = str(board.get("id") or "")
+    board_type = str(board.get("boardType") or "").strip().lower()
+    category = str(board.get("category") or "").strip().lower()
+    use_door_color = bool(board.get("useDoorColor"))
+
+    if category == "front_panel" or board_type in ("left_door", "right_door", "drawer_front"):
+        identity = board_type or "front_panel"
+        return _pack(
+            identity,
+            "door",
+            "door" if board_type in ("left_door", "right_door") else "front_visible",
+            "front",
+            ["smallCabinet", "front", identity, board_id],
+            door_color_slot=1,
+        )
+
+    if board_id == "SIDE_L" or board_type == "left_side_panel":
+        if use_door_color:
+            return _pack(
+                "left_side_panel",
+                "door",
+                "front_visible",
+                "side",
+                ["smallCabinet", "side", "door-color", board_id],
+                door_color_slot=1,
+            )
+        return _pack(
+            "left_side_panel",
+            "carcass",
+            "carcass",
+            "side",
+            ["smallCabinet", "side", "carcass", board_id],
+        )
+
+    if board_id == "SIDE_R" or board_type == "right_side_panel":
+        if use_door_color:
+            return _pack(
+                "right_side_panel",
+                "door",
+                "front_visible",
+                "side",
+                ["smallCabinet", "side", "door-color", board_id],
+                door_color_slot=1,
+            )
+        return _pack(
+            "right_side_panel",
+            "carcass",
+            "carcass",
+            "side",
+            ["smallCabinet", "side", "carcass", board_id],
+        )
+
+    if board_id == "BACK" or board_type == "rear_vertical":
+        return _pack("rear_vertical", "carcass", "carcass", "back", ["smallCabinet", "back", "carcass", board_id])
+    if board_id == "TOP" or board_type == "top_panel":
+        return _pack("top_panel", "carcass", "carcass", "top", ["smallCabinet", "horizontal", "carcass", board_id])
+    if board_id == "BOTTOM" or board_type == "bottom_panel":
+        return _pack("bottom_panel", "carcass", "carcass", "bottom", ["smallCabinet", "horizontal", "carcass", board_id])
+    if board_type == "middle_shelf" or board_id.startswith("MID_"):
+        return _pack("middle_shelf", "carcass", "carcass", "shelf", ["smallCabinet", "horizontal", "shelf", board_id])
+
+    return _pack(board_type or "unknown_board", "carcass", "carcass", "structural", ["smallCabinet", "carcass", board_id or "board"])
 
 
 def lounge_board_semantics(item):
@@ -827,6 +935,15 @@ def build_panel_metadata(
         ) if run_label else "lounge.{}".format(_sanitize_token(board_id, fallback="board", limit=60))
         source_board_type = str(board.get("kind") or "")
         milling = lounge_milling_direction(board)
+    elif module in ("smallCabinet", "small_cabinet", "sc"):
+        semantics = small_cabinet_board_semantics(board)
+        generator = "smallCabinet"
+        panel_id = "smallCabinet.{}.{}".format(
+            _sanitize_token(run_label, fallback="run", limit=40),
+            _sanitize_token(board_id, fallback="board", limit=40),
+        ) if run_label else "smallCabinet.{}".format(_sanitize_token(board_id, fallback="board", limit=60))
+        source_board_type = str(board.get("boardType") or "")
+        milling = small_cabinet_milling_direction(board)
     else:
         raise ValueError("Unsupported generator module: {!r}".format(module_name))
 

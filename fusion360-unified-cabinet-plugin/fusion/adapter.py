@@ -57,11 +57,24 @@ class FusionAdapter:
             except Exception:
                 pass
             for body in valid_bodies:
+                candidates = [body]
                 try:
-                    selection.add(body)
-                    selected += 1
+                    if not bool(getattr(body, "isProxy", False)):
+                        occurrence = getattr(body, "assemblyContext", None)
+                        native = getattr(body, "nativeObject", None) or body
+                        if occurrence is not None:
+                            proxy = native.createForAssemblyContext(occurrence)
+                            if proxy is not None:
+                                candidates.insert(0, proxy)
                 except Exception:
-                    continue
+                    pass
+                for candidate in candidates:
+                    try:
+                        selection.add(candidate)
+                        selected += 1
+                        break
+                    except Exception:
+                        continue
 
         try:
             viewport = app.activeViewport

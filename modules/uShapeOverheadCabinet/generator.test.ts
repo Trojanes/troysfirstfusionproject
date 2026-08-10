@@ -47,8 +47,10 @@ function testStandardGeometry(): void {
     assert(!run.result.features.some((entry) => String((entry as Record<string, unknown>).type || "").includes("rangehood")));
     assert(run.result.features.some((entry) => (entry as Record<string, unknown>).type === "t3_groove"));
   }
+  assert(result.audit.some((row) => row.id === "back_rangehood_forbidden" && row.ok));
   assert(!board(result, "BACK", "D_CORNER_LEFT"));
   assert(!board(result, "BACK", "D_CORNER_RIGHT"));
+  assert(result.audit.some((row) => row.id === "back_corner_closure" && row.ok));
 }
 
 function testClearanceFrontsAndTopJoin(): void {
@@ -227,6 +229,62 @@ function testIndependentBackLedSwitch(): void {
   assert(!backFeatures.some((row) => row.type === "t3_groove"));
 }
 
+function testSideArmRangehoodOutsideCorners(): void {
+  const result = generateUShapeOverheadCabinet({
+    totalWidth: 2400,
+    leftArmLength: 1500,
+    rightArmLength: 1500,
+    cabinetDepth: 400,
+    cabinetHeight: 400,
+    sideClearance: 50,
+    frontPanelThickness: 16,
+    featureWidth: 15,
+    rangehoodPreset: "NCE",
+    rangehoodClearHeight: 75,
+    rangehoodAlignment: "left",
+    rangehoodEdgeOffsetX: 40,
+    zones: {
+      LEFT: [{ id: "left-hood", type: "rangehood_flap", width: 900 }],
+      BACK: [{ id: "back-main", type: "up_flap", width: 1200 }],
+      RIGHT: [{ id: "right-hood", type: "rangehood_flap", width: 900 }],
+    },
+  });
+  assert.deepEqual(result.validation.errors, []);
+  assert(result.audit.every((row) => row.ok), JSON.stringify(result.audit.filter((row) => !row.ok)));
+  for (const runId of ["LEFT", "RIGHT"] as const) {
+    const run = result.runs.find((entry) => entry.id === runId)!;
+    assert(run.result.boards.some((entry) => entry.id === "RGHD_TOP"), `${runId} RGHD_TOP`);
+    assert(run.result.features.some((entry) => (entry as Record<string, unknown>).type === "rangehood_group"));
+    assert(run.result.features.some((entry) => (entry as Record<string, unknown>).type === "rangehood_bp_cutout"));
+    const top = board(result, runId, "RGHD_TOP")!;
+    assert(top.x0 >= run.reservedStart - 0.5, `${runId} hood enters reserved/corner`);
+    assert(result.audit.some((row) => row.id === `${runId.toLowerCase()}_side_rangehood_outside_corner` && row.ok));
+  }
+  assert(!board(result, "BACK", "RGHD_TOP"));
+  assert(result.audit.some((row) => row.id === "back_rangehood_forbidden" && row.ok));
+}
+
+function testBackRangehoodCoerced(): void {
+  const result = generateUShapeOverheadCabinet({
+    totalWidth: 2400,
+    leftArmLength: 1500,
+    rightArmLength: 1500,
+    cabinetDepth: 400,
+    cabinetHeight: 400,
+    zones: {
+      BACK: [{ id: "back-hood", type: "rangehood_flap", width: 1200 }],
+    },
+  });
+  assert.deepEqual(result.validation.errors, []);
+  assert(result.validation.warnings.some((warning) => /Rangehood on BACK/i.test(warning)));
+  assert.equal(board(result, "BACK", "RGHD_TOP"), undefined);
+  assert.equal(
+    result.runs.find((run) => run.id === "BACK")?.result.boards.some((entry) => /^FP\d+$/.test(entry.id)
+      && entry.boardType === "up_flap"),
+    true,
+  );
+}
+
 testStandardGeometry();
 testClearanceFrontsAndTopJoin();
 testConnectorTonguesAndGrooves();
@@ -235,4 +293,6 @@ testValidationAndNormalization();
 testDefaultDimensions();
 testSideLedTrim();
 testIndependentBackLedSwitch();
+testSideArmRangehoodOutsideCorners();
+testBackRangehoodCoerced();
 console.log("OK U Shape OHC generator tests");

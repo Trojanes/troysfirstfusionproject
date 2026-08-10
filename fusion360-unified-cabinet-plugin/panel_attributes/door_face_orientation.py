@@ -35,6 +35,7 @@ try:
         face_world_plane,
         normalize_vector,
         dot3,
+        roles_from_body_milling_direction,
     )
 except Exception:
     try:
@@ -44,11 +45,13 @@ except Exception:
             face_world_plane,
             normalize_vector,
             dot3,
+            roles_from_body_milling_direction,
         )
     except Exception:
         classify_body_surfaces = None
         detect_hinge_back_face = None
         face_world_plane = None
+        roles_from_body_milling_direction = None
 
         def normalize_vector(vector):
             values = [float(vector[0]), float(vector[1]), float(vector[2])]
@@ -507,6 +510,44 @@ def orient_door_faces(body_entries, observation_point, write_roles, write_either
                 except TypeError:
                     write_roles(body, milling_face, non_milling_face)
                 results["machining"].append({"bodyName": name, "entityToken": token, "source": source})
+            except Exception as ex:
+                reason = str(ex)
+                results["skipped"].append({
+                    "bodyName": name,
+                    "entityToken": token,
+                    "reason": (
+                        "manual face-up lock; automatic orientation skipped"
+                        if reason == "manual_locked"
+                        else reason
+                    ),
+                })
+            continue
+
+        # --- Priority 1b: generator millingDirection (e.g. stove fronts, B1) ---
+        directed = (
+            roles_from_body_milling_direction(body, surface_a, surface_b)
+            if callable(roles_from_body_milling_direction)
+            else None
+        )
+        if directed:
+            role_a, role_b = directed
+            milling_face = surface_a if role_a == MILLING_SURFACE else surface_b
+            non_milling_face = surface_b if milling_face is surface_a else surface_a
+            try:
+                try:
+                    write_roles(
+                        body,
+                        milling_face,
+                        non_milling_face,
+                        source="generator_direction",
+                    )
+                except TypeError:
+                    write_roles(body, milling_face, non_milling_face)
+                results["machining"].append({
+                    "bodyName": name,
+                    "entityToken": token,
+                    "source": "generator_direction",
+                })
             except Exception as ex:
                 reason = str(ex)
                 results["skipped"].append({

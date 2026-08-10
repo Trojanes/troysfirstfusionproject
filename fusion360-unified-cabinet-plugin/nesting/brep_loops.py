@@ -5,6 +5,9 @@ from __future__ import annotations
 
 STROKE_TOLERANCE_CM = 0.01
 Z_TOLERANCE_CM = 0.01
+# Fusion coedge samples often leave sub-0.1mm gaps; rejecting those emptied
+# entire outers on a few notched panels (Ensuite Small Cabinet).
+LOOP_JOIN_TOLERANCE_CM = 0.01
 
 
 def _items(collection):
@@ -108,24 +111,31 @@ def directed_coedge_points(coedge):
         return []
 
 
-def traverse_coedge_loop(loop):
+def traverse_coedge_loop(loop, join_tolerance_cm=LOOP_JOIN_TOLERANCE_CM):
     """Walk ordered coedges and return one closed XYZ-centimetre ring."""
     ring = []
+    tol = float(join_tolerance_cm)
     for coedge in _items(getattr(loop, "coEdges", None)):
         segment = directed_coedge_points(coedge)
         if len(segment) < 2:
             return []
-        if ring and _same_point(ring[-1], segment[0]):
-            ring.extend(segment[1:])
-        elif ring:
-            # Never stitch a discontinuous loop: a malformed true-shape
-            # polygon is less safe than the rectangle fallback.
-            return []
-        else:
+        if not ring:
             ring.extend(segment)
+            continue
+        if _same_point(ring[-1], segment[0], tolerance=tol):
+            ring.extend(segment[1:])
+            continue
+        # Occasional polarity/sample glitches reverse a stroke relative to
+        # coedge order; accept the reversed segment when its end matches.
+        if _same_point(ring[-1], segment[-1], tolerance=tol):
+            segment = list(reversed(segment))
+            ring.extend(segment[1:])
+            continue
+        # Never bridge a large gap: malformed true-shape is unsafe.
+        return []
     if len(ring) < 3:
         return []
-    if not _same_point(ring[0], ring[-1]):
+    if not _same_point(ring[0], ring[-1], tolerance=tol):
         ring.append(ring[0])
     return ring
 
@@ -308,14 +318,15 @@ def _ring_xy_mm(loop):
     return [[point[0] * 10.0, point[1] * 10.0] for point in traverse_coedge_loop(loop)]
 
 
-def extract_flattened_rings_mm(body, include_holes=True, through_only=True):
-    """Return ``(outer, holes)`` from the true outer broad face.
+def _face_key(face):
+    try:
+        return ("temp", face.tempId)
+    except Exception:
+        return ("id", id(face))
 
-    Outer comes from :func:`select_true_outer_face` (underside when the milled
-    face is notched by edge-open grooves). Blind floors are collected
-    separately via :func:`_floor_feature_rings_mm`.
-    """
-    face = select_true_outer_face(body)
+
+def _rings_from_broad_face(face, body, include_holes=True, through_only=True):
+    """Extract outer (+ optional holes) from one broad face. Empty if unusable."""
     if face is None:
         return [], []
     loops = _items(getattr(face, "loops", None))
@@ -332,7 +343,9 @@ def extract_flattened_rings_mm(body, include_holes=True, through_only=True):
     if outer_loop is None:
         return [], []
     outer = _ring_xy_mm(outer_loop)
-    if not include_holes or not outer:
+    if len(outer) < 3:
+        return [], []
+    if not include_holes:
         return outer, []
     holes = []
     for loop in loops:
@@ -356,6 +369,34 @@ def extract_flattened_rings_mm(body, include_holes=True, through_only=True):
                 }
             )
     return outer, holes
+
+
+def extract_flattened_rings_mm(body, include_holes=True, through_only=True):
+    """Return ``(outer, holes)`` from the true outer broad face.
+
+    Outer comes from :func:`select_true_outer_face` (underside when the milled
+    face is notched by edge-open grooves). If that face's coedge walk fails
+    (discontinuous loop → empty ring), try the opposite broad skin before
+    giving up. Blind floors are collected separately via
+    :func:`_floor_feature_rings_mm`.
+    """
+    preferred = select_true_outer_face(body)
+    bottom = select_largest_negative_z_face(body)
+    top = select_largest_positive_z_face(body)
+    seen = set()
+    for face in (preferred, bottom, top):
+        if face is None:
+            continue
+        key = _face_key(face)
+        if key in seen:
+            continue
+        seen.add(key)
+        outer, holes = _rings_from_broad_face(
+            face, body, include_holes=include_holes, through_only=through_only
+        )
+        if len(outer) >= 3:
+            return outer, holes
+    return [], []
 
 
 def _ring_bounds_key(points, quantum_mm=0.5):

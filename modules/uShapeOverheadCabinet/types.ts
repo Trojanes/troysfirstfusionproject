@@ -9,7 +9,8 @@ export type UShapeRunId = "LEFT" | "BACK" | "RIGHT";
 
 export interface UShapeZone {
   id?: string;
-  type: "up_flap" | "fixed_panel" | "open" | string;
+  /** Rangehood flaps are allowed on LEFT/RIGHT usable spans only — never BACK/corners. */
+  type: "up_flap" | "rangehood_flap" | "fixed_panel" | "open" | string;
   width: number;
 }
 
@@ -42,6 +43,11 @@ export interface UShapeOverheadParams {
   carcassColorName?: string;
   ledGroove?: boolean;
   runLedGroove?: Partial<Record<UShapeRunId, boolean>>;
+  /** NCE rangehood settings applied to LEFT/RIGHT runs that contain rangehood_flap zones. */
+  rangehoodPreset?: "NCE" | string;
+  rangehoodClearHeight?: number;
+  rangehoodAlignment?: "left" | "right";
+  rangehoodEdgeOffsetX?: number;
   zones?: UShapeRunZones;
 }
 
@@ -98,6 +104,10 @@ export interface UShapeOverheadResult {
       | "carcassColor"
       | "carcassColorName"
       | "ledGroove"
+      | "rangehoodPreset"
+      | "rangehoodClearHeight"
+      | "rangehoodAlignment"
+      | "rangehoodEdgeOffsetX"
     >
   > & {
     geometryRevision: "back_owns_corners_v5";

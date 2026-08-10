@@ -52,6 +52,15 @@ const CASE_FINGERPRINT_KEYS = [
   "sideClearance",
   "geometryRevision",
 ];
+const REQUIRED_CASE_AUDITS = [
+  "ledGrooveAudit",
+  "clearanceFrontAudit",
+  "cornerOwnershipAudit",
+  "backCornerClosureAudit",
+  "postprocessAudit",
+  "backT3NotchAudit",
+  "t4GeometryAudit",
+];
 
 function loopCaseFingerprints(report) {
   return (report.cases || []).map((row) => fingerprintParams(row.params || {}, CASE_FINGERPRINT_KEYS));
@@ -522,7 +531,7 @@ function assertAdapterContract() {
   if (!source.includes("Build each run in LOCAL identity first")) {
     findings.push({ severity: "error", code: "adapter_order", detail: "local-identity-before-pose contract missing" });
   }
-  if (!/ADAPTER_BUILD = \"2026-07-29-u-shape-ohc-\d+\"/.test(source)) {
+  if (!/ADAPTER_BUILD = \"2026-07-3\d-u-shape-ohc-\d+\"/.test(source)) {
     findings.push({ severity: "warn", code: "adapter_build", detail: "unexpected adapter build tag" });
   }
   if (!source.includes("def measure_u_shape_assembly(") || !source.includes("def write_u_shape_fusion_measure_log(")) {
@@ -542,6 +551,12 @@ function assertAdapterContract() {
   }
   if (!source.includes("def audit_u_shape_corner_ownership(") || !source.includes('"cornerOwnershipAudit"')) {
     findings.push({ severity: "error", code: "adapter_corner_audit", detail: "BACK corner-ownership BRep audit missing" });
+  }
+  if (!source.includes("def audit_u_shape_back_corner_closure(") || !source.includes('"backCornerClosureAudit"')) {
+    findings.push({ severity: "error", code: "adapter_corner_closure_audit", detail: "BACK corner-closure BRep audit missing" });
+  }
+  if (!source.includes("def audit_u_shape_postprocess(") || !source.includes('"postprocessAudit"')) {
+    findings.push({ severity: "error", code: "adapter_postprocess_audit", detail: "UOHC postprocess audit missing" });
   }
   if (!source.includes("def audit_u_shape_back_t3_profile(") || !source.includes('"backT3NotchAudit"')) {
     findings.push({ severity: "error", code: "adapter_back_t3_notch_audit", detail: "BACK.T3/T4 notch profile audit missing" });
@@ -570,12 +585,14 @@ function assertAdapterContract() {
     && paletteSource.includes('id="uohLeftLength" type="number"')
     && paletteSource.includes("function uohParamsForModel(uiParams)")
     && paletteSource.includes("leftArmLength: uiParams.rightArmLength")
-    && paletteSource.includes("RIGHT: JSON.parse(JSON.stringify(uiParams.zones?.LEFT || []))");
+    // Model RIGHT local +X is tip→corner, so UI LEFT zones (corner→tip) must reverse.
+    && paletteSource.includes("RIGHT: uiLeftZones.reverse()")
+    && paletteSource.includes("LEFT: uiRightZones");
   if (!uiSideMappingOk) {
     findings.push({
       severity: "error",
       code: "ui_side_mapping",
-      detail: "UOHC UI must stay intuitive and swap LEFT/RIGHT only at the model interface",
+      detail: "UOHC UI must swap LEFT/RIGHT at the model interface and reverse UI LEFT zones onto model RIGHT",
     });
   }
   return findings;
@@ -619,7 +636,7 @@ function mergeFusionLog(report) {
       adapterMtimeMs: fs.statSync(adapterPath).mtimeMs,
       fusionLogMtimeMs: 0,
       expectedCaseFingerprints: loopCaseFingerprints(report),
-      requiredCaseAudits: ["ledGrooveAudit", "clearanceFrontAudit", "cornerOwnershipAudit", "backT3NotchAudit", "t4GeometryAudit"],
+      requiredCaseAudits: REQUIRED_CASE_AUDITS,
     });
     report.fusion = {
       present: false,
@@ -636,7 +653,7 @@ function mergeFusionLog(report) {
     fusionLogMtimeMs: fs.statSync(fusionLogPath).mtimeMs,
     expectedCaseFingerprints: loopCaseFingerprints(report),
     measuredCaseFingerprints: fusionCaseFingerprints(fusion),
-    requiredCaseAudits: ["ledGrooveAudit", "clearanceFrontAudit", "cornerOwnershipAudit", "backT3NotchAudit", "t4GeometryAudit"],
+    requiredCaseAudits: REQUIRED_CASE_AUDITS,
   });
   if (!report.certification.valid) {
     report.fusion = {
@@ -896,7 +913,7 @@ if (args.has("--fusion-log") || args.has("--include-fusion") || fs.existsSync(fu
     adapterMtimeMs: fs.statSync(adapterPath).mtimeMs,
     fusionLogMtimeMs: 0,
     expectedCaseFingerprints: loopCaseFingerprints(report),
-    requiredCaseAudits: ["ledGrooveAudit", "clearanceFrontAudit", "cornerOwnershipAudit", "backT3NotchAudit", "t4GeometryAudit"],
+    requiredCaseAudits: REQUIRED_CASE_AUDITS,
   });
 }
 

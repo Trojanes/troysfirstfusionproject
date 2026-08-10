@@ -165,7 +165,10 @@ function assertCutIsolation(result, label) {
       const target = feature.targetBoardId || feature.boardId;
       if (!target) continue;
       if (feature.type === "rangehood_group" || String(feature.type || "").startsWith("rangehood_")) {
-        throw new Error(`${label}/${run.id}: forbidden rangehood feature`);
+        if (run.id === "BACK") {
+          throw new Error(`${label}/${run.id}: rangehood is forbidden on BACK/corners`);
+        }
+        // LEFT/RIGHT NCE rangehood is allowed; cuts must still stay inside the run.
       }
       assert(ids.has(target), `${label}/${run.id}: cut ${feature.id || feature.type} targets foreign board ${target}`);
       if (feature.type === "u_connector_bp_groove") assert.equal(target, "BP");
@@ -180,7 +183,7 @@ function assertFusionAdapterPoseContract() {
     path.join(pluginRoot, "modules", "general_tall", "fusion_adapter.py"),
     "utf8",
   );
-  assert(/ADAPTER_BUILD = \"2026-07-29-u-shape-ohc-\d+\"/.test(source));
+  assert(/ADAPTER_BUILD = \"2026-07-3\d-u-shape-ohc-\d+\"/.test(source));
   assert(source.includes("def measure_u_shape_assembly("));
   assert(source.includes("def _compose_occurrence_matrix("));
   assert(source.includes("Build each run in LOCAL identity first"));

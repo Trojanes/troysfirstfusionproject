@@ -77,6 +77,33 @@ function structuralZones(zones: UShapeZone[], reservedStart: number, reservedEnd
   }));
 }
 
+/**
+ * When a run hosts rangehood_flap, never inflate reserved width into that zone —
+ * OHC resolveRangehoodGroup would otherwise pull the hood into the corner/reserved
+ * band. Emit reserved as synthetic open pads instead so dividers stay correct.
+ */
+function structuralZonesForOhc(
+  zones: UShapeZone[],
+  reservedStart: number,
+  reservedEnd: number,
+): UShapeZone[] {
+  const hasRangehood = zones.some((zone) => zone.type === "rangehood_flap");
+  if (!hasRangehood) return structuralZones(zones, reservedStart, reservedEnd);
+  const padded: UShapeZone[] = [];
+  if (reservedStart > 0) {
+    padded.push({ id: "structural-reserved-start", type: "open", width: reservedStart });
+  }
+  padded.push(...zones.map((zone) => ({ ...zone })));
+  if (reservedEnd > 0) {
+    padded.push({ id: "structural-reserved-end", type: "open", width: reservedEnd });
+  }
+  return padded;
+}
+
+function zoneHasRangehood(zones: UShapeZone[]): boolean {
+  return zones.some((zone) => zone.type === "rangehood_flap");
+}
+
 function isGeneratedFrontFeature(feature: unknown): boolean {
   if (!feature || typeof feature !== "object") return false;
   const row = feature as Record<string, unknown>;
@@ -141,7 +168,7 @@ function hingeFeatures(
   board: Board,
   params: OverheadCabinetResult["params"],
 ): Array<Record<string, unknown>> {
-  if (board.boardType !== "up_flap") return [];
+  if (board.boardType !== "up_flap" && board.boardType !== "rangehood_flap") return [];
   const width = board.x1 - board.x0;
   const height = board.z1 - board.z0;
   return [params.hingeHoleFromSide, width - params.hingeHoleFromSide].map((centerX, index) => ({
@@ -434,11 +461,14 @@ function buildRun(
   backClearance: number,
 ): UShapeRunResult {
   const reservedEnd = options.endClearance;
+  const allowRangehood = options.id === "LEFT" || options.id === "RIGHT";
+  const wantsRangehood = allowRangehood && zoneHasRangehood(zones);
   const base = generateOverheadCabinet({
     ...options.overheadParams,
     cabinetWidth: options.width,
-    zones: structuralZones(zones, options.reservedStart, reservedEnd),
-    rangehoodPreset: undefined,
+    zones: structuralZonesForOhc(zones, options.reservedStart, reservedEnd),
+    // BACK never hosts rangehood; side arms only, and never into corners.
+    rangehoodPreset: wantsRangehood ? (options.overheadParams.rangehoodPreset || "NCE") : undefined,
     ledGroove: options.overheadParams.ledGroove,
   });
   const result = replaceFacade(base, options, zones, sideClearance, backClearance);
@@ -819,6 +849,65 @@ function auditGeometry(
         ? "Both BACK-owned connectors face-touch the side rear dividers and own their BP/T3 grooves."
         : "BACK connectors must face-touch both side rear dividers with two isolated BP and T3 grooves.",
     });
+
+    // Corner closure without extra D_CORNER boards: outer edge dividers + BACK
+    // connectors in the D×D cells + full-width BP/T3 + side rear dividers at y=D.
+    const cpt = baseParams?.featureWidth ?? 0;
+    const totalW = backBp ? backBp.x1 - backBp.x0 : 0;
+    const backDividers = boards
+      .filter((board) => board.runId === "BACK" && /^D\d+$/.test(board.localBoardId))
+      .sort((a, b) => a.x0 - b.x0);
+    const outerLeftD = backDividers[0];
+    const outerRightD = backDividers[backDividers.length - 1];
+    const backT3World = boards.find((board) => board.id === "BACK.T3");
+    const cornerFronts = boards.filter((board) => (
+      board.runId === "BACK"
+      && board.localBoardId.startsWith("FP")
+      && !board.localBoardId.startsWith("FP_CLEARANCE")
+      && (
+        (board.x1 <= depth + 0.01)
+        || (board.x0 >= totalW - depth - 0.01)
+      )
+    ));
+    // Connectors are local y=0..CPT on BACK; after 180° pose they sit at world y=D-CPT..D.
+    // U_CONNECTOR_LEFT local [W-D,W-CPT] → world [CPT,D]; RIGHT local [CPT,D] → world [W-D,W-CPT].
+    const leftConnectorPoseOk = Boolean(
+      leftConnector
+      && leftConnector.x0 >= cpt - 0.01
+      && leftConnector.x1 <= depth + 0.01
+      && Math.abs(leftConnector.y1 - depth) <= 0.01
+      && Math.abs(leftConnector.y0 - (depth - cpt)) <= 0.01
+    );
+    const rightConnectorPoseOk = Boolean(
+      rightConnector
+      && rightConnector.x0 >= totalW - depth - 0.01
+      && rightConnector.x1 <= totalW - cpt + 0.01
+      && Math.abs(rightConnector.y1 - depth) <= 0.01
+      && Math.abs(rightConnector.y0 - (depth - cpt)) <= 0.01
+    );
+    const cornerClosureOk = Boolean(
+      backOwnsCorners
+      && outerLeftD && outerRightD
+      && close(outerLeftD.x0, 0) && close(outerLeftD.x1, cpt)
+      && close(outerRightD.x0, totalW - cpt) && close(outerRightD.x1, totalW)
+      && leftConnectorPoseOk
+      && rightConnectorPoseOk
+      && leftSideDivider && rightSideDivider
+      && close(leftSideDivider.y0, depth)
+      && close(rightSideDivider.y0, depth)
+      && backT3World
+      && close(backT3World.x0, 0) && close(backT3World.x1, totalW)
+      && cornerFronts.length === 0
+      && connectorContactOk
+    );
+    audit.push({
+      id: "back_corner_closure",
+      kind: "touch",
+      ok: cornerClosureOk,
+      detail: cornerClosureOk
+        ? "Each BACK corner is closed by outer edge divider, connector, full-width BP/T3, and the side rear divider at y=D."
+        : "BACK corner closure failed: need outer edge dividers, connectors in both D×D cells, full-width BP/T3, side rear dividers at y=D, and no function fronts in corners.",
+    });
     const connectorRects = t3Grooves.map((feature) => {
       const row = feature as Record<string, unknown>;
       const x = row.x as number[];
@@ -968,8 +1057,11 @@ function auditGeometry(
       if (!rawFeature || typeof rawFeature !== "object") continue;
       const feature = rawFeature as Record<string, unknown>;
       const type = String(feature.type || "");
-      if (type === "rangehood_group" || type.startsWith("rangehood_")) {
-        failures.push(`${String(feature.id || type)}: rangehood feature is forbidden`);
+      if ((type === "rangehood_group" || type.startsWith("rangehood_")) && run.id === "BACK") {
+        failures.push(`${String(feature.id || type)}: rangehood is forbidden on BACK (corners)`);
+      }
+      if ((type === "rangehood_group" || type.startsWith("rangehood_")) && feature.role === "u_corner_continuation") {
+        failures.push(`${String(feature.id || type)}: rangehood must not use corner continuation`);
       }
       const explicitTarget = String(feature.targetBoardId || "");
       if (explicitTarget && !boardIds.has(explicitTarget)) {
@@ -1021,6 +1113,43 @@ function auditGeometry(
         ? `All ${run.id} cuts resolve only to boards inside the ${run.id} run component.`
         : failures.join("; "),
     });
+
+    const rangehoodFeatures = (run.result.features as Array<Record<string, unknown>>)
+      .filter((feature) => {
+        const type = String(feature.type || "");
+        return type === "rangehood_group" || type.startsWith("rangehood_");
+      });
+    const rghdBoards = run.result.boards.filter((board) => String(board.id || "").startsWith("RGHD_"));
+    if (run.id === "BACK") {
+      audit.push({
+        id: "back_rangehood_forbidden",
+        kind: "no_overlap",
+        ok: rangehoodFeatures.length === 0 && rghdBoards.length === 0,
+        detail: rangehoodFeatures.length === 0 && rghdBoards.length === 0
+          ? "BACK has no rangehood (corners stay clear)."
+          : "BACK must not host rangehood boards or features.",
+      });
+    } else if (rangehoodFeatures.length > 0 || rghdBoards.length > 0) {
+      // Side-arm hood must stay outside reserved/corner band (RGHD_TOP local X).
+      const top = rghdBoards.find((board) => board.id === "RGHD_TOP");
+      const reservedStart = run.reservedStart;
+      const reservedEnd = run.id === "LEFT" ? 0 : sideClearance + fpt;
+      const runWidth = run.cabinetWidth;
+      const clearOfCorner = Boolean(
+        top
+        && top.x0 >= reservedStart - 0.5
+        && top.x1 <= runWidth - reservedEnd + 0.5
+        && rangehoodFeatures.some((feature) => feature.type === "rangehood_group")
+      );
+      audit.push({
+        id: `${run.id.toLowerCase()}_side_rangehood_outside_corner`,
+        kind: "dimension",
+        ok: clearOfCorner,
+        detail: clearOfCorner
+          ? `${run.id} NCE rangehood stays in the usable span outside the BACK corner reserved band.`
+          : `${run.id} rangehood must stay outside reserved/corner (x>=${reservedStart}, x<=${runWidth - reservedEnd}).`,
+      });
+    }
   }
   return audit;
 }
@@ -1094,6 +1223,11 @@ export function generateUShapeOverheadCabinet(raw: UShapeOverheadParams): UShape
     errors.push("RIGHT side run is too short for two 80 mm LED branch insets.");
   }
 
+  const rangehoodPreset = String(raw.rangehoodPreset || "NCE");
+  const rangehoodClearHeight = Math.max(1, finite(raw.rangehoodClearHeight, 75));
+  const rangehoodAlignment = raw.rangehoodAlignment === "right" ? "right" as const : "left" as const;
+  const rangehoodEdgeOffsetX = Math.max(40, finite(raw.rangehoodEdgeOffsetX, 40));
+
   const common: Omit<OverheadCabinetParams, "cabinetWidth" | "zones"> = {
     style: "style_1",
     cabinetDepth,
@@ -1112,6 +1246,10 @@ export function generateUShapeOverheadCabinet(raw: UShapeOverheadParams): UShape
     carcassColor: resolvedColor.carcassColor,
     carcassColorName: resolvedColor.carcassColorName,
     ledGroove: raw.ledGroove !== false,
+    rangehoodPreset,
+    rangehoodClearHeight,
+    rangehoodAlignment,
+    rangehoodEdgeOffsetX,
   };
 
   const normalizedByRun = {
@@ -1119,6 +1257,12 @@ export function generateUShapeOverheadCabinet(raw: UShapeOverheadParams): UShape
     BACK: normalizeZones(raw.zones?.BACK, Math.max(0, backUsable), "BACK", warnings),
     RIGHT: normalizeZones(raw.zones?.RIGHT, Math.max(0, rightUsable), "RIGHT", warnings),
   };
+  if (zoneHasRangehood(normalizedByRun.BACK)) {
+    warnings.push("Rangehood on BACK was converted to up_flap — hoods are LEFT/RIGHT only and never enter corners.");
+    normalizedByRun.BACK = normalizedByRun.BACK.map((zone) => (
+      zone.type === "rangehood_flap" ? { ...zone, type: "up_flap" } : zone
+    ));
+  }
   const runLed = (id: UShapeRunId) => raw.runLedGroove?.[id] ?? common.ledGroove;
 
   const runOptions: UShapeRunBuildOptions[] = [
@@ -1190,6 +1334,10 @@ export function generateUShapeOverheadCabinet(raw: UShapeOverheadParams): UShape
       carcassColor: resolvedColor.carcassColor,
       carcassColorName: resolvedColor.carcassColorName,
       ledGroove: common.ledGroove !== false,
+      rangehoodPreset,
+      rangehoodClearHeight,
+      rangehoodAlignment,
+      rangehoodEdgeOffsetX,
       geometryRevision: "back_owns_corners_v5",
       backCabinetWidth,
       backFunctionalSpan,

@@ -4,9 +4,11 @@ import adsk.core
 import adsk.fusion
 
 import panel_body_resolver
+import panel_source_ref
 import attribute_state_service
 
 panel_body_resolver = importlib.reload(panel_body_resolver)
+panel_source_ref = importlib.reload(panel_source_ref)
 attribute_state_service = importlib.reload(attribute_state_service)
 
 import door_face_orientation
@@ -19,7 +21,15 @@ import nesting.collision_validate as nesting_collision_validate
 import nesting.dxf_export as nesting_dxf_export
 import nesting.engine as nesting_engine
 import nesting.fusion_layout as nesting_fusion_layout
+import nesting.lay_flat as nesting_lay_flat
+import nesting.lay_flat_analyze as nesting_lay_flat_analyze
+import nesting.lay_flat_export_ready as nesting_lay_flat_export_ready
+import nesting.lay_flat_face_up as nesting_lay_flat_face_up
+import nesting.lay_flat_fusion as nesting_lay_flat_fusion
+import nesting.lay_flat_tag_overrides as nesting_lay_flat_tag_overrides
+import nesting.lay_flat_tag_scan as nesting_lay_flat_tag_scan
 import nesting.layout as nesting_layout
+import nesting.manufacturing_snapshot_export as manufacturing_snapshot_export
 import nesting.outline_cache as nesting_outline_cache
 import nesting.preflight as nesting_preflight
 import nesting.runtime_profile as nesting_runtime_profile
@@ -37,7 +47,15 @@ nesting_collision_validate = importlib.reload(nesting_collision_validate)
 nesting_dxf_export = importlib.reload(nesting_dxf_export)
 nesting_engine = importlib.reload(nesting_engine)
 nesting_fusion_layout = importlib.reload(nesting_fusion_layout)
+nesting_lay_flat = importlib.reload(nesting_lay_flat)
+nesting_lay_flat_analyze = importlib.reload(nesting_lay_flat_analyze)
+nesting_lay_flat_export_ready = importlib.reload(nesting_lay_flat_export_ready)
+nesting_lay_flat_face_up = importlib.reload(nesting_lay_flat_face_up)
+nesting_lay_flat_fusion = importlib.reload(nesting_lay_flat_fusion)
+nesting_lay_flat_tag_overrides = importlib.reload(nesting_lay_flat_tag_overrides)
+nesting_lay_flat_tag_scan = importlib.reload(nesting_lay_flat_tag_scan)
 nesting_layout = importlib.reload(nesting_layout)
+manufacturing_snapshot_export = importlib.reload(manufacturing_snapshot_export)
 nesting_outline_cache = importlib.reload(nesting_outline_cache)
 nesting_preflight = importlib.reload(nesting_preflight)
 nesting_runtime_profile = importlib.reload(nesting_runtime_profile)
@@ -45,6 +63,7 @@ nesting_sheet_pack = importlib.reload(nesting_sheet_pack)
 
 body_matches_record = panel_body_resolver.body_matches_record
 find_body_in_design = panel_body_resolver.find_body_in_design
+find_original_body_by_panel_id = panel_body_resolver.find_original_body_by_panel_id
 list_solid_bodies = panel_body_resolver.list_solid_bodies
 resolve_main_body = panel_body_resolver.resolve_main_body
 
@@ -55,6 +74,53 @@ def _pump_fusion_events():
         adsk.doEvents()
     except Exception:
         pass
+
+
+def _strip_temp_bodies_for_json(value):
+    """Drop Fusion ``tempBody`` handles so palette payloads stay JSON-safe."""
+    if isinstance(value, list):
+        return [_strip_temp_bodies_for_json(item) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _strip_temp_bodies_for_json(item)
+            for key, item in value.items()
+            if key != "tempBody"
+        }
+    return value
+
+
+def _discard_prepared_temp_bodies(items):
+    """Delete temporary nesting flat copies that will not be kept in the layout."""
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        body = item.get("tempBody")
+        if body is None:
+            continue
+        try:
+            body.deleteMe()
+        except Exception:
+            pass
+        item["tempBody"] = None
+
+
+def _assembly_name_for_record(root, record):
+    """Top-level occurrence name under the design root (= assembly name)."""
+    path = list((record or {}).get("occurrencePath") or [])
+    if root is not None and path:
+        try:
+            occurrence = root.occurrences.item(int(path[0]))
+            name = str(getattr(occurrence, "name", "") or "")
+            if name:
+                return name
+            component = getattr(occurrence, "component", None)
+            return str(getattr(component, "name", "") or "")
+        except Exception:
+            pass
+    try:
+        return str(getattr(root, "name", "") or "") if root is not None else ""
+    except Exception:
+        return ""
 
 
 class PanelAttributesController:
@@ -290,6 +356,29 @@ class PanelAttributesController:
             return self._proxy_body_for_occurrence(body, occurrence), warnings
         return None, warnings
 
+    def _selectable_body(self, body):
+        """Return an occurrence-proxy body Fusion can put in activeSelections."""
+        if body is None:
+            return None
+        try:
+            if bool(getattr(body, "isProxy", False)):
+                return body
+        except Exception:
+            pass
+        try:
+            occurrence = getattr(body, "assemblyContext", None)
+        except Exception:
+            occurrence = None
+        if occurrence is not None:
+            try:
+                native = getattr(body, "nativeObject", None) or body
+                proxy = native.createForAssemblyContext(occurrence)
+                if proxy is not None:
+                    return proxy
+            except Exception:
+                pass
+        return body
+
     def _select_bodies_and_fit(self, bodies):
         valid_bodies = [body for body in (bodies or []) if body]
         if not valid_bodies:
@@ -303,11 +392,24 @@ class PanelAttributesController:
             except Exception:
                 pass
             for body in valid_bodies:
+                candidates = []
+                proxied = self._selectable_body(body)
+                for candidate in (proxied, body):
+                    if candidate is not None:
+                        candidates.append(candidate)
                 try:
-                    selection.add(body)
-                    selected += 1
+                    native = getattr(body, "nativeObject", None)
+                    if native is not None:
+                        candidates.append(native)
                 except Exception:
-                    continue
+                    pass
+                for candidate in candidates:
+                    try:
+                        selection.add(candidate)
+                        selected += 1
+                        break
+                    except Exception:
+                        continue
             if selected > 0:
                 try:
                     app = adsk.core.Application.get()
@@ -323,7 +425,7 @@ class PanelAttributesController:
 
         selector = getattr(self.fusion, "select_bodies_and_fit", None)
         if callable(selector):
-            return selector(valid_bodies)
+            return selector([self._selectable_body(body) or body for body in valid_bodies])
         return 0
 
     def _proxy_face_for_selection(self, face):
@@ -1196,6 +1298,7 @@ class PanelAttributesController:
                     "panelId": record.get("panelId") or "",
                     "bodyName": record.get("bodyName") or "",
                     "componentName": record.get("componentName") or "",
+                    "assemblyName": _assembly_name_for_record(root, record),
                     "boardTypeTag": check["boardTypeTag"],
                     "colorTag": check["colorTag"],
                     "cuttingFace": check["cuttingFace"],
@@ -1425,6 +1528,7 @@ class PanelAttributesController:
             )
             if not fallback_validation.get("ok"):
                 profile = profiler.flush(status="collisionValidationFailed")
+                _discard_prepared_temp_bodies(prepared)
                 return "panelAttributesResult", {
                     "ok": False,
                     "action": "createNestingZoneLayout",
@@ -1470,13 +1574,14 @@ class PanelAttributesController:
         unplaced = list(measure.get("unplaced") or [])
         if unplaced and not measure.get("placements"):
             profile = profiler.flush(status="unplacedOnly")
+            _discard_prepared_temp_bodies(prepared)
             return "panelAttributesResult", {
                 "ok": False,
                 "action": "createNestingZoneLayout",
                 "bodyCount": len(body_records),
                 "readyCount": len(prepared),
                 "unplacedCount": len(unplaced),
-                "unplaced": unplaced[:100],
+                "unplaced": _strip_temp_bodies_for_json(unplaced[:100]),
                 "sheetParams": sheet_params,
                 "profile": profile,
                 "errors": [
@@ -1496,6 +1601,7 @@ class PanelAttributesController:
             )
             if work_zones.zones_overlap(grown_layout):
                 profile = profiler.flush(status="growOverlap")
+                _discard_prepared_temp_bodies(prepared)
                 return "panelAttributesResult", {
                     "ok": False,
                     "action": "createNestingZoneLayout",
@@ -1538,6 +1644,7 @@ class PanelAttributesController:
             )
         except Exception as ex:
             profile = profiler.flush(status="createFailed")
+            _discard_prepared_temp_bodies(prepared)
             return "panelAttributesResult", {
                 "ok": False,
                 "action": "createNestingZoneLayout",
@@ -1556,6 +1663,8 @@ class PanelAttributesController:
                 "errors": [str(ex)],
             }
         create_ms = profiler.end("createBodies")
+        # Unplaced prepared copies were never promoted into NESTING_LAYOUT.
+        _discard_prepared_temp_bodies(result.get("unplaced") or unplaced)
         try:
             app = adsk.core.Application.get()
             if app and app.activeViewport:
@@ -1651,10 +1760,16 @@ class PanelAttributesController:
             "outlineCounts": outline_counts,
             "notReady": not_ready[:100],
             "failed": failed[:100],
-            "unplaced": (result.get("unplaced") or unplaced)[:100],
+            "unplaced": _strip_temp_bodies_for_json(
+                (result.get("unplaced") or unplaced)[:100]
+            ),
             "groups": result.get("groups") or [],
-            "sheets": result.get("sheets") or measure.get("sheets") or [],
-            "placements": result.get("placements") or [],
+            "sheets": _strip_temp_bodies_for_json(
+                result.get("sheets") or measure.get("sheets") or []
+            ),
+            "placements": _strip_temp_bodies_for_json(
+                result.get("placements") or []
+            ),
             "requiredWidthMm": result.get("requiredWidthMm"),
             "requiredDepthMm": result.get("requiredDepthMm"),
             "partGapMm": part_gap,
@@ -1851,6 +1966,1726 @@ class PanelAttributesController:
             ),
         }
 
+    def export_manufacturing_snapshot(self, payload, _palette):
+        """Export validated panels as one single-side .cnjob job list.
+
+        ``scope=layflat`` is the production path and cannot bypass Analyze /
+        Export Ready. ``selection`` and ``all`` remain source-geometry
+        diagnostics for compatibility.
+        """
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "exportManufacturingSnapshot",
+                "errors": ["No active Fusion design."],
+            }
+
+        app = adsk.core.Application.get()
+        ui = app.userInterface if app else None
+        if ui is None:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "exportManufacturingSnapshot",
+                "errors": ["Fusion file dialog is unavailable."],
+            }
+
+        scope = str((payload or {}).get("scope") or "selection").strip().lower() or "selection"
+        if scope not in ("selection", "all", "layflat"):
+            scope = "selection"
+
+        body_records = []
+        skipped = []
+        scan_diagnostics = {}
+        export_bodies = []
+        if scope == "layflat":
+            export_bodies = nesting_lay_flat_face_up.collect_lay_flat_bodies(root)
+            if not export_bodies:
+                return "panelAttributesResult", {
+                    "ok": False,
+                    "action": "exportManufacturingSnapshot",
+                    "errors": ["No LAY_FLAT bodies found. Run Lay Flat first."],
+                    "scope": scope,
+                }
+            ready_result = nesting_lay_flat_export_ready.check_bodies(
+                export_bodies,
+                wait_callback=_pump_fusion_events,
+            )
+            if int(ready_result.get("notReadyCount") or 0) > 0:
+                not_ready = []
+                for item in list(ready_result.get("notReady") or [])[:80]:
+                    not_ready.append(
+                        {
+                            "bodyName": item.get("bodyName") or "",
+                            "panelId": item.get("panelId") or "",
+                            "reasons": list(item.get("reasons") or []),
+                        }
+                    )
+                return "panelAttributesResult", {
+                    "ok": False,
+                    "action": "exportManufacturingSnapshot",
+                    "errors": [
+                        "Export blocked: {}/{} LAY_FLAT body(ies) are not Export Ready."
+                        .format(
+                            int(ready_result.get("notReadyCount") or 0),
+                            int(ready_result.get("bodyCount") or 0),
+                        )
+                    ],
+                    "notReady": not_ready,
+                    "reasonCounts": ready_result.get("reasonCounts") or {},
+                    "scope": scope,
+                    "selectedBodyCount": len(export_bodies),
+                }
+            body_records, body_skips = self._records_for_manufacturing_export(
+                root, export_bodies
+            )
+            skipped.extend(body_skips)
+        elif scope == "all":
+            records, _counts, scan_diagnostics = metadata_inspector.scan_panel_metadata(
+                root, zone_filter="all", detail="full"
+            )
+            body_records = [
+                record
+                for record in records
+                if "body" in str(record.get("entityKind") or "").lower()
+            ]
+        else:
+            selected_entities = self._selected_entities()
+            if not selected_entities:
+                return "panelAttributesResult", {
+                    "ok": False,
+                    "action": "exportManufacturingSnapshot",
+                    "errors": [
+                        "Select one or more panel bodies (or a cabinet occurrence) first, "
+                        "then Export Selected → .cnjob."
+                    ],
+                    "scope": scope,
+                }
+            bodies, expand_warnings = metadata_inspector.bodies_from_selected_entities(
+                selected_entities, root
+            )
+            export_bodies = list(bodies or [])
+            selected_lay_flat = [
+                body
+                for body in export_bodies
+                if work_zones.is_lay_flat_workpiece(body)
+            ]
+            if selected_lay_flat:
+                ready_result = nesting_lay_flat_export_ready.check_bodies(
+                    selected_lay_flat,
+                    wait_callback=_pump_fusion_events,
+                )
+                if int(ready_result.get("notReadyCount") or 0) > 0:
+                    return "panelAttributesResult", {
+                        "ok": False,
+                        "action": "exportManufacturingSnapshot",
+                        "errors": [
+                            "Export blocked: selected LAY_FLAT bodies are not Export Ready."
+                        ],
+                        "notReady": [
+                            {
+                                "bodyName": item.get("bodyName") or "",
+                                "panelId": item.get("panelId") or "",
+                                "reasons": list(item.get("reasons") or []),
+                            }
+                            for item in list(ready_result.get("notReady") or [])[:80]
+                        ],
+                        "reasonCounts": ready_result.get("reasonCounts") or {},
+                        "scope": scope,
+                        "selectedBodyCount": len(export_bodies),
+                    }
+            skipped.extend(list(expand_warnings or []))
+            body_records, body_skips = self._records_for_manufacturing_export(root, bodies)
+            skipped.extend(body_skips)
+
+        if not body_records:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "exportManufacturingSnapshot",
+                "errors": [
+                    "No exportable source panel bodies found under the current selection."
+                    if scope == "selection"
+                    else (
+                        "No analyzed LAY_FLAT bodies found."
+                        if scope == "layflat"
+                        else "No exportable source panel bodies found in the design."
+                    )
+                ],
+                "warnings": skipped[:20],
+                "scope": scope,
+                "selectedBodyCount": 0,
+            }
+
+        for record in body_records:
+            if not str(record.get("assemblyName") or "").strip():
+                record["assemblyName"] = _assembly_name_for_record(root, record)
+
+        design_name = str(
+            (payload or {}).get("designName")
+            or getattr(getattr(app, "activeDocument", None), "name", "")
+            or "cabinet_job"
+        ).strip()
+        job_id = str((payload or {}).get("jobId") or design_name).strip()
+        default_name = str(
+            (payload or {}).get("fileName") or "{}.cnjob".format(design_name)
+        )
+        if not default_name.lower().endswith(".cnjob"):
+            default_name += ".cnjob"
+
+        # Validate the exact snapshot before asking the user for a path. This is
+        # the same builder used for the final write, so Ready cannot diverge
+        # from the serialized contract.
+        result = manufacturing_snapshot_export.build_snapshot(
+            body_records,
+            job_id,
+            source={
+                "cadApp": "Fusion 360",
+                "pluginId": "fusion360-unified-cabinet-plugin",
+                "pluginVersion": str((payload or {}).get("pluginVersion") or "development"),
+                "designName": design_name,
+                "exportScope": scope,
+            },
+        )
+        warnings = list(skipped[:20]) + list(result.get("warnings") or [])
+        if not result.get("ok"):
+            messages = [
+                "{}: {}".format(item.get("code") or "export", item.get("message") or "")
+                for item in result.get("errors") or []
+            ]
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "exportManufacturingSnapshot",
+                "errors": messages or ["Manufacturing snapshot validation failed."],
+                "diagnostics": result.get("errors") or [],
+                "scanDiagnostics": scan_diagnostics,
+                "warnings": warnings,
+                "scope": scope,
+                "selectedBodyCount": len(body_records),
+            }
+
+        dialog = ui.createFileDialog()
+        dialog.isMultiSelectEnabled = False
+        dialog.title = (
+            "Export Analyzed LAY_FLAT → CabinetNC Job"
+            if scope == "layflat"
+            else (
+                "Export Selected Source Panels (Diagnostic)"
+                if scope == "selection"
+                else "Export All Source Panels (Diagnostic)"
+            )
+        )
+        dialog.filter = "CabinetNC manufacturing job (*.cnjob)"
+        dialog.initialFilename = default_name
+        if dialog.showSave() != adsk.core.DialogResults.DialogOK:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "exportManufacturingSnapshot",
+                "cancelled": True,
+                "errors": ["Manufacturing snapshot export cancelled."],
+                "scope": scope,
+            }
+
+        path = str(dialog.filename or "").strip()
+        if path and not path.lower().endswith(".cnjob"):
+            path += ".cnjob"
+
+        try:
+            result["path"] = manufacturing_snapshot_export.write_cnjob(
+                path, result.get("snapshot") or {}
+            )
+        except Exception as ex:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "exportManufacturingSnapshot",
+                "errors": ["write_failed: {}".format(ex)],
+                "scanDiagnostics": scan_diagnostics,
+                "warnings": warnings,
+                "scope": scope,
+                "selectedBodyCount": len(body_records),
+            }
+
+        snapshot = result.get("snapshot") or {}
+        workpiece_count = len(snapshot.get("workpieces") or [])
+        return "panelAttributesResult", {
+            "ok": True,
+            "action": "exportManufacturingSnapshot",
+            "path": result.get("path") or path,
+            "jobId": snapshot.get("jobId") or job_id,
+            "workpieceCount": workpiece_count,
+            "selectedBodyCount": len(body_records),
+            "skippedCount": len(skipped),
+            "warningCount": len(warnings),
+            "warnings": warnings,
+            "scope": scope,
+            "message": (
+                "Exported {} analyzed LAY_FLAT panel(s) → {}."
+                if scope == "layflat"
+                else (
+                    "Exported {} selected source panel(s) (diagnostic) → {}."
+                    if scope == "selection"
+                    else "Exported {} source panel(s) (diagnostic) → {}."
+                )
+            ).format(workpiece_count, result.get("path") or path),
+        }
+
+    def create_lay_flat_layout(self, payload, _palette):
+        """Lay Flat: copy Ready panels with machining face +Z, columns by board type."""
+        import time as _time
+
+        profiler = nesting_runtime_profile.NestingProfiler("createLayFlatLayout")
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "createLayFlatLayout",
+                "errors": ["No active Fusion design."],
+            }
+
+        # Source metadata is the only classification authority. Overrides were
+        # a compensation for failed source writes and caused panelId fan-out.
+        # Transactional Apply now verifies source writes, so purge legacy maps.
+        override_warnings = []
+        harvested = {}
+        synced_overrides = []
+        sync_failed = []
+        overrides = {}
+        try:
+            t_ov = _time.perf_counter()
+            stored = nesting_lay_flat_tag_overrides.load_overrides(root)
+            if stored:
+                nesting_lay_flat_tag_overrides.save_overrides(root, {})
+                override_warnings.append(
+                    "Removed {} legacy Lay Flat override(s); source tags are authoritative."
+                    .format(len(stored))
+                )
+            profiler.sample(
+                "layFlatTagOverrides",
+                int((_time.perf_counter() - t_ov) * 1000),
+                harvested=0,
+                stored=len(stored or {}),
+                kept=0,
+                synced=0,
+                syncFailed=0,
+            )
+        except Exception as ex:
+            override_warnings.append(
+                "Lay Flat tag override cleanup failed: {}".format(ex)
+            )
+
+        # Speed path: clear Nesting Zone copies before scan so scanWalk does not
+        # walk prior NESTING_LAYOUT / LAY_FLAT bodies (was ~95% of runtime).
+        deleted_previous = 0
+        try:
+            t_del = _time.perf_counter()
+            deleted_previous = int(
+                nesting_fusion_layout.delete_previous_layouts(root) or 0
+            )
+            deleted_previous += int(
+                nesting_lay_flat_fusion.delete_previous_lay_flat(root) or 0
+            )
+            profiler.sample(
+                "deletePreviousLayouts",
+                int((_time.perf_counter() - t_del) * 1000),
+                deleted=deleted_previous,
+            )
+        except Exception:
+            deleted_previous = 0
+
+        # Light/nesting scan is enough for Ready + outline cache; full face
+        # registry / SVG walk is the expensive path and unused here.
+        zone_filter = str((payload or {}).get("zoneFilter") or "all").strip().lower() or "all"
+        records, _counts, diagnostics = metadata_inspector.scan_panel_metadata(
+            root, zone_filter=zone_filter, detail="nesting", profiler=profiler
+        )
+        body_records = [
+            record
+            for record in records
+            if "body" in str(record.get("entityKind") or "").lower()
+        ]
+
+        prepared = []
+        not_ready = []
+        failed = []
+        profiler.begin("prepareLayFlat")
+        for index, record in enumerate(body_records):
+            check = nesting_preflight.evaluate_record(record)
+            if not check.get("ready"):
+                not_ready.append({
+                    "panelId": record.get("panelId") or "",
+                    "bodyName": record.get("bodyName") or "",
+                    "missing": check.get("missing") or [],
+                })
+                continue
+            # Same resolver as Nesting Create Layout — find_body_in_design fails on
+            # duplicate Body1 / manual.Body1 names without occurrencePath proxies.
+            body, body_warnings = self._body_from_metadata_record(
+                root, record, prefer_path=True
+            )
+            if body is None:
+                failed.append({
+                    "panelId": record.get("panelId") or "",
+                    "bodyName": record.get("bodyName") or "",
+                    "componentName": record.get("componentName") or "",
+                    "occurrencePath": list(record.get("occurrencePath") or []),
+                    "reason": "body_not_found",
+                    "warnings": body_warnings,
+                })
+                continue
+            metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+            panel_id = str(record.get("panelId") or "").strip()
+            source_ref = panel_source_ref.from_scan_record(record)
+            if not source_ref:
+                failed.append(
+                    {
+                        "panelId": panel_id,
+                        "bodyName": record.get("bodyName") or "",
+                        "componentName": record.get("componentName") or "",
+                        "occurrencePath": list(
+                            record.get("occurrencePath") or []
+                        ),
+                        "reason": "missing_source_lineage",
+                    }
+                )
+                continue
+            board_tag = check.get("boardTypeTag") or ""
+            color_tag = check.get("colorTag") or ""
+            try:
+                item_t0 = _time.perf_counter()
+                cached_outline, _cached_dims = nesting_outline_cache.cached_outline_for_prepare(
+                    metadata,
+                    nesting_outline_cache.body_geometry_signature(body),
+                    check["cuttingFace"],
+                    allow_parts_in_part=False,
+                    reflected_source=bool(
+                        nesting_fusion_layout._body_has_reflection(body)
+                    ),
+                )
+                temp_body, dimensions, outline = nesting_fusion_layout.prepare_flat_copy(
+                    body,
+                    metadata,
+                    check["cuttingFace"],
+                    allow_parts_in_part=False,
+                    outline_override=cached_outline,
+                )
+                source_fields = panel_source_ref.to_legacy_fields(source_ref)
+                prepared.append({
+                    "id": "{}|{}|{}".format(
+                        record.get("entityToken") or record.get("panelId") or index,
+                        "/".join(str(v) for v in (record.get("occurrencePath") or [])),
+                        index,
+                    ),
+                    "panelId": panel_id,
+                    "bodyName": record.get("bodyName") or "",
+                    "componentName": record.get("componentName") or "",
+                    "assemblyName": _assembly_name_for_record(root, record),
+                    "boardTypeTag": board_tag,
+                    "colorTag": color_tag,
+                    "cuttingFace": check["cuttingFace"],
+                    "tempBody": temp_body,
+                    "dimensions": dimensions,
+                    "outline": outline,
+                    "metadata": metadata,
+                    "sourceRef": source_ref,
+                    "sourceKey": panel_source_ref.key(source_ref),
+                    # Compatibility fields for old consumers.
+                    **source_fields,
+                    "occurrencePath": list(record.get("occurrencePath") or []),
+                })
+                profiler.sample(
+                    "prepareLayFlatItem",
+                    int((_time.perf_counter() - item_t0) * 1000),
+                    panelId=record.get("panelId") or "",
+                )
+            except Exception as ex:
+                failed.append({
+                    "panelId": record.get("panelId") or "",
+                    "bodyName": record.get("bodyName") or "",
+                    "reason": str(ex),
+                })
+        profiler.end("prepareLayFlat")
+
+        if not prepared:
+            profile = profiler.flush(status="noPrepared")
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "createLayFlatLayout",
+                "errors": [
+                    "No Nesting Ready panels to lay flat. "
+                    "failed={} notReady={} (see failed/notReady lists)."
+                    .format(len(failed), len(not_ready))
+                ],
+                "bodyCount": len(body_records),
+                "notReadyCount": len(not_ready),
+                "failedCount": len(failed),
+                "notReady": not_ready[:50],
+                "failed": failed[:50],
+                "diagnostics": diagnostics,
+                "profile": profile,
+            }
+
+        zone_layout = work_zones.load_zone_layout(root) or {}
+        nesting_rect = zone_layout.get(work_zones.ZONE_NESTING)
+        if not isinstance(nesting_rect, dict):
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "createLayFlatLayout",
+                "errors": ["Nesting Zone is not configured. Set Work Zones first."],
+                "preparedCount": len(prepared),
+                "notReadyCount": len(not_ready),
+                "failedCount": len(failed),
+            }
+
+        part_gap = float((payload or {}).get("partGapMm") or 50.0)
+        column_gap = float((payload or {}).get("columnGapMm") or 200.0)
+        # Same Nesting Zone as sheet nesting — Lay Flat replaces NESTING_LAYOUT.
+        origin_x = float(nesting_rect.get("x0") or 0.0)
+        origin_y = float(nesting_rect.get("y0") or 0.0)
+
+        # Pre-measure column pack so the Nesting Zone can grow before body create.
+        pack_preview = nesting_lay_flat.column_layout(
+            [
+                {
+                    "id": item["id"],
+                    "boardTypeTag": item.get("boardTypeTag") or "",
+                    "colorTag": item.get("colorTag") or "",
+                    "widthMm": float((item.get("dimensions") or {}).get("widthMm") or 0.0),
+                    "depthMm": float((item.get("dimensions") or {}).get("depthMm") or 0.0),
+                }
+                for item in prepared
+            ],
+            origin_x_mm=origin_x,
+            origin_y_mm=origin_y,
+            part_gap_mm=part_gap,
+            column_gap_mm=column_gap,
+            group_by_color=True,
+        )
+        bounds = pack_preview.get("bounds") or {}
+        required_w = max(
+            float(bounds.get("x1") or origin_x) - origin_x,
+            float(nesting_rect.get("x1") or 0.0) - origin_x,
+        )
+        required_d = max(
+            float(bounds.get("y1") or origin_y) - origin_y,
+            float(nesting_rect.get("y1") or 0.0) - origin_y,
+        )
+        zone_grown = False
+        try:
+            grown_layout = work_zones.grow_nesting_zone(
+                zone_layout, required_w, required_d
+            )
+            if grown_layout and not work_zones.zones_overlap(grown_layout):
+                old_w, old_d = work_zones.rect_size(nesting_rect)
+                new_w, new_d = work_zones.rect_size(
+                    grown_layout.get(work_zones.ZONE_NESTING)
+                )
+                if (new_w or 0) > (old_w or 0) + 0.5 or (new_d or 0) > (old_d or 0) + 0.5:
+                    work_zones.save_zone_layout(root, grown_layout)
+                    zone_layout = grown_layout
+                    nesting_rect = grown_layout.get(work_zones.ZONE_NESTING) or nesting_rect
+                    origin_x = float(nesting_rect.get("x0") or origin_x)
+                    origin_y = float(nesting_rect.get("y0") or origin_y)
+                    zone_grown = True
+                    try:
+                        app = adsk.core.Application.get()
+                        design = app.activeProduct if app else None
+                        self._rebuild_work_zone_visuals(root, grown_layout, app, design)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        try:
+            profiler.begin("createLayFlatBodies")
+            result = nesting_lay_flat_fusion.create_lay_flat_layout(
+                root,
+                prepared,
+                origin_x_mm=origin_x,
+                origin_y_mm=origin_y,
+                part_gap_mm=part_gap,
+                column_gap_mm=column_gap,
+                wait_callback=_pump_fusion_events,
+                # Already deleted NESTING/LAY_FLAT before scan.
+                clear_previous=False,
+            )
+            profiler.end("createLayFlatBodies")
+        except Exception as ex:
+            profile = profiler.flush(status="createFailed")
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "createLayFlatLayout",
+                "errors": ["Lay Flat failed: {}".format(ex)],
+                "preparedCount": len(prepared),
+                "notReadyCount": len(not_ready),
+                "failedCount": len(failed),
+                "profile": profile,
+            }
+
+        deleted_total = deleted_previous + int(result.get("deletedPrevious") or 0)
+        profile = profiler.flush(status="done")
+        created_n = int(result.get("created") or 0)
+        message = (
+            "Lay Flat → {} with {} named body(ies) "
+            "(Assembly-Component), {}/{} panel(s) in {} column(s)."
+            "{}{}{}"
+        ).format(
+            result.get("componentName") or "LAY_FLAT",
+            created_n,
+            created_n,
+            len(body_records),
+            len(result.get("groups") or []),
+            " · {} not ready".format(len(not_ready)) if not_ready else "",
+            " · {} failed".format(len(failed)) if failed else "",
+            (" · " + "; ".join(override_warnings[:2])) if override_warnings else "",
+        )
+        return "panelAttributesResult", {
+            "ok": True,
+            "action": "createLayFlatLayout",
+            "createdCount": created_n,
+            "groupCount": len(result.get("groups") or []),
+            "deletedPreviousCount": deleted_total,
+            "preparedCount": len(prepared),
+            "notReadyCount": len(not_ready),
+            "failedCount": len(failed),
+            "notReady": not_ready[:50],
+            "failed": failed[:50],
+            "groups": result.get("groups") or [],
+            "componentName": result.get("componentName") or "LAY_FLAT",
+            "runId": result.get("runId") or "",
+            "scanDetail": "nesting",
+            "structure": result.get("structure") or "named_bodies",
+            "createPath": result.get("createPath") or "batch_named_bodies",
+            "originXMm": origin_x,
+            "originYMm": origin_y,
+            "zoneGrown": zone_grown,
+            "bodyCount": len(body_records),
+            "lineageStampedCount": int(
+                result.get("lineageStampedCount") or 0
+            ),
+            "tagOverrideCount": len(overrides or {}),
+            "tagOverrideHarvestedCount": len(harvested or {}),
+            "tagOverrideSyncedCount": len(synced_overrides or {}),
+            "tagOverrideAppliedCount": 0,
+            "tagOverrideSyncFailed": sync_failed[:20],
+            "profile": profile,
+            "warnings": override_warnings[:20],
+            "message": message,
+        }
+
+    def check_lay_flat_faces_up(self, payload, _palette):
+        """Check Lay Flat bodies: MILLING ≈ +Z, NON_MILLING (colour) ≈ −Z."""
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "checkLayFlatFacesUp",
+                "errors": ["No active Fusion design."],
+            }
+
+        min_dot = (payload or {}).get("minDot")
+        try:
+            min_dot = float(min_dot) if min_dot is not None else None
+        except Exception:
+            min_dot = None
+        select_failed = bool((payload or {}).get("selectFailed", True))
+
+        selected_entities = self._selected_entities()
+        warnings = []
+        bodies = []
+        if selected_entities:
+            resolved, expand_warnings = metadata_inspector.bodies_from_selected_entities(
+                selected_entities, root, include_lay_flat=True
+            )
+            warnings.extend(list(expand_warnings or [])[:20])
+            for body in resolved or []:
+                if work_zones.is_lay_flat_workpiece(body):
+                    bodies.append(body)
+            if resolved and not bodies:
+                warnings.append(
+                    "Selection had bodies but none were Lay Flat workpieces; "
+                    "scanning LAY_FLAT instead."
+                )
+        if not bodies:
+            bodies = nesting_lay_flat_face_up.collect_lay_flat_bodies(root)
+        if not bodies:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "checkLayFlatFacesUp",
+                "errors": [
+                    "No Lay Flat bodies found. Run Lay Flat first, or select LAY_FLAT."
+                ],
+                "warnings": warnings[:20],
+            }
+
+        result = nesting_lay_flat_face_up.check_bodies(bodies, min_dot=min_dot)
+        failed = list(result.get("failed") or [])
+        selected_count = 0
+        select_failures = []
+        faces = []
+        if select_failed:
+            for item in failed:
+                face = item.get("_millingFace")
+                if face is not None:
+                    faces.append(face)
+        for item in (result.get("passed") or []) + failed:
+            item.pop("_millingFace", None)
+            item.pop("_colourFace", None)
+        if faces:
+            selected_count, select_failures = self._select_faces_and_fit(faces)
+            warnings.extend(select_failures or [])
+
+        ok = bool(result.get("ok"))
+        message = (
+            "Check Faces Up: {}/{} Lay Flat body(ies) OK "
+            "(MILLING +Z, colour −Z, minDot={:.2f})."
+            .format(
+                int(result.get("passedCount") or 0),
+                int(result.get("checkedCount") or 0),
+                float(result.get("minDot") or 0.95),
+            )
+        )
+        if not ok:
+            message += " Failed: {}.".format(int(result.get("failedCount") or 0))
+            if selected_count:
+                message += " Selected {} face(s) to inspect.".format(selected_count)
+
+        return "panelAttributesResult", {
+            "ok": ok,
+            "action": "checkLayFlatFacesUp",
+            "checkedCount": int(result.get("checkedCount") or 0),
+            "passedCount": int(result.get("passedCount") or 0),
+            "failedCount": int(result.get("failedCount") or 0),
+            "minDot": result.get("minDot"),
+            "failed": [
+                {
+                    "bodyName": item.get("bodyName") or "",
+                    "millingOk": item.get("millingOk"),
+                    "colourOk": item.get("colourOk"),
+                    "millingDotPlusZ": item.get("millingDotPlusZ"),
+                    "colourDotMinusZ": item.get("colourDotMinusZ"),
+                    "reasons": item.get("reasons") or [],
+                    "assignment": item.get("assignment") or "",
+                }
+                for item in failed[:80]
+            ],
+            "selectedFaceCount": selected_count,
+            "warnings": warnings[:40],
+            "errors": [] if ok else [message],
+            "message": message,
+        }
+
+    def analyze_lay_flat_manufacturing(self, payload, _palette):
+        """Re-extract outline + features on Lay Flat bodies (independent of Lay Flat)."""
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "analyzeLayFlatManufacturing",
+                "errors": ["No active Fusion design."],
+            }
+
+        force = bool((payload or {}).get("forceRebuild"))
+        warnings = []
+        bodies = []
+        selected_entities = self._selected_entities()
+        if selected_entities:
+            resolved, expand_warnings = metadata_inspector.bodies_from_selected_entities(
+                selected_entities, root, include_lay_flat=True
+            )
+            warnings.extend(list(expand_warnings or [])[:20])
+            for body in resolved or []:
+                if work_zones.is_lay_flat_workpiece(body):
+                    bodies.append(body)
+            if resolved and not bodies:
+                warnings.append(
+                    "Selection had bodies but none were Lay Flat workpieces; "
+                    "scanning LAY_FLAT instead."
+                )
+        if not bodies:
+            bodies = nesting_lay_flat_face_up.collect_lay_flat_bodies(root)
+        if not bodies:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "analyzeLayFlatManufacturing",
+                "errors": [
+                    "No Lay Flat bodies found. Run Lay Flat first, or select LAY_FLAT."
+                ],
+                "warnings": warnings[:20],
+            }
+
+        result = nesting_lay_flat_analyze.analyze_lay_flat_bodies(
+            bodies,
+            force=force,
+            wait_callback=_pump_fusion_events,
+        )
+        failed_n = int(result.get("failedCount") or 0)
+        analyzed_n = int(result.get("analyzedCount") or 0)
+        skipped_n = int(result.get("skippedFreshCount") or 0)
+        flipped_n = int(result.get("flippedForViewCount") or 0)
+        ok = failed_n == 0 and (analyzed_n + skipped_n) > 0
+        message = (
+            "Analyze Lay Flat: built {} · reused fresh {} · flipped for view {} · "
+            "failed {} / {} body(ies)."
+            .format(
+                analyzed_n,
+                skipped_n,
+                flipped_n,
+                failed_n,
+                int(result.get("bodyCount") or 0),
+            )
+        )
+        return "panelAttributesResult", {
+            "ok": ok,
+            "action": "analyzeLayFlatManufacturing",
+            "analyzedCount": analyzed_n,
+            "skippedFreshCount": skipped_n,
+            "flippedForViewCount": flipped_n,
+            "failedCount": failed_n,
+            "bodyCount": int(result.get("bodyCount") or 0),
+            "forceRebuild": force,
+            "analyzed": result.get("analyzed") or [],
+            "skippedFresh": result.get("skippedFresh") or [],
+            "failed": result.get("failed") or [],
+            "warnings": warnings[:40],
+            "errors": [] if ok else [message],
+            "message": message,
+        }
+
+    def check_lay_flat_export_ready(self, payload, _palette):
+        """Export Ready gate for Lay Flat bodies (before .cnjob export)."""
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "checkLayFlatExportReady",
+                "errors": ["No active Fusion design."],
+            }
+
+        select_not_ready = bool((payload or {}).get("selectNotReady", False))
+        min_dot = (payload or {}).get("minDot")
+        try:
+            min_dot = float(min_dot) if min_dot is not None else None
+        except Exception:
+            min_dot = None
+
+        warnings = []
+        bodies = []
+        selected_entities = self._selected_entities()
+        # Select Not Ready always rescans all LAY_FLAT bodies so selection is not
+        # limited to a previous partial selection.
+        if selected_entities and not select_not_ready:
+            resolved, expand_warnings = metadata_inspector.bodies_from_selected_entities(
+                selected_entities, root, include_lay_flat=True
+            )
+            warnings.extend(list(expand_warnings or [])[:20])
+            for body in resolved or []:
+                if work_zones.is_lay_flat_workpiece(body):
+                    bodies.append(body)
+            if resolved and not bodies:
+                warnings.append(
+                    "Selection had bodies but none were Lay Flat workpieces; "
+                    "scanning LAY_FLAT instead."
+                )
+        if not bodies:
+            bodies = nesting_lay_flat_face_up.collect_lay_flat_bodies(root)
+        if not bodies:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "checkLayFlatExportReady",
+                "errors": [
+                    "No Lay Flat bodies found. Run Lay Flat first, or select LAY_FLAT."
+                ],
+                "warnings": warnings[:20],
+            }
+
+        result = nesting_lay_flat_export_ready.check_bodies(
+            bodies,
+            min_dot=min_dot,
+            wait_callback=_pump_fusion_events,
+        )
+        not_ready = list(result.get("notReady") or [])
+        ready = list(result.get("ready") or [])
+        selected_count = 0
+        if select_not_ready:
+            select_bodies = [
+                item.get("_body") for item in not_ready if item.get("_body") is not None
+            ]
+            selected_count = self._select_bodies_and_fit(select_bodies)
+            if selected_count == 0 and select_bodies:
+                warnings.append(
+                    "Select Not Ready resolved {} body(ies) but Fusion selection.add "
+                    "failed (occurrence proxy required for nested LAY_FLAT parts).".format(
+                        len(select_bodies)
+                    )
+                )
+            elif 0 < selected_count < len(select_bodies):
+                warnings.append(
+                    "Selected {} of {} not-ready body(ies).".format(
+                        selected_count, len(select_bodies)
+                    )
+                )
+
+        def _public_item(item):
+            return {
+                "bodyName": item.get("bodyName") or "",
+                "panelId": item.get("panelId") or "",
+                "ready": bool(item.get("ready")),
+                "reasons": list(item.get("reasons") or []),
+                "boardTypeTag": item.get("boardTypeTag") or "",
+                "colorTag": item.get("colorTag") or "",
+                "cuttingFace": item.get("cuttingFace") or "",
+                "thicknessMm": item.get("thicknessMm"),
+                "featureCount": item.get("featureCount") or 0,
+                "pointCount": item.get("pointCount") or 0,
+                "outlineSource": item.get("outlineSource") or "",
+                "lifecycleState": item.get("lifecycleState") or "",
+                "analyzed": bool(item.get("analyzed")),
+                "faceUp": item.get("faceUp"),
+            }
+
+        ready_n = int(result.get("readyCount") or 0)
+        not_ready_n = int(result.get("notReadyCount") or 0)
+        body_n = int(result.get("bodyCount") or 0)
+        ok = not_ready_n == 0 and body_n > 0
+        reason_counts = result.get("reasonCounts") or {}
+        reason_bits = [
+            "{} {}".format(count, name)
+            for name, count in sorted(reason_counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            if count
+        ]
+        message = "Export Ready: {}/{} Lay Flat body(ies) ready.".format(ready_n, body_n)
+        if not_ready_n:
+            message += " {} not ready.".format(not_ready_n)
+            if reason_bits:
+                message += " Top reasons: {}.".format(", ".join(reason_bits[:6]))
+        if select_not_ready:
+            if selected_count:
+                message += " Selected {} body(ies).".format(selected_count)
+            elif not_ready_n:
+                message += " Selection failed for {} not-ready body(ies).".format(
+                    not_ready_n
+                )
+
+        return "panelAttributesResult", {
+            "ok": ok,
+            "action": "checkLayFlatExportReady",
+            "bodyCount": body_n,
+            "readyCount": ready_n,
+            "notReadyCount": not_ready_n,
+            "reasonCounts": reason_counts,
+            "ready": [_public_item(item) for item in ready[:200]],
+            "notReady": [_public_item(item) for item in not_ready[:200]],
+            "selectedCount": selected_count,
+            "selectNotReady": select_not_ready,
+            "warnings": warnings[:40],
+            "errors": [] if ok else [message],
+            "message": message,
+        }
+
+    def _selected_lay_flat_bodies(self, root):
+        warnings = []
+        selected_entities = self._selected_entities()
+        if not selected_entities:
+            return [], ["Select one or more LAY_FLAT bodies or faces."]
+        resolved, expand_warnings = metadata_inspector.bodies_from_selected_entities(
+            selected_entities, root, include_lay_flat=True
+        )
+        warnings.extend(list(expand_warnings or [])[:20])
+        bodies = []
+        seen = set()
+        for body in resolved or []:
+            if not work_zones.is_lay_flat_workpiece(body):
+                continue
+            key = metadata_inspector._body_key(body)
+            if key in seen:
+                continue
+            seen.add(key)
+            bodies.append(body)
+        if not bodies:
+            warnings.append(
+                "Selection has no LAY_FLAT workpieces. Select bodies under LAY_FLAT."
+            )
+        return bodies, warnings
+
+    def _lay_flat_project_tag_options(self, root, selected_bodies=None):
+        board_types = set()
+        colors = set()
+        warnings = []
+        try:
+            rules_payload = thickness_rules.load_rules(root) or {}
+            for rule in rules_payload.get("rules") or []:
+                tag = str((rule or {}).get("boardTypeTag") or "").strip()
+                if tag:
+                    board_types.add(tag)
+        except Exception as ex:
+            warnings.append("Board Type rules could not be loaded: {}".format(ex))
+        try:
+            records, _counts, diagnostics = metadata_inspector.scan_panel_metadata(
+                root, zone_filter="all", detail="nesting"
+            )
+            warnings.extend(list((diagnostics or {}).get("warnings") or [])[:10])
+        except Exception as ex:
+            records = []
+            warnings.append("Project tag scan failed: {}".format(ex))
+        for record in records or []:
+            if "body" not in str(record.get("entityKind") or "").lower():
+                continue
+            board = str(record.get("boardTypeTag") or "").strip()
+            color = str(record.get("colorTag") or "").strip()
+            if board:
+                board_types.add(board)
+            if color:
+                colors.add(color)
+        for body in selected_bodies or []:
+            metadata, _err = tag_metadata_editor._read_body_metadata_raw(body)
+            metadata = attribute_state_service.migrate_metadata(
+                metadata if isinstance(metadata, dict) else {}
+            )
+            classification = metadata.get("classification") or {}
+            board = str(
+                ((classification.get("boardType") or {}).get("value") or "")
+            ).strip()
+            color = str(
+                ((classification.get("color") or {}).get("value") or "")
+            ).strip()
+            if board:
+                board_types.add(board)
+            if color:
+                colors.add(color)
+        return (
+            sorted(board_types, key=lambda value: value.lower()),
+            sorted(colors, key=lambda value: value.lower()),
+            warnings,
+        )
+
+    def _lay_flat_effective_tags(self, body, root=None, allow_source_fallback=False):
+        """Read tags from the LAY_FLAT copy; never guess a write source by panelId."""
+        metadata, _err = tag_metadata_editor._read_body_metadata_raw(body)
+        if not isinstance(metadata, dict):
+            try:
+                metadata = nesting_lay_flat_tag_scan.read_body_metadata(body) or {}
+            except Exception:
+                metadata = {}
+        board = str(
+            (attribute_state_service.board_type_state(metadata) or {}).get("value") or ""
+        ).strip().lower()
+        color = str(
+            (attribute_state_service.color_state(metadata) or {}).get("value") or ""
+        ).strip().lower()
+        source_ref = panel_source_ref.from_lay_flat_body(body)
+        source_panel_id = str(
+            (source_ref or {}).get("panelId")
+            or milling_surface_propagation.read_source_panel_id(body)
+            or ""
+        ).strip()
+        return {
+            "boardTypeTag": board,
+            "colorTag": color,
+            "sourcePanelId": source_panel_id,
+            "sourceRef": source_ref,
+            "sourceKey": panel_source_ref.key(source_ref),
+            "metadata": metadata if isinstance(metadata, dict) else {},
+        }
+
+    def get_lay_flat_tag_editor(self, _payload, _palette):
+        """Return project Board Type / Color values and selected LAY_FLAT state."""
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "getLayFlatTagEditor",
+                "errors": ["No active Fusion design."],
+            }
+        bodies, selection_warnings = self._selected_lay_flat_bodies(root)
+        board_types, colors, option_warnings = self._lay_flat_project_tag_options(
+            root, selected_bodies=bodies
+        )
+        selected = []
+        for body in bodies:
+            tags = self._lay_flat_effective_tags(body, root=root)
+            selected.append(
+                {
+                    "bodyName": str(getattr(body, "name", "") or ""),
+                    "sourcePanelId": tags.get("sourcePanelId") or "",
+                    "sourceKey": tags.get("sourceKey") or "",
+                    "lineageComplete": bool(tags.get("sourceKey")),
+                    "boardTypeTag": tags.get("boardTypeTag") or "",
+                    "colorTag": tags.get("colorTag") or "",
+                }
+            )
+        return "panelAttributesResult", {
+            "ok": bool(bodies) and bool(board_types) and bool(colors),
+            "action": "getLayFlatTagEditor",
+            "selectedCount": len(bodies),
+            "selected": selected[:100],
+            "boardTypes": board_types,
+            "colors": colors,
+            "warnings": (selection_warnings + option_warnings)[:40],
+            "errors": (
+                []
+                if bodies and board_types and colors
+                else [
+                    "Select LAY_FLAT bodies and ensure the project already has "
+                    "at least one Board Type and Color."
+                ]
+            ),
+        }
+
+    def apply_lay_flat_tags(self, payload, _palette):
+        """Apply tags to selected LAY_FLAT + sources now, then append selected.
+
+        Primary path writes the source model immediately (no Lay Flat rebuild).
+        Cost: O(N + k) with one source index (N originals, k selection), plus
+        O(L) layout pass over Lay Flat bodies for the selected-only move.
+        """
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "applyLayFlatTags",
+                "errors": ["No active Fusion design."],
+            }
+        bodies, warnings = self._selected_lay_flat_bodies(root)
+        if not bodies:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "applyLayFlatTags",
+                "errors": ["Select one or more LAY_FLAT bodies or faces."],
+                "warnings": warnings[:20],
+            }
+
+        board_type = str((payload or {}).get("boardTypeTag") or "").strip()
+        color = str((payload or {}).get("colorTag") or "").strip()
+        if not board_type and not color:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "applyLayFlatTags",
+                "errors": ["Choose a Board Type, a Color, or both."],
+            }
+        board_options, color_options, option_warnings = (
+            self._lay_flat_project_tag_options(root, selected_bodies=bodies)
+        )
+        warnings.extend(option_warnings)
+        if board_type and board_type not in board_options:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "applyLayFlatTags",
+                "errors": ["Board Type is not an existing project value: {}".format(board_type)],
+            }
+        if color and color not in color_options:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "applyLayFlatTags",
+                "errors": ["Color is not an existing project value: {}".format(color)],
+            }
+
+        updated = []
+        source_updated = []
+        failed = []
+        source_seen = set()
+
+        def _apply_tags(
+            body,
+            preserve_source_panel_id="",
+            preserve_board="",
+            preserve_color="",
+        ):
+            metadata, read_error = tag_metadata_editor._read_body_metadata_raw(body)
+            if read_error:
+                raise ValueError(read_error)
+            if isinstance(metadata, dict):
+                working = attribute_state_service.migrate_metadata(metadata)
+            else:
+                working = tag_metadata_editor._bootstrap_body_metadata(body)
+            if preserve_source_panel_id:
+                identity = working.setdefault("identity", {})
+                if not isinstance(identity, dict):
+                    identity = {}
+                    working["identity"] = identity
+                if not str(identity.get("sourcePanelId") or "").strip():
+                    identity["sourcePanelId"] = preserve_source_panel_id
+            # Keep-current must not wipe existing tags when the read path is sparse.
+            if not board_type and preserve_board:
+                current_board = str(
+                    (attribute_state_service.board_type_state(working) or {}).get("value")
+                    or ""
+                ).strip()
+                if attribute_state_service.is_undefined(current_board):
+                    working, _ignored = attribute_state_service.apply_board_type(
+                        working,
+                        preserve_board,
+                        source="legacy",
+                        lock=False,
+                        force=True,
+                    )
+            if not color and preserve_color:
+                current_color = str(
+                    (attribute_state_service.color_state(working) or {}).get("value")
+                    or ""
+                ).strip()
+                if attribute_state_service.is_undefined(current_color):
+                    working, _ignored = attribute_state_service.apply_color(
+                        working,
+                        preserve_color,
+                        source="legacy",
+                        lock=False,
+                        force=True,
+                    )
+            changes = []
+            if board_type:
+                working, result = attribute_state_service.apply_board_type(
+                    working,
+                    board_type,
+                    source="manual",
+                    lock=True,
+                    force=True,
+                )
+                if result.get("changed"):
+                    changes.append("boardType")
+            if color:
+                working, result = attribute_state_service.apply_color(
+                    working,
+                    color,
+                    source="manual",
+                    lock=True,
+                    force=True,
+                )
+                if result.get("changed"):
+                    changes.append("color")
+            tag_metadata_editor._write_body_metadata(body, working)
+            if preserve_source_panel_id:
+                try:
+                    from nesting.lay_flat_fusion import _set_attr, OUTPUT_MARKER_GROUP
+                except Exception:
+                    try:
+                        from lay_flat_fusion import _set_attr, OUTPUT_MARKER_GROUP  # type: ignore
+                    except Exception:
+                        _set_attr = None
+                        OUTPUT_MARKER_GROUP = "UnifiedCabinet"
+                if callable(_set_attr):
+                    try:
+                        _set_attr(
+                            body,
+                            OUTPUT_MARKER_GROUP,
+                            "sourcePanelId",
+                            preserve_source_panel_id,
+                        )
+                    except Exception:
+                        pass
+            return changes
+
+        # Transactional path per selected copy:
+        # resolve exact SourceRef -> write+verify source -> update LAY_FLAT.
+        # Never authorize writes from panelId/name guesses.
+        successful_bodies = []
+        for body in bodies:
+            body_name = str(getattr(body, "name", "") or "")
+            before = self._lay_flat_effective_tags(
+                body, root=root, allow_source_fallback=False
+            )
+            canonical_ref = panel_source_ref.from_lay_flat_body(body)
+            source_key = panel_source_ref.key(canonical_ref)
+            if not source_key:
+                failed.append(
+                    {
+                        "bodyName": body_name,
+                        "reason": (
+                            "missing exact source lineage; run Create Lay Flat "
+                            "with the current plugin"
+                        ),
+                    }
+                )
+                continue
+            source_bodies, source_ref_fields, source_resolution = (
+                panel_body_resolver.resolve_source_bodies_for_lay_flat(
+                    root,
+                    body,
+                    index=None,
+                    allow_panel_id_fallback=False,
+                )
+            )
+            if len(source_bodies) != 1:
+                failed.append(
+                    {
+                        "bodyName": body_name,
+                        "reason": "exact source lineage did not resolve: {} ({})".format(
+                            source_key, source_resolution or "none"
+                        ),
+                    }
+                )
+                continue
+            source_body = source_bodies[0]
+            source_panel_id = str(
+                (canonical_ref or {}).get("panelId")
+                or source_ref_fields.get("sourcePanelId")
+                or ""
+            ).strip()
+            intended_board = str(board_type or before.get("boardTypeTag") or "").strip()
+            intended_color = str(color or before.get("colorTag") or "").strip()
+            source_body_key = metadata_inspector._body_key(source_body)
+            wrote_source_now = source_body_key not in source_seen
+            source_metadata_before = None
+            source_update_item = None
+            if wrote_source_now:
+                try:
+                    source_metadata_before, source_read_error = (
+                        tag_metadata_editor._read_body_metadata_raw(source_body)
+                    )
+                    if source_read_error:
+                        raise ValueError(source_read_error)
+                    source_before = self._lay_flat_effective_tags(
+                        source_body, root=root, allow_source_fallback=False
+                    )
+                    changes = _apply_tags(
+                        source_body,
+                        preserve_board=intended_board
+                        or source_before.get("boardTypeTag")
+                        or before.get("boardTypeTag")
+                        or "",
+                        preserve_color=intended_color
+                        or source_before.get("colorTag")
+                        or before.get("colorTag")
+                        or "",
+                    )
+                    after = self._lay_flat_effective_tags(
+                        source_body, root=root, allow_source_fallback=False
+                    )
+                    if board_type and str(after.get("boardTypeTag") or "") != str(
+                        board_type
+                    ).strip().lower():
+                        raise ValueError(
+                            "source boardType still {!r} after write".format(
+                                after.get("boardTypeTag")
+                            )
+                        )
+                    if color and str(after.get("colorTag") or "") != str(
+                        color
+                    ).strip().lower():
+                        raise ValueError(
+                            "source color still {!r} after write".format(
+                                after.get("colorTag")
+                            )
+                        )
+                    if board_type and str(
+                        source_before.get("boardTypeTag") or ""
+                    ) != str(board_type).strip().lower():
+                        if "boardType" not in changes:
+                            changes.append("boardType")
+                    if color and str(source_before.get("colorTag") or "") != str(
+                        color
+                    ).strip().lower():
+                        if "color" not in changes:
+                            changes.append("color")
+                    source_update_item = {
+                        "bodyName": str(getattr(source_body, "name", "") or ""),
+                        "panelId": source_panel_id,
+                        "sourceKey": source_key,
+                        "changed": changes,
+                        "resolvedVia": source_resolution,
+                    }
+                    source_seen.add(source_body_key)
+                except Exception as ex:
+                    if isinstance(source_metadata_before, dict):
+                        try:
+                            tag_metadata_editor._write_body_metadata(
+                                source_body, source_metadata_before
+                            )
+                        except Exception:
+                            pass
+                    failed.append(
+                        {
+                            "bodyName": body_name,
+                            "reason": "source write failed: {}".format(ex),
+                        }
+                    )
+                    continue
+
+            try:
+                copy_changes = _apply_tags(
+                    body,
+                    preserve_source_panel_id=source_panel_id,
+                    preserve_board=before.get("boardTypeTag") or intended_board,
+                    preserve_color=before.get("colorTag") or intended_color,
+                )
+            except Exception as ex:
+                # Roll source back when this selection introduced the write but
+                # the disposable copy could not be updated.
+                if wrote_source_now and isinstance(source_metadata_before, dict):
+                    try:
+                        tag_metadata_editor._write_body_metadata(
+                            source_body, source_metadata_before
+                        )
+                        source_seen.discard(source_body_key)
+                    except Exception:
+                        pass
+                failed.append(
+                    {
+                        "bodyName": body_name,
+                        "reason": "LAY_FLAT write failed: {}".format(ex),
+                    }
+                )
+                continue
+
+            if source_update_item is not None:
+                source_updated.append(source_update_item)
+            updated.append({"bodyName": body_name, "changed": copy_changes})
+            successful_bodies.append(body)
+
+        all_lay_flat = nesting_lay_flat_face_up.collect_lay_flat_bodies(root)
+        layout_items = []
+        for index, body in enumerate(all_lay_flat):
+            tags = self._lay_flat_effective_tags(
+                body, root=root, allow_source_fallback=False
+            )
+            layout_items.append(
+                {
+                    "id": "{}|{}".format(
+                        tags.get("sourcePanelId")
+                        or milling_surface_propagation.read_source_panel_id(body),
+                        index,
+                    ),
+                    "body": body,
+                    "boardTypeTag": tags.get("boardTypeTag") or "",
+                    "colorTag": tags.get("colorTag") or "",
+                }
+            )
+
+        zone_layout = work_zones.load_zone_layout(root) or {}
+        nesting_rect = zone_layout.get(work_zones.ZONE_NESTING) or {}
+        origin_x = float(nesting_rect.get("x0") or 0.0)
+        origin_y = float(nesting_rect.get("y0") or 0.0)
+        part_gap = float((payload or {}).get("partGapMm") or 50.0)
+        column_gap = float((payload or {}).get("columnGapMm") or 200.0)
+        column_anchors = nesting_lay_flat_fusion._read_column_anchors(root)
+        move_result = (
+            nesting_lay_flat_fusion.append_lay_flat_bodies_to_group_ends(
+                layout_items,
+                selected_bodies=successful_bodies,
+                origin_x_mm=origin_x,
+                origin_y_mm=origin_y,
+                part_gap_mm=part_gap,
+                column_gap_mm=column_gap,
+                column_anchors=column_anchors,
+            )
+        )
+        if move_result.get("failedCount"):
+            failed.extend(list(move_result.get("failed") or []))
+        try:
+            # Persist resolved columns so later edits can find them even if some
+            # bodies temporarily fail tag reads.
+            anchor_groups = []
+            for group in move_result.get("groups") or []:
+                anchor_groups.append(group)
+            # Also keep stationary-only columns discovered during clustering.
+            for key, state in (move_result.get("columnStates") or {}).items():
+                if not isinstance(key, tuple) or len(key) != 2:
+                    continue
+                if key[0] in ("", "unknown") or state.get("x") is None:
+                    continue
+                anchor_groups.append(
+                    {
+                        "boardTypeTag": key[0],
+                        "colorTag": key[1],
+                        "columnX": state.get("x"),
+                        "columnWidthMm": max(
+                            0.0,
+                            float(state.get("maxX") or 0.0)
+                            - float(state.get("x") or 0.0),
+                        ),
+                        "count": int(state.get("stationaryCount") or 0),
+                    }
+                )
+            anchor_groups = [
+                group
+                for group in anchor_groups
+                if str(group.get("boardTypeTag") or "").strip().lower()
+                not in ("", "unknown")
+                and group.get("columnX") is not None
+            ]
+            nesting_lay_flat_fusion._write_column_anchors(root, anchor_groups)
+        except Exception:
+            pass
+
+        bounds = move_result.get("bounds") or {}
+        required_w = max(
+            float(bounds.get("x1") or origin_x) - origin_x,
+            float(nesting_rect.get("x1") or 0.0) - origin_x,
+        )
+        required_d = max(
+            float(bounds.get("y1") or origin_y) - origin_y,
+            float(nesting_rect.get("y1") or 0.0) - origin_y,
+        )
+        try:
+            grown_layout = work_zones.grow_nesting_zone(
+                zone_layout, required_w, required_d
+            )
+            if grown_layout and not work_zones.zones_overlap(grown_layout):
+                work_zones.save_zone_layout(root, grown_layout)
+                try:
+                    app = adsk.core.Application.get()
+                    design = app.activeProduct if app else None
+                    self._rebuild_work_zone_visuals(
+                        root, grown_layout, app, design
+                    )
+                except Exception:
+                    pass
+        except Exception as ex:
+            warnings.append(
+                "Could not grow Nesting Zone for appended bodies: {}".format(ex)
+            )
+
+        ok = bool(updated) and not failed
+        message = (
+            "LAY_FLAT tags: updated {} selected · {} source model · "
+            "moved {} selected to column ends · failed {}."
+        ).format(
+            len(updated),
+            len(source_updated),
+            int(move_result.get("movedCount") or 0),
+            len(failed),
+        )
+        group_bits = []
+        for group in (move_result.get("groups") or [])[:3]:
+            group_bits.append(
+                "{} / {} @ x={} ({}, stationary {})".format(
+                    group.get("boardTypeTag") or "unknown",
+                    group.get("colorTag") or "unknown",
+                    int(round(float(group.get("columnX") or 0.0))),
+                    group.get("source") or "?",
+                    int(group.get("stationaryCount") or 0),
+                )
+            )
+        if group_bits:
+            message = "{} Columns: {}.".format(message, "; ".join(group_bits))
+        if failed:
+            reasons = []
+            for item in failed[:3]:
+                reasons.append(
+                    "{} ({})".format(
+                        item.get("bodyName") or "body",
+                        item.get("reason") or "unknown",
+                    )
+                )
+            message = "{} {}".format(message, "; ".join(reasons))
+        return "panelAttributesResult", {
+            "ok": ok,
+            "action": "applyLayFlatTags",
+            "updatedCount": len(updated),
+            "sourceUpdatedCount": len(source_updated),
+            "movedCount": int(move_result.get("movedCount") or 0),
+            "groupCount": len(move_result.get("groups") or []),
+            "failedCount": len(failed),
+            "updated": updated[:100],
+            "sourceUpdated": source_updated[:100],
+            "groups": (move_result.get("groups") or [])[:100],
+            "placements": (move_result.get("placements") or [])[:100],
+            "failed": failed[:40],
+            "warnings": warnings[:40],
+            "errors": [] if ok else [message],
+            "message": message,
+        }
+
+    def tag_scan_lay_flat(self, payload, _palette):
+        """Scan tags + Export Ready troubleshoot on selected LAY_FLAT bodies only."""
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "tagScanLayFlat",
+                "errors": ["No active Fusion design."],
+            }
+
+        select_problems = bool(
+            (payload or {}).get("selectProblems")
+            or (payload or {}).get("selectMissing", False)
+        )
+        min_dot = (payload or {}).get("minDot")
+        try:
+            min_dot = float(min_dot) if min_dot is not None else None
+        except Exception:
+            min_dot = None
+        warnings = []
+        selected_entities = self._selected_entities()
+        if not selected_entities:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "tagScanLayFlat",
+                "errors": [
+                    "Select one or more LAY_FLAT bodies (or their parent occurrence), "
+                    "then run Tag Scan + Troubleshoot."
+                ],
+                "warnings": warnings[:20],
+            }
+
+        resolved, expand_warnings = metadata_inspector.bodies_from_selected_entities(
+            selected_entities, root, include_lay_flat=True
+        )
+        warnings.extend(list(expand_warnings or [])[:20])
+        bodies = []
+        for body in resolved or []:
+            if work_zones.is_lay_flat_workpiece(body):
+                bodies.append(body)
+        if not bodies:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "tagScanLayFlat",
+                "errors": [
+                    "Selection has no Lay Flat workpieces. Select bodies under LAY_FLAT."
+                ],
+                "warnings": warnings[:20],
+            }
+
+        result = nesting_lay_flat_tag_scan.scan_bodies(bodies, min_dot=min_dot)
+        problems = list(result.get("problems") or [])
+        missing = list(result.get("missing") or [])
+        not_export_ready = list(result.get("notExportReady") or [])
+        records = list(result.get("records") or [])
+        selected_count = 0
+        if select_problems:
+            select_bodies = [
+                item.get("_body")
+                for item in problems
+                if item.get("_body") is not None
+            ]
+            selected_count = self._select_bodies_and_fit(select_bodies)
+            if selected_count == 0 and select_bodies:
+                warnings.append(
+                    "Select Problems resolved {} body(ies) but Fusion selection.add failed.".format(
+                        len(select_bodies)
+                    )
+                )
+
+        def _public(item):
+            return {
+                "ok": bool(item.get("ok")),
+                "exportReady": item.get("exportReady"),
+                "problem": bool(item.get("problem")),
+                "bodyName": item.get("bodyName") or "",
+                "panelId": item.get("panelId") or "",
+                "boardTypeTag": item.get("boardTypeTag") or "",
+                "colorTag": item.get("colorTag") or "",
+                "cuttingFace": item.get("cuttingFace") or "",
+                "thicknessMm": item.get("thicknessMm"),
+                "lifecycleState": item.get("lifecycleState") or "",
+                "missing": list(item.get("missing") or []),
+                "missingCount": int(item.get("missingCount") or 0),
+                "troubleshoot": list(item.get("troubleshoot") or []),
+                "troubleshootCount": int(item.get("troubleshootCount") or 0),
+                "featureCount": int(item.get("featureCount") or 0),
+                "pointCount": int(item.get("pointCount") or 0),
+                "outlineSource": item.get("outlineSource") or "",
+                "analyzed": bool(item.get("analyzed")),
+                "faceUp": item.get("faceUp"),
+                "detail": item.get("detail") if isinstance(item.get("detail"), dict) else {},
+            }
+
+        complete_n = int(result.get("completeCount") or 0)
+        missing_n = int(result.get("missingCount") or 0)
+        export_ready_n = int(result.get("exportReadyCount") or 0)
+        not_export_n = int(result.get("notExportReadyCount") or 0)
+        problem_n = int(result.get("problemCount") or 0)
+        body_n = int(result.get("bodyCount") or 0)
+        ok = problem_n == 0 and body_n > 0
+        reason_counts = result.get("reasonCounts") or {}
+        reason_bits = [
+            "{} {}".format(count, name)
+            for name, count in sorted(
+                reason_counts.items(), key=lambda kv: (-kv[1], kv[0])
+            )
+            if count
+        ]
+        message = (
+            "Lay Flat Tag Scan (selection): tags {}/{} · export-ready {}/{}.".format(
+                complete_n, body_n, export_ready_n, body_n
+            )
+        )
+        if problem_n:
+            message += " {} problem body(ies).".format(problem_n)
+            if reason_bits:
+                message += " Top: {}.".format(", ".join(reason_bits[:8]))
+        if select_problems:
+            if selected_count:
+                message += " Selected {} body(ies).".format(selected_count)
+            elif problem_n:
+                message += " Selection failed for {} body(ies).".format(problem_n)
+
+        return "panelAttributesResult", {
+            "ok": ok,
+            "action": "tagScanLayFlat",
+            "bodyCount": body_n,
+            "completeCount": complete_n,
+            "missingCount": missing_n,
+            "exportReadyCount": export_ready_n,
+            "notExportReadyCount": not_export_n,
+            "problemCount": problem_n,
+            "reasonCounts": reason_counts,
+            "records": [_public(item) for item in records[:300]],
+            "missing": [_public(item) for item in missing[:200]],
+            "notExportReady": [_public(item) for item in not_export_ready[:200]],
+            "problems": [_public(item) for item in problems[:200]],
+            "selectedCount": selected_count,
+            "selectProblems": select_problems,
+            "selectMissing": select_problems,
+            "scope": "selection",
+            "warnings": warnings[:40],
+            "errors": [] if ok else [message],
+            "message": message,
+        }
+
+    def _records_for_manufacturing_export(self, root, bodies):
+        """Build full-detail scan records for unique source / Lay Flat bodies."""
+        records = []
+        skipped = []
+        seen = set()
+        for body in bodies or []:
+            if metadata_inspector._is_assembly_zone(body):
+                skipped.append(
+                    "Skipped work-zone helper: {}".format(
+                        getattr(body, "name", "") or "body"
+                    )
+                )
+                continue
+            if metadata_inspector._is_nested_instance(body):
+                # Lay Flat copies are exportable (machining-up + underside outline).
+                if not work_zones.is_lay_flat_workpiece(body):
+                    skipped.append(
+                        "Skipped nested layout copy: {}".format(
+                            getattr(body, "name", "") or "body"
+                        )
+                    )
+                    continue
+            key = metadata_inspector._body_key(body)
+            if key in seen:
+                continue
+            seen.add(key)
+            occurrence_path = []
+            try:
+                occurrence_path = (
+                    metadata_inspector.resolve_occurrence_path_for_body(root, body)
+                    if root is not None
+                    else []
+                )
+            except Exception:
+                occurrence_path = []
+            record = metadata_inspector._entity_record(
+                body,
+                "selected_body",
+                occurrence_path or [],
+                component_name=metadata_inspector._component_name_for_body(body),
+                body_name=getattr(body, "name", "") or "",
+                include_missing=True,
+                detail="full",
+            )
+            if record:
+                record["assemblyName"] = _assembly_name_for_record(root, record)
+                records.append(record)
+            else:
+                skipped.append(
+                    "No panel metadata for {}".format(
+                        getattr(body, "name", "") or "body"
+                    )
+                )
+        return records, skipped
+
     def get_thickness_rules(self, _payload, _palette):
         root = self.fusion.get_root_component()
         payload = thickness_rules.load_rules(root)
@@ -1919,8 +3754,11 @@ class PanelAttributesController:
         thickness_rules.save_rules(root, rules_payload)
         overwrite = bool((payload or {}).get("overwrite"))
 
-        records, _counts, diagnostics = metadata_inspector.scan_panel_metadata(
-            root, zone_filter=str((payload or {}).get("zoneFilter") or "all").strip().lower() or "all"
+        zone_filter = str((payload or {}).get("zoneFilter") or "all").strip().lower() or "all"
+        # Nesting/light scan is enough: classification + identity for write path.
+        # Full face-overlay scan was the dominant cost (and was run twice).
+        records, counts, diagnostics = metadata_inspector.scan_panel_metadata(
+            root, zone_filter=zone_filter, detail="nesting"
         )
         updated = 0
         skipped = 0
@@ -1949,12 +3787,26 @@ class PanelAttributesController:
                 thickness_note = " t={:.2f}mm".format(float(entry["measuredThicknessMm"]))
             warnings.append("{}{}: {}".format(name, thickness_note, reason))
 
+        def _sync_record_board_type(record, working, match_tag, measured):
+            """Refresh in-memory scan row so UI need not re-scan the design."""
+            record["metadata"] = working
+            record["boardTypeTag"] = match_tag
+            record["measuredThicknessMm"] = measured
+            derived = dict(record.get("derivedTags") or {})
+            derived["boardTypeTag"] = match_tag
+            record["derivedTags"] = derived
+            typed = dict(record.get("typedTags") or {})
+            typed["boardTypeTag"] = match_tag
+            record["typedTags"] = typed
+
         for record in records:
             if "body" not in str(record.get("entityKind") or "").lower():
                 continue
             # Always re-measure with current rules so we prefer candidates that
             # match (avoids stale 14.5 face/bbox under-reads when CPT is 15).
-            body, measure_warnings = self._body_from_metadata_record(root, record)
+            body, measure_warnings = self._body_from_metadata_record(
+                root, record, prefer_path=True
+            )
             for warning in measure_warnings:
                 warnings.append(warning)
             meta = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
@@ -2005,8 +3857,16 @@ class PanelAttributesController:
             if not body:
                 _skip(record, "could not resolve Fusion body", measured=measured)
                 continue
-            existing = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
-            # Prefer scan-derived tags on the record when metadata is thin.
+            # Write against full stored metadata (nesting scan drops faceRegistry /
+            # SVG). Never rewrite a slim scan copy back onto the body.
+            stored, _read_err = tag_metadata_editor._read_body_metadata_raw(body)
+            existing = stored if isinstance(stored, dict) else {}
+            if not existing:
+                existing = (
+                    dict(record.get("metadata"))
+                    if isinstance(record.get("metadata"), dict)
+                    else {}
+                )
             if isinstance(record.get("derivedTags"), dict):
                 existing = dict(existing)
                 existing["derivedTags"] = dict(record.get("derivedTags") or {})
@@ -2041,21 +3901,25 @@ class PanelAttributesController:
                     measured=measured,
                 )
                 continue
-            working, changed = thickness_rules.apply_rule_to_metadata(existing, match, overwrite=overwrite)
+            working, changed = thickness_rules.apply_rule_to_metadata(
+                existing, match, overwrite=overwrite
+            )
             if not changed:
                 # Same values already present (including after filling unknowns).
                 updated += 1
                 continue
             try:
                 tag_metadata_editor._write_body_metadata(body, working)
+                _sync_record_board_type(record, working, match_tag, measured)
                 updated += 1
             except Exception as ex:
                 _skip(record, "write failed: {}".format(ex), measured=measured)
 
-        # Re-scan so UI list reflects written attrs.
-        records, counts, diagnostics = metadata_inspector.scan_panel_metadata(
-            root, zone_filter=str((payload or {}).get("zoneFilter") or "all").strip().lower() or "all"
-        )
+        # No second full scan — records above already reflect writes for the UI list.
+        if isinstance(diagnostics, dict):
+            diagnostics = dict(diagnostics)
+            diagnostics["scanDetail"] = "nesting"
+            diagnostics["rescanAfterWrite"] = False
         return "panelAttributesResult", {
             "ok": True,
             "action": "applyThicknessClassification",
@@ -2065,6 +3929,8 @@ class PanelAttributesController:
             "records": records,
             "counts": counts,
             "diagnostics": diagnostics or {},
+            "zoneFilter": zone_filter,
+            "scanDetail": "nesting",
             "rules": rules_payload.get("rules") or [],
             "toleranceMm": rules_payload.get("toleranceMm"),
             "warnings": warnings[:40],
@@ -2841,8 +4707,9 @@ class PanelAttributesController:
     def revert_door_surfaces(self, _payload, _palette):
         """Manual front/back override → definite MILLING/NON_MILLING.
 
-        Face / body / edge selection: that body (any board, hinge or not,
-        EITHER or already oriented). Assembly selection: doors only.
+        Face / body / edge: fast path — only those bodies, pure role flip
+        (no assembly expand, no hinge/half-slot scan). Cost is O(selection).
+        Assembly / component: doors under the selection only (bulk path).
         Always locks face-up so Orient cannot write EITHER back over it.
         """
         root = self.fusion.get_root_component()
@@ -2861,44 +4728,39 @@ class PanelAttributesController:
                 "errors": ["Select a face (or door / parent assembly) first."],
             }
 
-        # Explicit picks (face/body/edge) → that body, no door filter.
-        # Bulk picks (occurrence/component) → doors only.
-        # Face picks also remember the face so EITHER/EITHER can commit colour.
         explicit_bodies = []
         preferred_faces = {}
-        bulk_bodies = []
         expand_warnings = []
         seen_explicit = set()
         for entity in selected_entities:
             kind = metadata_inspector._entity_kind(entity)
-            if kind in ("face", "body", "edge"):
-                body, _source = metadata_inspector._selection_owner_body(entity)
-                if not body:
-                    expand_warnings.append("Could not resolve body from selected {}.".format(kind))
-                    continue
-                if metadata_inspector._is_assembly_zone(body):
-                    expand_warnings.append("Skipped work-zone helper body.")
-                    continue
-                if metadata_inspector._is_nested_instance(body):
-                    expand_warnings.append("Skipped nested-instance copy (nesting output).")
-                    continue
-                key = metadata_inspector._body_key(body)
-                if key in seen_explicit:
-                    if kind == "face" and id(body) not in preferred_faces:
-                        preferred_faces[id(body)] = entity
-                    continue
-                seen_explicit.add(key)
-                explicit_bodies.append(body)
-                if kind == "face":
+            if kind not in ("face", "body", "edge"):
+                continue
+            body, _source = metadata_inspector._selection_owner_body(entity)
+            if not body:
+                expand_warnings.append("Could not resolve body from selected {}.".format(kind))
+                continue
+            if metadata_inspector._is_assembly_zone(body):
+                expand_warnings.append("Skipped work-zone helper body.")
+                continue
+            if metadata_inspector._is_nested_instance(body):
+                expand_warnings.append("Skipped nested-instance copy (nesting output).")
+                continue
+            key = metadata_inspector._body_key(body)
+            if key in seen_explicit:
+                if kind == "face" and id(body) not in preferred_faces:
                     preferred_faces[id(body)] = entity
-            else:
-                # Defer bulk expansion; collect entities first.
-                pass
+                continue
+            seen_explicit.add(key)
+            explicit_bodies.append(body)
+            if kind == "face":
+                preferred_faces[id(body)] = entity
 
         bulk_entities = [
             entity for entity in selected_entities
             if metadata_inspector._entity_kind(entity) not in ("face", "body", "edge")
         ]
+        bulk_bodies = []
         if bulk_entities:
             expanded, bulk_warnings = metadata_inspector.bodies_from_selected_entities(
                 bulk_entities, root
@@ -2918,20 +4780,154 @@ class PanelAttributesController:
                 "warnings": list(expand_warnings or [])[:20],
             }
 
-        def _is_door_body(body):
-            return metadata_inspector.body_looks_like_door(body)
+        def _write(body, milling, non_milling):
+            return tag_metadata_editor.apply_surface_milling_roles(
+                body,
+                milling,
+                non_milling,
+                source="manual",
+                lock=True,
+                force=True,
+            )
 
-        # Explicit face/body picks always qualify; bulk needs door filter.
-        explicit_ids = {id(body) for body in explicit_bodies}
+        updated = []
+        skipped = []
+        warnings = list(expand_warnings or [])
+        fast_path_count = 0
 
-        def _should_swap(body):
-            if id(body) in explicit_ids:
-                return True
-            return _is_door_body(body)
+        # Explicit picks: O(selection) flip — never hinge/slot, never door filter.
+        if explicit_bodies:
+            fast = milling_surface_propagation.flip_selected_body_milling(
+                explicit_bodies,
+                write_roles=_write,
+                preferred_faces=preferred_faces,
+            )
+            updated.extend(fast.get("updated") or [])
+            skipped.extend(fast.get("skipped") or [])
+            warnings.extend(fast.get("warnings") or [])
+            fast_path_count = int(fast.get("updatedCount") or 0)
 
-        bodies = list(explicit_bodies) + list(bulk_bodies)
+        # Assembly picks: doors only (may scan hinge/slot when roles are ambiguous).
+        if bulk_bodies:
+            bulk = milling_surface_propagation.swap_surface_roles(
+                bulk_bodies,
+                write_roles=_write,
+                is_door_body=metadata_inspector.body_looks_like_door,
+                preferred_faces={},
+            )
+            updated.extend(bulk.get("updated") or [])
+            skipped.extend(bulk.get("skipped") or [])
+            warnings.extend(bulk.get("warnings") or [])
 
-        result = milling_surface_propagation.swap_surface_roles(
+        skipped_non_door = sum(1 for item in skipped if item.get("reason") == "not_door")
+        updated_count = len(updated)
+        body_count = len(explicit_bodies) + len(bulk_bodies)
+        if updated_count:
+            message = (
+                "Swapped panel faces: updated {} (fast {}, assembly doors {}), skipped {}."
+                .format(
+                    updated_count,
+                    fast_path_count,
+                    max(0, updated_count - fast_path_count),
+                    len(skipped),
+                )
+            )
+        else:
+            message = "No panel surface was swapped."
+
+        return "panelAttributesResult", {
+            "ok": updated_count > 0,
+            "action": "revertDoorSurfaces",
+            "bodyCount": body_count,
+            "explicitCount": len(explicit_bodies),
+            "bulkCount": len(bulk_bodies),
+            "fastPathCount": fast_path_count,
+            "updatedCount": updated_count,
+            "skippedCount": len(skipped),
+            "skippedNonDoorCount": skipped_non_door,
+            "updated": updated,
+            "skipped": skipped[:40],
+            "warnings": warnings[:40],
+            "errors": [] if updated_count else [message],
+            "message": message,
+        }
+
+    def revert_selected_milling(self, _payload, _palette):
+        """Fast flip: selected face/body only — milling moves to the other broad face.
+
+        Explicitly ignores assemblies/components so cost stays O(selection), not
+        O(design board count). No hinge-cup or half-slot geometry scan.
+        """
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "revertSelectedMilling",
+                "errors": ["No active Fusion design."],
+            }
+
+        selected_entities = self._selected_entities()
+        if not selected_entities:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "revertSelectedMilling",
+                "errors": ["Select a body or face first (not a whole assembly)."],
+            }
+
+        bodies = []
+        preferred_faces = {}
+        warnings = []
+        seen = set()
+        ignored_bulk = 0
+        for entity in selected_entities:
+            kind = metadata_inspector._entity_kind(entity)
+            if kind not in ("face", "body", "edge"):
+                ignored_bulk += 1
+                continue
+            body, _source = metadata_inspector._selection_owner_body(entity)
+            if not body:
+                warnings.append("Could not resolve body from selected {}.".format(kind))
+                continue
+            if metadata_inspector._is_assembly_zone(body):
+                warnings.append("Skipped work-zone helper body.")
+                continue
+            if metadata_inspector._is_nested_instance(body):
+                warnings.append("Skipped nested-instance copy (nesting output).")
+                continue
+            key = metadata_inspector._body_key(body)
+            if key in seen:
+                if kind == "face" and id(body) not in preferred_faces:
+                    preferred_faces[id(body)] = entity
+                continue
+            seen.add(key)
+            bodies.append(body)
+            if kind == "face":
+                preferred_faces[id(body)] = entity
+
+        if ignored_bulk and not bodies:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "revertSelectedMilling",
+                "errors": [
+                    "Select a panel body or face. Whole assemblies are ignored "
+                    "so this stays fast (O(selection), not O(all boards))."
+                ],
+                "warnings": warnings[:20],
+            }
+        if not bodies:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "revertSelectedMilling",
+                "errors": ["No solid panel body found under the current selection."],
+                "warnings": warnings[:20],
+            }
+        if ignored_bulk:
+            warnings.append(
+                "Ignored {} assembly/component pick(s); only face/body/edge are flipped."
+                .format(ignored_bulk)
+            )
+
+        result = milling_surface_propagation.flip_selected_body_milling(
             bodies,
             write_roles=lambda body, milling, non_milling: (
                 tag_metadata_editor.apply_surface_milling_roles(
@@ -2943,24 +4939,488 @@ class PanelAttributesController:
                     force=True,
                 )
             ),
-            is_door_body=_should_swap,
             preferred_faces=preferred_faces,
         )
-        skipped = result.get("skipped") or []
-        skipped_non_door = sum(1 for item in skipped if item.get("reason") == "not_door")
-        warnings = list(expand_warnings or []) + list(result.get("warnings") or [])
+        warnings = warnings + list(result.get("warnings") or [])
         return "panelAttributesResult", {
             "ok": bool(result.get("ok")),
-            "action": "revertDoorSurfaces",
+            "action": "revertSelectedMilling",
             "bodyCount": len(bodies),
-            "explicitCount": len(explicit_bodies),
             "updatedCount": int(result.get("updatedCount") or 0),
-            "skippedCount": len(skipped),
-            "skippedNonDoorCount": skipped_non_door,
+            "skippedCount": int(result.get("skippedCount") or 0),
             "updated": result.get("updated") or [],
-            "skipped": skipped[:40],
+            "skipped": (result.get("skipped") or [])[:40],
             "warnings": warnings[:40],
-            "errors": [] if result.get("ok") else [result.get("message") or "No door surface was swapped."],
+            "errors": [] if result.get("ok") else [result.get("message") or "No milling face was flipped."],
+            "message": result.get("message") or "",
+        }
+
+    def reverse_milling_face(self, _payload, _palette):
+        """Flip milling/colour on selection; sync source; flip LAY_FLAT geometry.
+
+        - Body selection → complementary flip on that body.
+        - Face selection → selected broad face becomes colour (NON_MILLING),
+          opposite becomes MILLING.
+        - Lay Flat copy → also write the original via ``sourcePanelId``, then
+          rotate the LAY_FLAT body 180° about X so MILLING returns to +Z.
+        - Always force Analyze on affected LAY_FLAT bodies afterward.
+        """
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "reverseMillingFace",
+                "errors": ["No active Fusion design."],
+            }
+
+        selected_entities = self._selected_entities()
+        if not selected_entities:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "reverseMillingFace",
+                "errors": ["Select a body or face first (not a whole assembly)."],
+            }
+
+        def _write_roles(body, milling, non_milling):
+            return tag_metadata_editor.apply_surface_milling_roles(
+                body,
+                milling,
+                non_milling,
+                source="manual",
+                lock=True,
+                force=True,
+            )
+
+        bodies = []
+        preferred_faces = {}
+        warnings = []
+        seen = set()
+        ignored_bulk = 0
+        for entity in selected_entities:
+            kind = metadata_inspector._entity_kind(entity)
+            if kind not in ("face", "body", "edge"):
+                ignored_bulk += 1
+                continue
+            body, _source = metadata_inspector._selection_owner_body(entity)
+            if not body:
+                warnings.append("Could not resolve body from selected {}.".format(kind))
+                continue
+            if metadata_inspector._is_assembly_zone(body):
+                warnings.append("Skipped work-zone helper body.")
+                continue
+            # Allow Lay Flat; still skip Nesting layout workpieces.
+            if metadata_inspector._is_nested_instance(body) and not (
+                metadata_inspector._is_lay_flat_workpiece(body)
+            ):
+                warnings.append("Skipped Nesting layout copy (not Lay Flat).")
+                continue
+            key = metadata_inspector._body_key(body)
+            if key in seen:
+                if kind == "face" and id(body) not in preferred_faces:
+                    preferred_faces[id(body)] = entity
+                continue
+            seen.add(key)
+            bodies.append(body)
+            if kind == "face":
+                preferred_faces[id(body)] = entity
+
+        if ignored_bulk and not bodies:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "reverseMillingFace",
+                "errors": [
+                    "Select a panel body or face. Whole assemblies are ignored "
+                    "so this stays fast (O(selection), not O(all boards))."
+                ],
+                "warnings": warnings[:20],
+            }
+        if not bodies:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "reverseMillingFace",
+                "errors": ["No solid panel body found under the current selection."],
+                "warnings": warnings[:20],
+            }
+        if ignored_bulk:
+            warnings.append(
+                "Ignored {} assembly/component pick(s); only face/body/edge are flipped."
+                .format(ignored_bulk)
+            )
+
+        primary = milling_surface_propagation.flip_selected_body_milling(
+            bodies,
+            write_roles=_write_roles,
+            preferred_faces=preferred_faces,
+        )
+        warnings = warnings + list(primary.get("warnings") or [])
+
+        # Primary path: write milling roles back to sources now (no rebuild).
+        # One index walk O(N), then O(k) resolves — not O(k·N).
+        source_index = panel_body_resolver.build_original_body_index_by_panel_id(root)
+        source_bodies = []
+        source_seen = set()
+        source_updated = []
+        source_skipped = []
+        for body in bodies:
+            is_lay_flat = False
+            try:
+                is_lay_flat = bool(metadata_inspector._is_lay_flat_workpiece(body))
+            except Exception:
+                is_lay_flat = False
+            if not is_lay_flat:
+                # Selection already is (or includes) the assembly model body.
+                continue
+            source_panel_id = milling_surface_propagation.read_source_panel_id(body)
+            if not source_panel_id:
+                source_skipped.append({
+                    "bodyName": str(getattr(body, "name", "") or ""),
+                    "reason": "missing sourcePanelId on Lay Flat body",
+                })
+                continue
+            source_body = find_original_body_by_panel_id(
+                root, source_panel_id, index=source_index
+            )
+            if source_body is None:
+                source_skipped.append({
+                    "bodyName": str(getattr(body, "name", "") or ""),
+                    "reason": "source body not found for panelId={}".format(source_panel_id),
+                })
+                continue
+            source_key = metadata_inspector._body_key(source_body)
+            if source_key in source_seen:
+                continue
+            # Avoid double-writing if the original was also in the selection.
+            if source_key in seen:
+                continue
+            source_seen.add(source_key)
+            source_bodies.append(source_body)
+
+        source_result = {"updated": [], "skipped": [], "updatedCount": 0, "skippedCount": 0}
+        if source_bodies:
+            # Complementary flip on the original (no preferred face — tokens differ).
+            source_result = milling_surface_propagation.flip_selected_body_milling(
+                source_bodies,
+                write_roles=_write_roles,
+                preferred_faces=None,
+            )
+            warnings = warnings + list(source_result.get("warnings") or [])
+            source_updated = list(source_result.get("updated") or [])
+            source_skipped = source_skipped + list(source_result.get("skipped") or [])
+
+        updated_count = int(primary.get("updatedCount") or 0)
+        source_updated_count = int(source_result.get("updatedCount") or 0)
+        skipped_names = {
+            str(item.get("bodyName") or "")
+            for item in (primary.get("skipped") or [])
+        }
+        ok = updated_count > 0 or source_updated_count > 0
+
+        # After role swap, physically flip LAY_FLAT copies 180° so MILLING
+        # returns to +Z (tag-only reverse leaves the board upside_down).
+        geometry_flipped = []
+        geometry_failed = []
+        analyze_targets = []
+        analyze_seen = set()
+
+        def _queue_analyze(body):
+            if body is None:
+                return
+            key = metadata_inspector._body_key(body)
+            if key in analyze_seen:
+                return
+            analyze_seen.add(key)
+            analyze_targets.append(body)
+
+        def _geometry_flip_lay_flat(body):
+            result = nesting_lay_flat_fusion.flip_lay_flat_body_thickness(body)
+            if result.get("ok"):
+                geometry_flipped.append(result)
+                _queue_analyze(body)
+            else:
+                geometry_failed.append(result)
+                warnings.append(
+                    "{}: {}".format(
+                        result.get("bodyName") or "body",
+                        result.get("reason") or "geometry_flip_failed",
+                    )
+                )
+
+        if ok:
+            flipped_source_panel_ids = set()
+            for body in bodies:
+                body_name = str(getattr(body, "name", "") or "")
+                if body_name and body_name in skipped_names:
+                    continue
+                is_lay_flat = False
+                try:
+                    is_lay_flat = bool(metadata_inspector._is_lay_flat_workpiece(body))
+                except Exception:
+                    is_lay_flat = False
+                if is_lay_flat:
+                    _geometry_flip_lay_flat(body)
+                    continue
+                panel_id = ""
+                try:
+                    panel_id = str(
+                        panel_body_resolver.read_body_panel_id(body) or ""
+                    ).strip()
+                except Exception:
+                    panel_id = ""
+                if panel_id:
+                    flipped_source_panel_ids.add(panel_id)
+
+            # Original-model selection: also role-flip + geometry-flip matching
+            # LAY_FLAT copies so Export Ready faces_up stays consistent.
+            if flipped_source_panel_ids:
+                linked_lay_flat = []
+                for lay_flat_body in nesting_lay_flat_face_up.collect_lay_flat_bodies(root):
+                    source_id = milling_surface_propagation.read_source_panel_id(
+                        lay_flat_body
+                    )
+                    if source_id not in flipped_source_panel_ids:
+                        continue
+                    key = metadata_inspector._body_key(lay_flat_body)
+                    if key in analyze_seen or key in seen:
+                        # Already geometry-flipped as a direct selection.
+                        if key in seen:
+                            _queue_analyze(lay_flat_body)
+                        continue
+                    linked_lay_flat.append(lay_flat_body)
+                if linked_lay_flat:
+                    linked_result = milling_surface_propagation.flip_selected_body_milling(
+                        linked_lay_flat,
+                        write_roles=_write_roles,
+                        preferred_faces=None,
+                    )
+                    warnings = warnings + list(linked_result.get("warnings") or [])
+                    linked_skipped = {
+                        str(item.get("bodyName") or "")
+                        for item in (linked_result.get("skipped") or [])
+                    }
+                    for lay_flat_body in linked_lay_flat:
+                        name = str(getattr(lay_flat_body, "name", "") or "")
+                        if name and name in linked_skipped:
+                            continue
+                        _geometry_flip_lay_flat(lay_flat_body)
+
+        # Re-stamp boardType/color from the assembly source when Reverse /
+        # MoveFeature left a sparse Lay Flat metadata shell.
+        classification_restored = []
+        for lay_flat_body in analyze_targets:
+            source_panel_id = milling_surface_propagation.read_source_panel_id(
+                lay_flat_body
+            )
+            if not source_panel_id:
+                continue
+            source_body = find_original_body_by_panel_id(
+                root, source_panel_id, index=source_index
+            )
+            if source_body is None:
+                continue
+            restore = nesting_lay_flat_fusion.sync_lay_flat_classification_from_source(
+                lay_flat_body, source_body
+            )
+            if restore.get("ok") and restore.get("changed"):
+                classification_restored.append(restore)
+            elif not restore.get("ok"):
+                warnings.append(
+                    "{}: classification restore {}".format(
+                        restore.get("bodyName") or "body",
+                        restore.get("reason") or "failed",
+                    )
+                )
+
+        analyze_summary = {
+            "analyzedCount": 0,
+            "skippedFreshCount": 0,
+            "failedCount": 0,
+            "bodyCount": 0,
+            "failed": [],
+        }
+        if ok and analyze_targets:
+            try:
+                analyze_result = nesting_lay_flat_analyze.analyze_lay_flat_bodies(
+                    analyze_targets,
+                    force=True,
+                    wait_callback=_pump_fusion_events,
+                )
+                analyze_summary = {
+                    "analyzedCount": int(analyze_result.get("analyzedCount") or 0),
+                    "skippedFreshCount": int(
+                        analyze_result.get("skippedFreshCount") or 0
+                    ),
+                    "failedCount": int(analyze_result.get("failedCount") or 0),
+                    "bodyCount": int(analyze_result.get("bodyCount") or 0),
+                    "failed": list(analyze_result.get("failed") or [])[:40],
+                }
+                warnings = warnings + list(analyze_result.get("warnings") or [])
+            except Exception as ex:
+                warnings.append("Analyze after reverse failed: {}".format(ex))
+                analyze_summary["failedCount"] = len(analyze_targets)
+                analyze_summary["bodyCount"] = len(analyze_targets)
+        elif ok and (updated_count or source_updated_count):
+            warnings.append(
+                "Reversed roles but no LAY_FLAT body found to flip/Analyze. "
+                "Run Lay Flat first, then Reverse again."
+            )
+
+        skipped_count = (
+            int(primary.get("skippedCount") or 0)
+            + len(source_skipped)
+            + len(geometry_failed)
+        )
+        message = (
+            "Reverse milling face: flipped {} selected · {} source · "
+            "geometry {} · skipped {}."
+            .format(
+                updated_count,
+                source_updated_count,
+                len(geometry_flipped),
+                skipped_count,
+            )
+        )
+        if ok:
+            message += " Analyze: built {} · failed {} / {}.".format(
+                int(analyze_summary.get("analyzedCount") or 0),
+                int(analyze_summary.get("failedCount") or 0),
+                int(analyze_summary.get("bodyCount") or 0),
+            )
+            if classification_restored:
+                message += " Restored tags on {} body(ies).".format(
+                    len(classification_restored)
+                )
+            if int(analyze_summary.get("failedCount") or 0) or geometry_failed:
+                ok = False
+        return "panelAttributesResult", {
+            "ok": ok,
+            "action": "reverseMillingFace",
+            "bodyCount": len(bodies),
+            "updatedCount": updated_count,
+            "sourceUpdatedCount": source_updated_count,
+            "geometryFlippedCount": len(geometry_flipped),
+            "geometryFailedCount": len(geometry_failed),
+            "classificationRestoredCount": len(classification_restored),
+            "skippedCount": skipped_count,
+            "analyzedCount": int(analyze_summary.get("analyzedCount") or 0),
+            "analyzeFailedCount": int(analyze_summary.get("failedCount") or 0),
+            "analyzeBodyCount": int(analyze_summary.get("bodyCount") or 0),
+            "analyzeFailed": analyze_summary.get("failed") or [],
+            "geometryFlipped": geometry_flipped[:40],
+            "geometryFailed": geometry_failed[:40],
+            "classificationRestored": classification_restored[:40],
+            "updated": primary.get("updated") or [],
+            "sourceUpdated": source_updated[:40],
+            "skipped": ((primary.get("skipped") or []) + source_skipped)[:40],
+            "warnings": warnings[:40],
+            "errors": [] if ok else [message if (skipped_count or analyze_summary.get("failedCount")) else "No milling face was flipped."],
+            "message": message,
+        }
+
+    def make_selected_faces_colour(self, _payload, _palette):
+        """Fast explicit override: selected broad face becomes the colour side.
+
+        Only face selections are accepted. Each selected body is classified
+        once; no component expansion, hinge detection, or slot extraction.
+        """
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "makeSelectedFacesColour",
+                "errors": ["No active Fusion design."],
+            }
+
+        selected_entities = self._selected_entities()
+        selected_faces = [
+            entity for entity in selected_entities
+            if metadata_inspector._entity_kind(entity) == "face"
+        ]
+        if not selected_faces:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "makeSelectedFacesColour",
+                "errors": ["Select one or more panel faces first."],
+            }
+
+        entries_by_key = {}
+        warnings = []
+        for face in selected_faces:
+            body, _source = metadata_inspector._selection_owner_body(face)
+            if not body:
+                warnings.append("Could not resolve body from a selected face.")
+                continue
+            if metadata_inspector._is_assembly_zone(body):
+                warnings.append("Skipped work-zone helper body.")
+                continue
+            if metadata_inspector._is_nested_instance(body):
+                warnings.append("Skipped nested-instance copy (nesting output).")
+                continue
+            key = metadata_inspector._body_key(body)
+            entry = entries_by_key.get(key)
+            if entry is None:
+                metadata, read_error = tag_metadata_editor._read_body_metadata_raw(body)
+                if read_error:
+                    warnings.append(
+                        "{}: metadata read failed ({}).".format(
+                            getattr(body, "name", "body"), read_error
+                        )
+                    )
+                    metadata = {}
+                defaults = (
+                    metadata.get("defaultAttributes")
+                    if isinstance(metadata, dict)
+                    and isinstance(metadata.get("defaultAttributes"), dict)
+                    else {}
+                )
+                registry = (
+                    metadata.get("faceRegistry")
+                    if isinstance(metadata, dict)
+                    and isinstance(metadata.get("faceRegistry"), dict)
+                    else {}
+                )
+                surface_mode = tag_metadata_editor.normalize_surface_mode_enum(
+                    defaults.get("surfaceMode")
+                    or registry.get("surfaceMode")
+                    or (metadata.get("surfaceMode") if isinstance(metadata, dict) else "")
+                )
+                entry = {
+                    "body": body,
+                    "faces": [],
+                    "surfaceMode": surface_mode,
+                }
+                entries_by_key[key] = entry
+            entry["faces"].append(face)
+
+        entries = list(entries_by_key.values())
+        result = milling_surface_propagation.make_selected_faces_colour(
+            entries,
+            write_roles=lambda body, milling, colour: (
+                tag_metadata_editor.apply_surface_milling_roles(
+                    body,
+                    milling,
+                    colour,
+                    source="manual",
+                    lock=True,
+                    force=True,
+                )
+            ),
+        )
+        warnings.extend(result.get("warnings") or [])
+        return "panelAttributesResult", {
+            "ok": bool(result.get("ok")),
+            "action": "makeSelectedFacesColour",
+            "bodyCount": len(entries),
+            "selectedFaceCount": len(selected_faces),
+            "updatedCount": int(result.get("updatedCount") or 0),
+            "doubleSidedCount": int(result.get("doubleSidedCount") or 0),
+            "skippedCount": int(result.get("skippedCount") or 0),
+            "updated": result.get("updated") or [],
+            "doubleSided": result.get("doubleSided") or [],
+            "skipped": (result.get("skipped") or [])[:40],
+            "warnings": warnings[:40],
+            "errors": [] if result.get("ok") else [
+                result.get("message") or "No selected face was changed."
+            ],
             "message": result.get("message") or "",
         }
 

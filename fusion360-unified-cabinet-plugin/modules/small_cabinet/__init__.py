@@ -1,0 +1,1 @@
+"""Small Cabinet Fusion module."""

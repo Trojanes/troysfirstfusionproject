@@ -1837,6 +1837,7 @@
       <div class="module" data-module="uShapeOverhead" data-ui-tier="formal" data-i18n-title="mod.uoh.sub" title="U形布局 · 三段吊柜"><span data-i18n="mod.uoh">U形吊柜</span><span class="module-sub" data-i18n="mod.uoh.sub">三段 · 俯视分区</span></div>
       <div class="module" data-module="kitchen" data-ui-tier="formal" data-i18n-title="mod.kitchen.sub" title="地柜列 · Preview"><span data-i18n="mod.kitchen">地柜</span><span class="module-sub" data-i18n="mod.kitchen.sub">地柜列 · Preview</span></div>
       <div class="module" data-module="lounge" data-ui-tier="formal" data-i18n-title="mod.lounge.sub" title="L型 · 一字 · Preview"><span data-i18n="mod.lounge">客厅柜</span><span class="module-sub" data-i18n="mod.lounge.sub">L型 · 一字 · Preview</span></div>
+      <div class="module" data-module="smallCabinet" data-ui-tier="formal" data-i18n-title="mod.sc.sub" title="简单箱体 · 侧开/抽屉"><span data-i18n="mod.sc">小柜</span><span class="module-sub" data-i18n="mod.sc.sub">简单箱体 · 侧开/抽屉</span></div>
       <div class="module disabled" data-module="tools" data-ui-tier="formal" data-i18n-title="mod.tools.title" title="预留 — 尚未开通"><span data-i18n="mod.tools">自动化工具</span><span class="module-sub" data-i18n="mod.tools.sub">未开通</span></div>
     </aside>
 
@@ -2045,13 +2046,13 @@
           <h3 data-i18n="kitchen.title.global">地柜全局设置</h3>
           <div class="card-body">
             <div class="kitchen-global-grid params-compact">
-              <label data-i18n="kitchen.length">长度 (X) <input id="kitchenLength" type="number" value="887"></label>
-              <label data-i18n="kitchen.depth">总深度 (Y) <input id="kitchenDepth" type="number" value="270"></label>
-              <label data-i18n="kitchen.height">高度 (Z) <input id="kitchenHeight" type="number" value="880"></label>
-              <label data-i18n="kitchen.material">板厚 <input id="kitchenMaterialThickness" type="number" value="15"></label>
+              <label data-i18n="kitchen.length">长度 (X) <input id="kitchenLength" type="number" value="887" step="0.1"></label>
+              <label data-i18n="kitchen.depth">总深度 (Y) <input id="kitchenDepth" type="number" value="270" step="0.1"></label>
+              <label data-i18n="kitchen.height">高度 (Z) <input id="kitchenHeight" type="number" value="880" step="0.1"></label>
+              <label data-i18n="kitchen.material">板厚 <input id="kitchenMaterialThickness" type="number" value="15" step="0.1"></label>
               <label data-i18n="kitchen.frontThickness">门板厚度 <input id="kitchenFrontThickness" type="number" value="16" step="0.1"></label>
               <label data-i18n="kitchen.frontClearance">门板间隙 <input id="kitchenFrontClearance" type="number" value="2.5" step="0.1"></label>
-              <label data-i18n="kitchen.bottomH">底部间隙高 <input id="kitchenBottomClearanceHeight" type="number" value="55"></label>
+              <label data-i18n="kitchen.bottomH">底部间隙高 <input id="kitchenBottomClearanceHeight" type="number" value="55" step="0.1"></label>
               <label><span data-i18n="kitchen.bottomStyle">底部样式</span>
                 <select id="kitchenBottomClearanceStyle">
                   <option value="style_1" selected data-i18n="kitchen.style1">样式 1</option>
@@ -2168,6 +2169,46 @@
               </select>
             </label>
             <div class="message" data-i18n="lounge.placeholder.drawerFlap">抽屉与翻门设置为界面占位，尚未影响几何。</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="module-panel" id="smallCabinetParamsPanel" data-module-panel="smallCabinet" hidden>
+        <div class="params-head">
+          <div class="params-head-title" data-i18n="sc.params.purpose.title">小柜参数</div>
+          <div class="params-head-hint" data-i18n="sc.params.purpose.desc">简单落地箱体；功能区仅侧开左/右与抽屉。</div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="sc.sec.shape">1. 柜体外形</h3>
+          <div class="card-body">
+            <div class="grid2">
+              <label><span data-i18n="sc.width">柜体宽度</span> <input id="scCabinetWidth" type="number" value="600" step="0.1"></label>
+              <label><span data-i18n="sc.height">柜体高度</span> <input id="scCabinetHeight" type="number" value="800" step="0.1"></label>
+            </div>
+            <div class="grid2">
+              <label><span data-i18n="sc.depth">柜体深度</span> <input id="scCabinetDepth" type="number" value="560" step="0.1"></label>
+              <label><span data-i18n="sc.cpt">柜体板厚</span> <input id="scPanelThickness" type="number" value="16" step="0.1"></label>
+            </div>
+            <div class="grid2">
+              <label><span data-i18n="sc.fpt">门板厚度</span> <input id="scFrontPanelThickness" type="number" value="16" step="0.1"></label>
+              <label><span data-i18n="sc.clearance">门缝</span> <input id="scFrontClearance" type="number" value="2.5" step="0.1"></label>
+            </div>
+            <label><span data-i18n="common.carcassColor">柜体颜色（双面）</span> <input id="scCarcassColor" type="text" value="White Stipple"></label>
+          </div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="sc.sec.sideColor">2. 侧板门板色</h3>
+          <div class="card-body">
+            <label><span><input id="scLeftSideDoorColor" type="checkbox" style="width:auto"> <span data-i18n="sc.leftDoorColor">左侧板用门板色</span></span></label>
+            <label><span><input id="scRightSideDoorColor" type="checkbox" style="width:auto"> <span data-i18n="sc.rightDoorColor">右侧板用门板色</span></span></label>
+          </div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="sc.sec.lock">3. 门锁</h3>
+          <div class="card-body">
+            <label><span><input id="scLocksEnabled" type="checkbox" checked style="width:auto"> <span data-i18n="sc.locksEnabled">启用侧开门锁孔</span></span></label>
+            <label><span data-i18n="sc.lockSideDistance">锁边距</span> <input id="scLockSideDistance" type="number" value="80" step="0.1"></label>
+            <div class="message" data-i18n="sc.lockJoineryHint">层板：深度 1/3 tongue；侧板：对应槽（宽±5、高±0.5）。</div>
           </div>
         </div>
       </div>
@@ -2565,8 +2606,8 @@
             </div>
             <div class="actions" style="gap:8px;align-items:flex-end;flex-wrap:wrap;">
               <label style="font-size:12px;"><span data-i18n="common.assembly">装配名</span> <input type="text" id="kitchenAssemblyName" placeholder="auto" style="width:140px;"></label>
-              <label style="font-size:12px;"><span data-i18n="common.originX">原点 X (mm)</span> <input type="number" id="kitchenOriginX" placeholder="auto" step="100" style="width:90px;"></label>
-              <label style="font-size:12px;"><span data-i18n="common.originY">原点 Y (mm)</span> <input type="number" id="kitchenOriginY" placeholder="auto" step="100" style="width:90px;"></label>
+              <label style="font-size:12px;"><span data-i18n="common.originX">原点 X (mm)</span> <input type="number" id="kitchenOriginX" placeholder="auto" step="0.1" style="width:90px;"></label>
+              <label style="font-size:12px;"><span data-i18n="common.originY">原点 Y (mm)</span> <input type="number" id="kitchenOriginY" placeholder="auto" step="0.1" style="width:90px;"></label>
               <label style="display:flex;align-items:center;gap:6px;margin:0;color:#6d7a8d;">
                 <input id="kitchenAddAsNewCabinet" type="checkbox" checked style="width:auto;">
                 <span data-i18n="kitchen.addAsNew">添加为新柜</span>
@@ -2749,6 +2790,68 @@
           </div>
         </div>
       </div>
+
+      <div class="module-panel" id="smallCabinetWorkspacePanel" data-module-panel="smallCabinet" hidden>
+        <div class="page-purpose">
+          <div class="page-purpose-title" data-i18n="sc.ws.purpose.title">小柜工作区</div>
+          <div class="page-purpose-desc" data-i18n="sc.ws.purpose.desc">按步骤：编辑功能区 → 生成数据 → Fusion 建体。v1 仅侧开与抽屉。</div>
+        </div>
+
+        <div class="ui-section">
+          <div class="ui-section-head">
+            <span class="ui-section-step">1</span>
+            <span class="ui-section-title" data-i18n="common.ws.s1.title">生成与建体</span>
+            <span class="ui-section-desc" data-i18n="common.ws.s1.desc">主操作：生成板件数据 → 在 Fusion 建体</span>
+          </div>
+          <div class="ui-section-body">
+            <div class="actions">
+              <button class="primary" id="scGenerateBtn" data-i18n="sc.gen">生成小柜数据</button>
+              <button class="ghost" id="scCreateFusionBodiesBtn" disabled data-i18n="sc.createBodies">创建 Fusion 实体</button>
+            </div>
+            <div class="actions" style="gap:8px;align-items:flex-end;">
+              <label style="font-size:12px;"><span data-i18n="common.assembly">装配名</span> <input type="text" id="scAssemblyName" placeholder="auto" style="width:160px;"></label>
+              <label style="font-size:12px;"><span data-i18n="common.originX">原点 X (mm)</span> <input type="number" id="scOriginX" placeholder="auto" step="100" style="width:110px;"></label>
+              <label style="font-size:12px;"><span data-i18n="common.originY">原点 Y (mm)</span> <input type="number" id="scOriginY" placeholder="auto" step="100" style="width:110px;"></label>
+            </div>
+          </div>
+        </div>
+
+        <div class="ui-section">
+          <div class="ui-section-head">
+            <span class="ui-section-step">2</span>
+            <span class="ui-section-title" data-i18n="common.ws.s2.title">分区编辑</span>
+            <span class="ui-section-desc" data-i18n="sc.ws.s2.desc">功能区自上而下；高度之和须等于柜高 − 2×板厚</span>
+          </div>
+          <div class="ui-section-body">
+            <div class="card">
+              <h3 data-i18n="sc.elev.title">正面立面与功能分区</h3>
+              <div class="card-body">
+                <div class="oh-editor-tools">
+                  <button class="ghost" id="scAddZoneBtn" data-i18n="sc.addZone">添加分区</button>
+                  <button class="ghost" id="scDeleteZoneBtn" data-i18n="sc.delZone">删除分区</button>
+                </div>
+                <div class="muted" id="scInteriorHint" style="margin-bottom:6px;"></div>
+                <div class="kitchen-front-elevation" id="scFrontElevation" data-i18n-empty="sc.elev.loading" data-empty="1">小柜正面预览加载中…</div>
+                <div id="scZoneList" style="margin-top:10px;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="ui-section">
+          <div class="ui-section-head">
+            <span class="ui-section-step">3</span>
+            <span class="ui-section-title" data-i18n="common.ws.s3.title">检查结果</span>
+            <span class="ui-section-desc" data-i18n="sc.ws.s3.desc">板件数量与分区摘要</span>
+          </div>
+          <div class="ui-section-body">
+            <div class="card">
+              <h3 data-i18n="sc.title.summary">摘要</h3>
+              <div class="card-body" id="scSummary" data-i18n-empty="sc.empty.summary" data-empty="1">生成后查看摘要。</div>
+            </div>
+          </div>
+        </div>
+      </div>
     </main>
 
     <aside class="validation">
@@ -2879,6 +2982,7 @@
               <label><span data-i18n="oh.zoneType">分区类型</span>
                 <select id="uohZoneType">
                   <option value="up_flap" data-i18n="oh.zone.upFlap">上翻门</option>
+                  <option value="rangehood_flap" data-i18n="oh.zone.rangehoodFlap">Rangehood 翻门</option>
                   <option value="fixed_panel" data-i18n="oh.zone.fixed">固定板</option>
                   <option value="open" data-i18n="oh.zone.open">开放格</option>
                 </select>
@@ -2887,6 +2991,27 @@
               <label><span data-i18n="oh.zoneX0">计算位置 X0 (mm)</span><input id="uohZoneX0" class="oh-readonly" readonly></label>
               <label><span data-i18n="oh.zoneX1">计算位置 X1 (mm)</span><input id="uohZoneX1" class="oh-readonly" readonly></label>
             </div>
+            <details id="uohRangehoodSettings" class="oh-advanced" hidden>
+              <summary data-i18n="oh.rangehood.settings">Rangehood 设置</summary>
+              <div class="oh-property-grid" style="margin-top:8px;">
+                <label><span data-i18n="oh.rangehood.preset">Preset</span>
+                  <select id="uohRangehoodPreset"><option value="NCE">NCE</option></select>
+                </label>
+                <label><span data-i18n="oh.rangehood.clearHeight">BP 至 RGHD_TOP 净高 (mm)</span>
+                  <input id="uohRangehoodClearHeight" type="number" min="1" step="1" value="75">
+                </label>
+                <label><span data-i18n="oh.rangehood.alignment">Cutout X 对齐</span>
+                  <select id="uohRangehoodAlignment">
+                    <option value="left" data-i18n="oh.rangehood.left">靠左</option>
+                    <option value="right" data-i18n="oh.rangehood.right">靠右</option>
+                  </select>
+                </label>
+                <label><span data-i18n="oh.rangehood.edgeOffset">靠边距离 X (mm)</span>
+                  <input id="uohRangehoodEdgeOffsetX" type="number" min="40" step="1" value="40">
+                </label>
+              </div>
+              <div class="message" style="margin-top:8px;" data-i18n="uoh.rangehood.sideOnlyHint">仅左/右臂可用；不进入转角，BACK 不支持。</div>
+            </details>
           </div>
         </div>
         <div class="card">
@@ -2951,6 +3076,23 @@
           <h3><span data-i18n="lounge.title.resultJson">客厅柜结果 (JSON)</span> <span class="pill pill-test" data-i18n="pill.test">测试</span></h3>
           <div class="card-body">
             <pre id="loungeResultBox" style="white-space:pre-wrap;margin:0;max-height:240px;overflow:auto" data-i18n-empty="lounge.empty.noPreview" data-empty="1">尚无预览。</pre>
+          </div>
+        </div>
+      </div>
+
+      <div class="module-panel" id="smallCabinetValidationPanel" data-module-panel="smallCabinet" hidden>
+        <div class="validation-head">
+          <div class="validation-head-title" data-i18n="sc.val.purpose.title">分区与校验</div>
+          <div class="validation-head-hint" data-i18n="sc.val.purpose.desc">查看错误与板件结果 JSON。</div>
+        </div>
+        <div class="card">
+          <h3 data-i18n="sc.errors">校验错误</h3>
+          <div class="card-body" id="scValidationErrors" data-i18n-empty="sc.empty.errors" data-empty="1">生成后查看错误。</div>
+        </div>
+        <div class="card ui-test-zone" data-ui-tier="test">
+          <h3><span data-i18n="sc.title.resultJson">小柜结果 (JSON)</span> <span class="pill pill-test" data-i18n="pill.test">测试</span></h3>
+          <div class="card-body">
+            <pre id="scResultBox" style="white-space:pre-wrap;margin:0;max-height:240px;overflow:auto" data-i18n-empty="sc.empty.noResult" data-empty="1">尚无结果。</pre>
           </div>
         </div>
       </div>
@@ -3577,11 +3719,12 @@
             <div class="card-body">
               <div style="display:flex;gap:14px;align-items:flex-start;">
                 <div style="flex:1;min-width:0;">
-                  <div class="attr-section-note"><strong>Writes immediately to unlocked panels.</strong> Geometry analysis for every selected body: hinge cups, then half-slots; no evidence → EITHER only when unassigned. Manual face-up locks are skipped. Select Milling Faces is read-only.</div>
+                  <div class="attr-section-note"><strong>Writes immediately to unlocked panels.</strong> Geometry analysis for every selected body: hinge cups, then half-slots; no evidence → EITHER only when unassigned. Manual face-up locks are skipped. Select Milling Faces is read-only. <strong>Revert Selected Body</strong> only flips the selected face/body (ignores whole assemblies) — milling moves to the opposite broad face, no design-wide scan.</div>
                   <div id="attrMillingAnalysisSummary" class="message" style="margin-top:8px;">Select bodies (or their parent assembly), then analyze.</div>
                   <div class="actions" style="margin-top:10px;">
                     <button type="button" class="primary" id="attrAnalyzeMillingBtn">Analyze Selection</button>
                     <button type="button" class="secondary" id="attrSelectMillingFacesBtn">Select Milling Faces</button>
+                    <button type="button" class="secondary" id="attrRevertSelectedMillingBtn" data-i18n="attr.btn.revertSelectedMilling">Revert Selected Body</button>
                   </div>
                 </div>
                 <div style="flex:1;min-width:0;">
@@ -3598,7 +3741,7 @@
           <div class="card">
             <h3>2. 自动分析 — 门板朝向</h3>
             <div class="card-body">
-              <div class="attr-section-note"><strong>Orient</strong> writes unlocked doors (hinge/slot first, then assembly/view; otherwise EITHER). <strong>Revert Panel Surface</strong> is a manual override on any selected panel — with or without hinge cups, symmetric or not — and always replaces EITHER with definite MILLING/NON_MILLING, then locks face-up until Reset to Auto. <strong>Select Colour Faces</strong> is read-only.</div>
+                  <div class="attr-section-note"><strong>Orient</strong> writes unlocked doors (hinge/slot first, then assembly/view; otherwise EITHER). <strong>Revert Panel Surface</strong>: face/body selection flips that board only (fast, no hinge/slot scan); assembly selection flips doors under it. Always writes definite MILLING/NON_MILLING and locks face-up until Reset to Auto. <strong>Select Colour Faces</strong> is read-only (still expands the selection).</div>
               <div style="margin-top:8px;font-size:12px;">
                 <label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;">
                   <input type="radio" name="attrOrientPointMode" value="auto" checked> Auto — centre of selection
@@ -3616,6 +3759,7 @@
               <div class="actions" style="margin-top:10px;">
                 <button type="button" class="primary" id="attrOrientDoorsBtn">Orient Selected Doors</button>
                 <button type="button" class="secondary" id="attrOrientSelectColourFacesBtn">Select Colour Faces</button>
+                <button type="button" class="secondary" id="attrMakeSelectedFacesColourBtn" data-i18n="attr.btn.makeSelectedFacesColour">Make Selected Face Color Face</button>
                 <button type="button" class="secondary" id="attrRevertDoorSurfacesBtn">还原板面（正反交换）</button>
                 <button type="button" class="secondary" id="attrOrientSelectConflictsBtn" hidden>Select Conflicts</button>
               </div>
@@ -3902,7 +4046,7 @@
         <div class="card">
           <h3>Nesting Ready Check / 排料准备检查</h3>
           <div class="card-body">
-            <div class="attr-section-note">Fast body-attribute check only (does not re-read every face). While Nesting runs, open <code>fusion360-unified-cabinet-plugin/nesting/nesting_runtime_profile.json</code> to see live phase timings (scan / prepare / create) even if the UI is still spinning.</div>
+            <div class="attr-section-note">Fast body-attribute check only (does not re-read every face). While Nesting runs, open <code>fusion360-unified-cabinet-plugin/nesting/nesting_runtime_profile.json</code> for live phase timings. Usage / unplaced board names go to <code>fusion360-unified-cabinet-plugin/logs/plugin_usage_latest.json</code> (history: <code>plugin_usage.jsonl</code>).</div>
             <div class="actions" style="margin-top:10px;">
               <button type="button" class="primary" id="nestingCheckReadyBtn">Check if all panels are Nesting Ready</button>
               <button type="button" class="secondary" id="nestingSelectNotReadyBtn" disabled>Select all not Nesting Ready</button>
@@ -3917,6 +4061,11 @@
             <div class="actions" style="margin-top:10px;">
               <button type="button" class="primary" id="nestingBuildOutlinesBtn">Build Nesting Outlines</button>
               <button type="button" class="ghost" id="nestingRebuildOutlinesBtn">Force Rebuild All</button>
+              <button type="button" class="ghost" id="nestingExportSnapshotBtn">Diagnostic: Export Selected Source</button>
+              <button type="button" class="ghost" id="nestingExportAllSnapshotBtn">Diagnostic: Export All Source</button>
+            </div>
+            <div class="attr-section-note" style="margin-top:8px;">
+              Source export is diagnostic only. Production .cnjob export is on the Toolpath page after Export Ready.
             </div>
             <div id="nestingBuildOutlinesSummary" class="message" style="margin-top:10px;">Build outlines before Create Layout.</div>
           </div>
@@ -3994,7 +4143,127 @@
       </aside>
     </div>
   </div>
-  <div class="blank-page page" id="page-toolpath" hidden>加工输出将在后续定义。</div>
+  <div class="attributes-page page" id="page-toolpath" hidden>
+    <div class="attributes-shell">
+      <div class="attributes-main">
+        <div class="card">
+          <h3>Lay Flat / 平铺加工面朝上</h3>
+          <div class="card-body">
+            <div class="attr-section-note">
+              Replaces the current Nesting Zone layout (<code>NESTING_LAYOUT</code>) with
+              machining-face-up copies in the <strong>same Nesting Zone</strong>, grouped by
+              board type in columns. Underside outlines stay clean for .cnjob export.
+              Names use <code>Assembly-Component</code>; panel metadata is preserved.
+            </div>
+            <div class="actions" style="margin-top:10px;">
+              <button type="button" class="primary" id="toolpathLayFlatBtn">Lay Flat</button>
+              <button type="button" id="toolpathCheckFacesUpBtn">Check Faces Up</button>
+              <button type="button" id="toolpathAnalyzeLayFlatBtn">Analyze Lay Flat</button>
+              <button type="button" id="toolpathExportReadyBtn">Export Ready</button>
+              <button type="button" id="toolpathSelectNotExportReadyBtn" disabled>Select Not Ready</button>
+            </div>
+            <div id="toolpathLayFlatSummary" class="message" style="margin-top:10px;">
+              Run Nesting Ready + Build Nesting Outlines first, then Lay Flat.
+              Builds one LAY_FLAT with bodies named Assembly-Component (fast path).
+            </div>
+            <div id="toolpathLayFlatGroups" style="margin-top:8px;"></div>
+            <div id="toolpathCheckFacesUpSummary" class="message" style="margin-top:8px;">
+              After Lay Flat: MILLING should face +Z, single-sided colour (NON_MILLING) −Z.
+            </div>
+            <div id="toolpathAnalyzeLayFlatSummary" class="message" style="margin-top:8px;">
+              After Check Faces Up: re-extract underside outline + features on LAY_FLAT for .cnjob export.
+            </div>
+            <div id="toolpathExportReadySummary" class="message" style="margin-top:8px;">
+              After Analyze: gate for .cnjob — Face Up, analyzed outline/features, thickness, classification.
+            </div>
+            <div id="toolpathExportReadyList" style="margin-top:6px;"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Tag Scan / LAY_FLAT 标签排查</h3>
+          <div class="card-body">
+            <div class="attr-section-note">
+              Read-only scan of <strong>selected LAY_FLAT</strong> bodies. Shows Board Type / Color / Cutting Face
+              (source + lock), dimensions, outline, features, face-up, and Export Ready blockers — same card style as Attributes Tag Scan.
+            </div>
+            <div class="actions" style="margin-top:10px;">
+              <button type="button" class="primary" id="toolpathTagScanLayFlatBtn">Tag Scan + Troubleshoot</button>
+              <button type="button" id="toolpathSelectMissingTagsBtn" disabled>Select Problems</button>
+            </div>
+            <div id="toolpathTagScanLayFlatSummary" class="message" style="margin-top:8px;">
+              Select LAY_FLAT panel(s), then scan. Select Problems keeps only the failing ones from that selection.
+            </div>
+            <div id="toolpathTagScanLayFlatList" style="margin-top:6px;"></div>
+            <details style="margin-top:10px;">
+              <summary>Raw JSON Debug</summary>
+              <pre id="toolpathTagScanLayFlatRawJson" style="white-space:pre-wrap;margin:10px 0 0;max-height:260px;overflow:auto">No scan yet.</pre>
+            </details>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Reverse Milling Face / 交换铣削面</h3>
+          <div class="card-body">
+            <div class="attr-section-note">
+              Select a <strong>body</strong> to flip MILLING ↔ NON_MILLING on its two broad faces.
+              Select a <strong>face</strong> to make that face colour (NON_MILLING) and the opposite face MILLING.
+              On <strong>LAY_FLAT</strong>: updates the original model, rotates the copy 180° so milling stays +Z, then force Analyze.
+            </div>
+            <div class="actions" style="margin-top:10px;">
+              <button type="button" class="primary" id="toolpathReverseMillingFaceBtn">Reverse Milling Face</button>
+            </div>
+            <div id="toolpathReverseMillingFaceSummary" class="message" style="margin-top:8px;">
+              Select a body or face, then reverse. Roles + geometry flip + Analyze.
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Edit LAY_FLAT Tags / 修改板材标签</h3>
+          <div class="card-body">
+            <div class="attr-section-note">
+              Select LAY_FLAT bodies or faces. Lists contain Board Type and Color values already used in this project.
+              Apply writes the selected LAY_FLAT bodies and their original model, then moves only the selected bodies
+              to the end of the matching <strong>Board Type + Color</strong> column. Other bodies stay where they are.
+            </div>
+            <div class="attributes-grid2" style="margin-top:10px;">
+              <label style="font-size:12px;">Board Type
+                <select id="toolpathLayFlatBoardTypeList" size="6" style="width:100%;height:130px;margin-top:4px;">
+                  <option value="">Load project values first</option>
+                </select>
+              </label>
+              <label style="font-size:12px;">Color
+                <select id="toolpathLayFlatColorList" size="6" style="width:100%;height:130px;margin-top:4px;">
+                  <option value="">Load project values first</option>
+                </select>
+              </label>
+            </div>
+            <div class="actions" style="margin-top:10px;">
+              <button type="button" id="toolpathLoadLayFlatTagsBtn">Load Selection + Lists</button>
+              <button type="button" class="primary" id="toolpathApplyLayFlatTagsBtn" disabled>Apply Tags + Move</button>
+            </div>
+            <div id="toolpathLayFlatTagsSummary" class="message" style="margin-top:8px;">
+              Select LAY_FLAT bodies, then load project Board Type and Color lists.
+            </div>
+            <div id="toolpathLayFlatTagsSelection" style="margin-top:6px;"></div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>Export / 导出</h3>
+          <div class="card-body">
+            <div class="attr-section-note">
+              Flow: Lay Flat → Check Faces Up → Analyze Lay Flat → Export Ready → Export.
+              Export validates all LAY_FLAT bodies again before the save dialog.
+            </div>
+            <div class="actions" style="margin-top:10px;">
+              <button type="button" class="primary" id="toolpathExportLayFlatBtn">Export LAY_FLAT → .cnjob</button>
+            </div>
+            <div id="toolpathExportSummary" class="message" style="margin-top:8px;">
+              Export is blocked unless every LAY_FLAT body is production-ready.
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div class="status" id="statusBar">
     <span id="statusText">Ready</span>
@@ -4060,6 +4329,7 @@
       dragStartX: 0,
       dragLeftStart: 0,
       dragRightStart: 0,
+      rangehood: { preset: "NCE", clearHeight: 75, alignment: "left", edgeOffsetX: 40 },
       zones: {
         LEFT: [
           { id: "uoh-left-1", type: "up_flap", width: 350 },
@@ -4266,12 +4536,239 @@
       lastViewBoxWidth: 860,
     };
 
+    const smallCabinetState = {
+      selectedZoneIndex: 0,
+      result: null,
+      zones: [
+        { id: "zone-1", type: "left_door", height: 400 },
+        { id: "zone-2", type: "drawer", height: 368 },
+      ],
+    };
+
+    function scRound1(value) {
+      const n = Number(value);
+      if (!Number.isFinite(n)) return 0;
+      return Math.round(n * 10) / 10;
+    }
+
+    function scNum(id, fallback) {
+      const el = document.getElementById(id);
+      const n = scRound1(el ? el.value : fallback);
+      return Number.isFinite(n) ? n : fallback;
+    }
+
+    function scInteriorHeight() {
+      return scRound1(scNum("scCabinetHeight", 800) - 2 * scNum("scPanelThickness", 16));
+    }
+
+    function scZoneHeightSum() {
+      return scRound1(smallCabinetState.zones.reduce((sum, z) => sum + scRound1(z.height), 0));
+    }
+
+    function scBalanceZoneHeights() {
+      const interior = scInteriorHeight();
+      const zones = smallCabinetState.zones;
+      if (!zones.length || interior <= 0) return;
+      const equal = scRound1(interior / zones.length);
+      zones.forEach((zone, index) => {
+        if (index < zones.length - 1) zone.height = equal;
+      });
+      const used = scRound1(zones.slice(0, -1).reduce((sum, z) => sum + scRound1(z.height), 0));
+      zones[zones.length - 1].height = scRound1(Math.max(0.1, interior - used));
+    }
+
+    function collectSmallCabinetParams() {
+      return {
+        cabinetWidth: scNum("scCabinetWidth", 600),
+        cabinetDepth: scNum("scCabinetDepth", 560),
+        cabinetHeight: scNum("scCabinetHeight", 800),
+        panelThickness: scNum("scPanelThickness", 16),
+        frontPanelThickness: scNum("scFrontPanelThickness", 16),
+        frontClearance: scNum("scFrontClearance", 2.5),
+        carcassColor: (document.getElementById("scCarcassColor")?.value || "White Stipple").trim(),
+        leftSideDoorColor: Boolean(document.getElementById("scLeftSideDoorColor")?.checked),
+        rightSideDoorColor: Boolean(document.getElementById("scRightSideDoorColor")?.checked),
+        locksEnabled: Boolean(document.getElementById("scLocksEnabled")?.checked),
+        lockSideDistance: scNum("scLockSideDistance", 80),
+        zones: smallCabinetState.zones.map((zone, index) => ({
+          id: zone.id || `zone-${index + 1}`,
+          type: zone.type,
+          height: scRound1(zone.height),
+        })),
+      };
+    }
+
+    function renderSmallCabinetZoneList() {
+      const host = document.getElementById("scZoneList");
+      const hint = document.getElementById("scInteriorHint");
+      if (hint) {
+        const interior = scInteriorHeight();
+        const sum = scZoneHeightSum();
+        const ok = Math.abs(sum - interior) <= 0.05;
+        hint.textContent = t("sc.interiorHint")
+          .replace("{interior}", String(interior))
+          .replace("{sum}", String(sum));
+        hint.style.color = ok ? "" : "var(--danger, #b00020)";
+      }
+      if (!host) return;
+      host.innerHTML = smallCabinetState.zones.map((zone, index) => {
+        const selected = index === smallCabinetState.selectedZoneIndex;
+        return `<div class="oh-zone-row" data-sc-zone="${index}" style="display:flex;gap:8px;align-items:center;margin:4px 0;padding:6px;border:1px solid ${selected ? "var(--accent,#2b6cb0)" : "var(--line,#ddd)"};border-radius:4px;">
+          <strong style="min-width:52px;">#${index + 1}</strong>
+          <select data-sc-type="${index}">
+            <option value="left_door" ${zone.type === "left_door" ? "selected" : ""}>${t("sc.zone.left")}</option>
+            <option value="right_door" ${zone.type === "right_door" ? "selected" : ""}>${t("sc.zone.right")}</option>
+            <option value="drawer" ${zone.type === "drawer" ? "selected" : ""}>${t("sc.zone.drawer")}</option>
+          </select>
+          <label style="display:flex;align-items:center;gap:4px;"><span>${t("sc.zoneHeight")}</span>
+            <input type="number" step="0.1" data-sc-height="${index}" value="${scRound1(zone.height)}" style="width:90px;">
+          </label>
+        </div>`;
+      }).join("");
+      host.querySelectorAll("[data-sc-zone]").forEach((row) => {
+        row.addEventListener("click", () => {
+          smallCabinetState.selectedZoneIndex = Number(row.dataset.scZone);
+          renderSmallCabinetUi();
+        });
+      });
+      host.querySelectorAll("[data-sc-type]").forEach((el) => {
+        el.addEventListener("change", (event) => {
+          const index = Number(el.dataset.scType);
+          smallCabinetState.zones[index].type = event.target.value;
+          smallCabinetState.selectedZoneIndex = index;
+          renderSmallCabinetElevation();
+        });
+      });
+      host.querySelectorAll("[data-sc-height]").forEach((el) => {
+        el.addEventListener("change", (event) => {
+          const index = Number(el.dataset.scHeight);
+          smallCabinetState.zones[index].height = scRound1(event.target.value);
+          smallCabinetState.selectedZoneIndex = index;
+          renderSmallCabinetUi();
+        });
+      });
+    }
+
+    function renderSmallCabinetElevation() {
+      const host = document.getElementById("scFrontElevation");
+      if (!host) return;
+      const W = scNum("scCabinetWidth", 600);
+      const H = scNum("scCabinetHeight", 800);
+      const CPT = scNum("scPanelThickness", 16);
+      const clearance = scNum("scFrontClearance", 2.5);
+      const zones = smallCabinetState.zones;
+      const scale = Math.min(280 / Math.max(W, 1), 360 / Math.max(H, 1));
+      const svgW = Math.max(120, W * scale + 40);
+      const svgH = Math.max(120, H * scale + 40);
+      const ox = 20;
+      const oy = 20;
+      let zTop = H - CPT;
+      const zoneRects = zones.map((zone, index) => {
+        const z0 = zTop - scRound1(zone.height);
+        const y = oy + (H - zTop) * scale;
+        const h = Math.max(1, scRound1(zone.height) * scale);
+        const selected = index === smallCabinetState.selectedZoneIndex;
+        const fill = zone.type === "drawer" ? "#dbeafe" : zone.type === "right_door" ? "#fef3c7" : "#e7f5e7";
+        const label = zone.type === "drawer" ? "D" : zone.type === "right_door" ? "R" : "L";
+        const rect = `<rect x="${ox + clearance * scale}" y="${y + clearance * scale}" width="${Math.max(1, (W - 2 * clearance) * scale)}" height="${Math.max(1, h - 2 * clearance * scale)}" fill="${fill}" stroke="${selected ? "#1d4ed8" : "#64748b"}" stroke-width="${selected ? 2 : 1}" data-sc-elev="${index}" style="cursor:pointer"/>
+          <text x="${ox + W * scale / 2}" y="${y + h / 2}" text-anchor="middle" dominant-baseline="middle" font-size="11" fill="#334155">${label} ${scRound1(zone.height)}</text>`;
+        zTop = z0;
+        return rect;
+      }).join("");
+      host.setAttribute("data-empty", "0");
+      host.innerHTML = `<svg width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}">
+        <rect x="${ox}" y="${oy}" width="${W * scale}" height="${H * scale}" fill="#f8fafc" stroke="#94a3b8"/>
+        <rect x="${ox}" y="${oy}" width="${W * scale}" height="${CPT * scale}" fill="#cbd5e1" stroke="#64748b"/>
+        <rect x="${ox}" y="${oy + (H - CPT) * scale}" width="${W * scale}" height="${CPT * scale}" fill="#cbd5e1" stroke="#64748b"/>
+        ${zoneRects}
+      </svg>`;
+      host.querySelectorAll("[data-sc-elev]").forEach((el) => {
+        el.addEventListener("click", () => {
+          smallCabinetState.selectedZoneIndex = Number(el.dataset.scElev);
+          renderSmallCabinetUi();
+        });
+      });
+    }
+
+    function renderSmallCabinetSummary(result) {
+      const host = document.getElementById("scSummary");
+      if (!host) return;
+      if (!result) {
+        host.setAttribute("data-empty", "1");
+        host.textContent = t("sc.empty.summary");
+        return;
+      }
+      const counts = result.debug?.boardCounts || {};
+      host.setAttribute("data-empty", "0");
+      host.innerHTML = `
+        <div>${t("sc.summary.boards")}: ${result.boards?.length || 0}
+          (sides ${counts.sides || 2}, back ${counts.back || 1}, top/bottom 2, middles ${counts.middles || 0}, fronts ${counts.fronts || 0})</div>
+        <div>${t("sc.summary.zones")}: ${(result.zones || []).map((z) => `${z.id}:${z.type}@${z.height}`).join(" · ") || "-"}</div>
+      `;
+    }
+
+    function renderSmallCabinetErrors(errors) {
+      const host = document.getElementById("scValidationErrors");
+      if (!host) return;
+      const list = Array.isArray(errors) ? errors : [];
+      if (!list.length) {
+        host.setAttribute("data-empty", "1");
+        host.textContent = t("sc.empty.errors");
+        return;
+      }
+      host.setAttribute("data-empty", "0");
+      host.innerHTML = list.map((e) => `<div class="message warn">${escapeHtml(e)}</div>`).join("");
+    }
+
+    function renderSmallCabinetUi() {
+      renderSmallCabinetZoneList();
+      renderSmallCabinetElevation();
+      const btn = document.getElementById("scCreateFusionBodiesBtn");
+      if (btn) btn.disabled = !smallCabinetState.result;
+    }
+
+    function renderSmallCabinetResult(result) {
+      smallCabinetState.result = result || null;
+      const box = document.getElementById("scResultBox");
+      if (box) {
+        box.setAttribute("data-empty", result ? "0" : "1");
+        box.textContent = result ? JSON.stringify(result, null, 2) : t("sc.empty.noResult");
+      }
+      renderSmallCabinetSummary(result);
+      renderSmallCabinetErrors(result?.validation?.errors || []);
+      const btn = document.getElementById("scCreateFusionBodiesBtn");
+      if (btn) btn.disabled = !result || (result.validation?.errors || []).length > 0;
+    }
+
+    function smallCabinetGenerate() {
+      const params = collectSmallCabinetParams();
+      document.getElementById("statusText").textContent = t("sc.status.generating");
+      fusionSend("smallCabinet.generate", { params });
+    }
+
+    function smallCabinetCreateFusionBodies() {
+      const params = collectSmallCabinetParams();
+      const assemblyName = (document.getElementById("scAssemblyName")?.value || "").trim();
+      const originX = document.getElementById("scOriginX")?.value;
+      const originY = document.getElementById("scOriginY")?.value;
+      const payload = {
+        params,
+        result: smallCabinetState.result,
+        assemblyName,
+        caseName: assemblyName || `SC_${Date.now()}`,
+      };
+      if (originX !== "" && originX != null) payload.originXMm = Number(originX);
+      if (originY !== "" && originY != null) payload.originYMm = Number(originY);
+      document.getElementById("statusText").textContent = t("sc.status.creatingBodies");
+      fusionSend("smallCabinet.createFusionRoughBodies", payload);
+    }
+
     function kitchenId(prefix) {
       return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
     }
 
     function kitchenEditableHeight() {
-      return Math.max(0, Number(kitchenState.globalSettings.height) - Number(kitchenState.globalSettings.bottomClearanceHeight));
+      return Math.max(0, kitchenRound1(Number(kitchenState.globalSettings.height) - Number(kitchenState.globalSettings.bottomClearanceHeight)));
     }
 
     function kitchenColumnIndex(columnId) {
@@ -4287,33 +4784,71 @@
       return { x0, x1: x0 + (Number(kitchenState.columns[index]?.width) || 0) };
     }
 
+    function kitchenRound1(value) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? Math.round(numeric * 10) / 10 : 0;
+    }
+
+    function kitchenFrontPanelXRange(index) {
+      const column = kitchenState.columns[index];
+      const range = kitchenColumnRange(index);
+      const settings = kitchenState.globalSettings;
+      const fc = Number(settings.frontClearance) || 2.5;
+      const cpt = Number(settings.materialThickness) || 15;
+      const fpt = Number(settings.frontThickness) || 16;
+      const columnHasFront = (item) => Boolean(item?.zones?.some((zone) => kitchenIsFrontPanelZone(zone.zoneType)));
+      let x0 = index === 0
+        ? fc
+        : columnHasFront(kitchenState.columns[index - 1]) ? range.x0 + fc / 2 : range.x0 - cpt / 2;
+      let x1 = index === kitchenState.columns.length - 1
+        ? (Number(settings.length) || 0) - fc
+        : columnHasFront(kitchenState.columns[index + 1]) ? range.x1 - fc / 2 : range.x1 + cpt / 2;
+      const outerOptions = (side) => {
+        const key = side === "left" ? "leftSidePanelOptions" : "rightSidePanelOptions";
+        const candidates = (column?.zones || []).filter((zone) => zone[key]);
+        const preferred = candidates.find((zone) => kitchenIsDoorZone(zone.zoneType))
+          || candidates.find((zone) => ["open", "custom"].includes(zone.zoneType))
+          || candidates[0];
+        return { ...kitchenDefaultSidePanelOptions(), ...(preferred?.[key] || {}) };
+      };
+      if (index === 0) {
+        const options = outerOptions("left");
+        if (options.frontVisible) x0 = (options.panelType === "door" ? fpt : cpt) + fc;
+      }
+      if (index === kitchenState.columns.length - 1) {
+        const options = outerOptions("right");
+        if (options.frontVisible) x1 = (Number(settings.length) || 0) - (options.panelType === "door" ? fpt : cpt) - fc;
+      }
+      return { x0, x1 };
+    }
+
     function kitchenTotalColumnWidth() {
       return kitchenState.columns.reduce((sum, column) => sum + (Number(column.width) || 0), 0);
     }
 
     function kitchenScaleColumnsToLength(newLength, oldTotal) {
-      const target = Math.max(1, Number(newLength) || 1);
+      const target = Math.max(1, kitchenRound1(newLength));
       const sourceTotal = Math.max(1, Number(oldTotal) || kitchenTotalColumnWidth() || target);
       let allocated = 0;
       kitchenState.columns.forEach((column, index) => {
         if (index === kitchenState.columns.length - 1) {
-          column.width = Math.max(1, target - allocated);
+          column.width = Math.max(1, kitchenRound1(target - allocated));
         } else {
-          column.width = Math.max(1, Math.round((Number(column.width) || 0) * target / sourceTotal));
-          allocated += column.width;
+          column.width = Math.max(1, kitchenRound1((Number(column.width) || 0) * target / sourceTotal));
+          allocated = kitchenRound1(allocated + column.width);
         }
       });
       const scale = target / sourceTotal;
       kitchenState.wheelAvoidances.forEach((avoidance) => {
-        avoidance.x0 = Math.round((Number(avoidance.x0) || 0) * scale);
-        avoidance.x1 = Math.round((Number(avoidance.x1) || 0) * scale);
+        avoidance.x0 = kitchenRound1((Number(avoidance.x0) || 0) * scale);
+        avoidance.x1 = kitchenRound1((Number(avoidance.x1) || 0) * scale);
       });
     }
 
     function kitchenZoneRange(column, zoneIndex) {
       const topZ = Number(kitchenState.globalSettings.height) || 0;
-      const z1 = topZ - column.zones.slice(0, zoneIndex).reduce((sum, zone) => sum + (Number(zone.height) || 0), 0);
-      return { z0: z1 - (Number(column.zones[zoneIndex]?.height) || 0), z1 };
+      const z1 = kitchenRound1(topZ - column.zones.slice(0, zoneIndex).reduce((sum, zone) => sum + (Number(zone.height) || 0), 0));
+      return { z0: kitchenRound1(z1 - (Number(column.zones[zoneIndex]?.height) || 0)), z1 };
     }
 
     function kitchenIsFrontPanelZone(type) {
@@ -4326,6 +4861,61 @@
 
     function kitchenIsDoorZone(type) {
       return ["left_door", "right_door", "double_door"].includes(type);
+    }
+
+    function kitchenIsSideDoorZone(type) {
+      return type === "left_door" || type === "right_door";
+    }
+
+    function kitchenStructuralDepthMm() {
+      const g = kitchenState.globalSettings || {};
+      return Math.max(0, (Number(g.depth) || 0) - (Number(g.frontThickness) || 16));
+    }
+
+    function kitchenColumnClearWidthMm(columnIndex) {
+      const column = kitchenState.columns[columnIndex];
+      if (!column) return 0;
+      const range = kitchenColumnRange(columnIndex);
+      const cpt = Number(kitchenState.globalSettings.materialThickness) || 15;
+      const isFirst = columnIndex === 0;
+      const isLast = columnIndex === kitchenState.columns.length - 1;
+      // Approximate clear opening: column width minus shared V panel thickness on each side.
+      // Outer door-side panels may differ; generator is authoritative.
+      const leftDeduct = isFirst ? cpt : cpt / 2;
+      const rightDeduct = isLast ? cpt : cpt / 2;
+      return Math.max(0, (Number(column.width) || 0) - leftDeduct - rightDeduct);
+    }
+
+    function kitchenColumnIntersectsWheelAvoidance(columnIndex) {
+      const range = kitchenColumnRange(columnIndex);
+      return (kitchenState.wheelAvoidances || []).some((avoidance) => {
+        const a0 = Number(avoidance.x0) || 0;
+        const a1 = Number(avoidance.x1) || 0;
+        return range.x0 < a1 && a0 < range.x1;
+      });
+    }
+
+    /** Washer B3+full-depth floor eligibility for palette gating (generator re-validates). */
+    function kitchenApplianceFloorGate(columnIndex, zoneIndex) {
+      const column = kitchenState.columns[columnIndex];
+      const zone = column?.zones?.[zoneIndex];
+      const isBottom = column && zoneIndex === column.zones.length - 1;
+      const sideDoor = kitchenIsSideDoorZone(zone?.zoneType);
+      const style1 = String(kitchenState.globalSettings.bottomClearanceStyle || "style_1") === "style_1";
+      const clearWidth = kitchenColumnClearWidthMm(columnIndex);
+      const structuralDepth = kitchenStructuralDepthMm();
+      const avoidanceHit = kitchenColumnIntersectsWheelAvoidance(columnIndex);
+      let blockReason = "";
+      if (!isBottom || !sideDoor) blockReason = "";
+      else if (!style1) blockReason = "style";
+      else if (avoidanceHit) blockReason = "avoidance";
+      else if (structuralDepth < 450) blockReason = "depth";
+      else if (clearWidth < 500) blockReason = "width";
+      return {
+        show: Boolean(isBottom && sideDoor),
+        enabled: Boolean(isBottom && sideDoor && style1 && !avoidanceHit && structuralDepth >= 450 && clearWidth >= 500),
+        blockReason,
+      };
     }
 
     function kitchenDefaultHingeSideDistance(longSide) {
@@ -4471,13 +5061,13 @@
     }
 
     function kitchenReadGlobalInputs() {
-      kitchenState.globalSettings.length = generalTallNumberValue("kitchenLength");
-      kitchenState.globalSettings.depth = generalTallNumberValue("kitchenDepth");
-      kitchenState.globalSettings.height = generalTallNumberValue("kitchenHeight");
-      kitchenState.globalSettings.materialThickness = generalTallNumberValue("kitchenMaterialThickness");
-      kitchenState.globalSettings.frontThickness = generalTallNumberValue("kitchenFrontThickness");
-      kitchenState.globalSettings.frontClearance = generalTallNumberValue("kitchenFrontClearance");
-      kitchenState.globalSettings.bottomClearanceHeight = generalTallNumberValue("kitchenBottomClearanceHeight");
+      kitchenState.globalSettings.length = kitchenRound1(generalTallNumberValue("kitchenLength"));
+      kitchenState.globalSettings.depth = kitchenRound1(generalTallNumberValue("kitchenDepth"));
+      kitchenState.globalSettings.height = kitchenRound1(generalTallNumberValue("kitchenHeight"));
+      kitchenState.globalSettings.materialThickness = kitchenRound1(generalTallNumberValue("kitchenMaterialThickness"));
+      kitchenState.globalSettings.frontThickness = kitchenRound1(generalTallNumberValue("kitchenFrontThickness"));
+      kitchenState.globalSettings.frontClearance = kitchenRound1(generalTallNumberValue("kitchenFrontClearance"));
+      kitchenState.globalSettings.bottomClearanceHeight = kitchenRound1(generalTallNumberValue("kitchenBottomClearanceHeight"));
       kitchenState.globalSettings.bottomClearanceStyle = document.getElementById("kitchenBottomClearanceStyle").value;
       kitchenState.globalSettings.ledGroove = document.getElementById("kitchenBottomStyle1LedGroove")?.checked !== false;
       kitchenState.globalSettings.lockEnabled = document.getElementById("kitchenLockEnabled").value === "true";
@@ -4486,7 +5076,7 @@
     }
 
     function kitchenStructuralDepthUi() {
-      return Math.max(0, Number(kitchenState.globalSettings.depth || 0) - Number(kitchenState.globalSettings.frontThickness || 0));
+      return Math.max(0, kitchenRound1(Number(kitchenState.globalSettings.depth || 0) - Number(kitchenState.globalSettings.frontThickness || 0)));
     }
 
     function loungeReadState() {
@@ -8175,6 +8765,7 @@
       column.zones.forEach((zone, zoneIndex) => {
         const zRange = kitchenZoneRange(column, zoneIndex);
         const isBottomZone = zoneIndex === column.zones.length - 1;
+        const belowZone = column.zones[zoneIndex + 1];
         if (!isBottomZone) {
           const isDividerZone = zone.zoneType === "drawer" || zone.zoneType === "down_flap";
           const isShelfZone = kitchenIsDoorZone(zone.zoneType) || ["open", "stove", "custom"].includes(zone.zoneType);
@@ -8182,11 +8773,19 @@
             boards.push({ z0: zRange.z0 - cpt / 2, z1: zRange.z0 + cpt / 2, kind: isDividerZone ? "drawer_divider" : "full_depth_shelf" });
           }
         }
+        if (zone.zoneType === "stove" && belowZone && kitchenIsFrontPanelZone(belowZone.zoneType)) {
+          const fullBottomZ = zRange.z0 - cpt / 2;
+          boards.push({ z0: fullBottomZ - cpt, z1: fullBottomZ, kind: "drawer_divider" });
+        }
         if (kitchenIsDoorZone(zone.zoneType) && zone.shelfEnabled !== false
             && Number(zone.height) >= 350
             && Number(zone.shelfHeight) > 0 && Number(zone.shelfHeight) < Number(zone.height)) {
           const shelfTopZ = zRange.z0 + Number(zone.shelfHeight);
           boards.push({ z0: shelfTopZ - cpt, z1: shelfTopZ, kind: "door_shelf" });
+        }
+        if (isBottomZone && zone.applianceFloorEnabled && kitchenIsSideDoorZone(zone.zoneType)) {
+          const bch = Math.max(0, Number(kitchenState.globalSettings.bottomClearanceHeight) || 0);
+          boards.push({ z0: bch, z1: bch + cpt, kind: "appliance_floor" });
         }
       });
       return boards.sort((a, b) => a.z0 - b.z0);
@@ -8210,7 +8809,7 @@
       const cpt = Math.max(0, Number(settings.materialThickness) || 0);
       const ch = Math.max(0, Number(settings.height) || 0);
       const vPanels = kitchenFrontVPanels();
-      const boardFill = { drawer_divider: "#8f98a8", full_depth_shelf: "#8f98a8", door_shelf: "#a9b2c0" };
+      const boardFill = { drawer_divider: "#8f98a8", full_depth_shelf: "#8f98a8", door_shelf: "#a9b2c0", appliance_floor: "#6f8f7a" };
       const selected = kitchenState.selection;
       const bottomH = Math.max(0, Number(settings.bottomClearanceHeight) || 0);
       const bottomY = yForZ(bottomH);
@@ -8237,6 +8836,37 @@
           if (zone.zoneType === "double_door") {
             const seamX = x + w / 2;
             rects.push(`<line x1="${seamX}" y1="${y + 6}" x2="${seamX}" y2="${y + h - 6}" stroke="#3b4a60" stroke-width="1.5" stroke-dasharray="5 4" pointer-events="none"></line>`);
+          }
+          const belowZone = column.zones[zoneIndex + 1];
+          if (zone.zoneType === "stove" && belowZone && kitchenIsFrontPanelZone(belowZone.zoneType)) {
+            const frontRange = kitchenFrontPanelXRange(columnIndex);
+            const splitZ = zRange.z0 - cpt / 2;
+            const topZ = ch - (Number(settings.frontClearance) || 2.5);
+            if (frontRange.x1 - frontRange.x0 >= 200 && topZ - splitZ > 30) {
+              const leftX0 = frontRange.x0;
+              const leftX1 = leftX0 + 100;
+              const rightX0 = frontRange.x1 - 100;
+              const rightX1 = frontRange.x1;
+              const px = (value) => pad + value * scaleX;
+              const leftPath = [
+                `M ${px(leftX0)} ${yForZ(splitZ)}`,
+                `L ${px(leftX1)} ${yForZ(splitZ)}`,
+                `L ${px(leftX1)} ${yForZ(topZ - 30)}`,
+                `L ${px(leftX1 - 20)} ${yForZ(topZ - 30)}`,
+                `L ${px(leftX1 - 20)} ${yForZ(topZ)}`,
+                `L ${px(leftX0)} ${yForZ(topZ)} Z`,
+              ].join(" ");
+              const rightPath = [
+                `M ${px(rightX0)} ${yForZ(splitZ)}`,
+                `L ${px(rightX1)} ${yForZ(splitZ)}`,
+                `L ${px(rightX1)} ${yForZ(topZ)}`,
+                `L ${px(rightX0 + 20)} ${yForZ(topZ)}`,
+                `L ${px(rightX0 + 20)} ${yForZ(topZ - 30)}`,
+                `L ${px(rightX0)} ${yForZ(topZ - 30)} Z`,
+              ].join(" ");
+              solidOverlays.push(`<path d="${leftPath}" fill="#d6b98c" stroke="#5b6575" stroke-width="1" pointer-events="none"></path>`);
+              solidOverlays.push(`<path d="${rightPath}" fill="#d6b98c" stroke="#5b6575" stroke-width="1" pointer-events="none"></path>`);
+            }
           }
           if (!clearMode && kitchenIsDoorZone(zone.zoneType) && zone.shelfEnabled !== false && Number(zone.shelfHeight) > 0 && Number(zone.shelfHeight) < Number(zone.height)) {
             const shelfZ = zRange.z0 + Number(zone.shelfHeight);
@@ -8267,7 +8897,9 @@
           });
           const gaps = [];
           let gapCursor = bottomH + cpt;
-          const segEnd = ch - cpt;
+          // Stove is always the top zone and has no top CPT closing board:
+          // its clear opening measures directly to cabinet top.
+          const segEnd = column.zones[0]?.zoneType === "stove" ? ch : ch - cpt;
           boards.forEach((item) => {
             if (item.z0 > gapCursor + 0.5) gaps.push({ z0: gapCursor, z1: item.z0 });
             gapCursor = Math.max(gapCursor, item.z1);
@@ -8283,7 +8915,11 @@
       if (clearMode) {
         const boardPx = Math.max(1.5, cpt * scaleZ);
         solidOverlays.push(`<rect x="${pad}" y="${yForZ(bottomH + cpt)}" width="${innerW}" height="${boardPx}" fill="#8f98a8" stroke="#5b6575" stroke-width="0.8" pointer-events="none"></rect>`);
-        solidOverlays.push(`<rect x="${pad}" y="${yForZ(ch)}" width="${innerW}" height="${boardPx}" fill="#8f98a8" stroke="#5b6575" stroke-width="0.8" pointer-events="none"></rect>`);
+        kitchenState.columns.forEach((column, columnIndex) => {
+          if (column.zones[0]?.zoneType === "stove") return;
+          const range = kitchenColumnRange(columnIndex);
+          solidOverlays.push(`<rect x="${pad + range.x0 * scaleX}" y="${yForZ(ch)}" width="${Math.max(1, (range.x1 - range.x0) * scaleX)}" height="${boardPx}" fill="#8f98a8" stroke="#5b6575" stroke-width="0.8" pointer-events="none"></rect>`);
+        });
         vPanels.forEach((panel) => {
           const vx = pad + panel.x0 * scaleX;
           const vw = Math.max(1.5, (panel.x1 - panel.x0) * scaleX);
@@ -8350,9 +8986,9 @@
         badge.textContent = tf("kitchen.sel.column", { n: columnIndex + 1, type: kitchenTypeLabel(column?.columnType) });
         host.innerHTML = `
           <label>${t("kitchen.prop.columnType")} <select id="kitchenPropColumnType">${kitchenTypeOptions.map((type) => `<option value="${type}" ${column?.columnType === type ? "selected" : ""}>${kitchenTypeLabel(type)}</option>`).join("")}</select></label>
-          <label>${t("kitchen.prop.width")} <input id="kitchenPropColumnWidth" type="number" value="${escapeHtml(column?.width ?? 0)}"></label>
-          <label>${t("kitchen.prop.x0")} <input class="oh-readonly" readonly value="${escapeHtml(Math.round(range.x0))}"></label>
-          <label>${t("kitchen.prop.x1")} <input class="oh-readonly" readonly value="${escapeHtml(Math.round(range.x1))}"></label>
+          <label>${t("kitchen.prop.width")} <input id="kitchenPropColumnWidth" type="number" step="0.1" value="${escapeHtml(column?.width ?? 0)}"></label>
+          <label>${t("kitchen.prop.x0")} <input class="oh-readonly" readonly value="${escapeHtml(kitchenRound1(range.x0))}"></label>
+          <label>${t("kitchen.prop.x1")} <input class="oh-readonly" readonly value="${escapeHtml(kitchenRound1(range.x1))}"></label>
           <div class="mini-actions"><button id="kitchenMoveColumnLeft">${t("kitchen.prop.moveLeft")}</button><button id="kitchenMoveColumnRight">${t("kitchen.prop.moveRight")}</button></div>`;
       } else if (selection.type === "zone") {
         const columnIndex = kitchenColumnIndex(selection.columnId);
@@ -8371,11 +9007,15 @@
           sideApplicability.left ? renderKitchenSidePanelOptionsGroup(zone, "left", isDoorZone, column) : "",
           sideApplicability.right ? renderKitchenSidePanelOptionsGroup(zone, "right", isDoorZone, column) : "",
         ].join("");
+        const applianceFloorGate = kitchenApplianceFloorGate(columnIndex, zoneIndex);
+        if (zone?.applianceFloorEnabled && (!applianceFloorGate.show || !applianceFloorGate.enabled)) {
+          delete zone.applianceFloorEnabled;
+        }
         badge.textContent = tf("kitchen.sel.zone", { col: columnIndex + 1, zone: zoneIndex + 1, type: kitchenTypeLabel(zone?.zoneType) });
         host.innerHTML = `
           <label>${t("kitchen.prop.parentType")} <input class="oh-readonly" readonly value="${escapeHtml(kitchenTypeLabel(column?.columnType) || "")}"></label>
           <label>${t("kitchen.prop.zoneType")} <select id="kitchenPropZoneType">${["unassigned", ...kitchenTypeOptions].map((type) => `<option value="${type}" ${zone?.zoneType === type ? "selected" : ""}>${kitchenTypeLabel(type)}</option>`).join("")}</select></label>
-          <label>${t("kitchen.prop.zoneHeight")} <input id="kitchenPropZoneHeight" type="number" value="${escapeHtml(zone?.height ?? 0)}"></label>
+          <label>${t("kitchen.prop.zoneHeight")} <input id="kitchenPropZoneHeight" type="number" step="0.1" value="${escapeHtml(zone?.height ?? 0)}"></label>
           ${isDoorZone ? `
             <label>${t("kitchen.prop.shelfEnabled")}
               <select id="kitchenPropShelfEnabled">
@@ -8383,10 +9023,28 @@
                 <option value="false" ${zone?.shelfEnabled === false ? "selected" : ""}>${t("kitchen.prop.no")}</option>
               </select>
             </label>
-            ${zone?.shelfEnabled !== false ? `<label>${t("kitchen.prop.shelfTopH")} <input id="kitchenPropShelfHeight" type="number" min="0" value="${escapeHtml(zone?.shelfHeight ?? Math.round((Number(zone?.height) || 0) / 2))}"></label>` : ""}
+            ${zone?.shelfEnabled !== false ? `<label>${t("kitchen.prop.shelfTopH")} <input id="kitchenPropShelfHeight" type="number" min="0" step="0.1" value="${escapeHtml(zone?.shelfHeight ?? kitchenRound1((Number(zone?.height) || 0) / 2))}"></label>` : ""}
           ` : ""}
-          <div class="grid2"><label>X0 <input class="oh-readonly" readonly value="${escapeHtml(Math.round(xRange.x0))}"></label><label>X1 <input class="oh-readonly" readonly value="${escapeHtml(Math.round(xRange.x1))}"></label></div>
-          <div class="grid2"><label>Z0 <input class="oh-readonly" readonly value="${escapeHtml(Math.round(zRange.z0))}"></label><label>Z1 <input class="oh-readonly" readonly value="${escapeHtml(Math.round(zRange.z1))}"></label></div>
+          ${(() => {
+            if (!applianceFloorGate.show) return "";
+            const blockMsg = applianceFloorGate.blockReason === "avoidance" ? t("kitchen.prop.applianceFloorBlockedAvoidance")
+              : applianceFloorGate.blockReason === "depth" ? t("kitchen.prop.applianceFloorBlockedDepth")
+              : applianceFloorGate.blockReason === "width" ? t("kitchen.prop.applianceFloorBlockedWidth")
+              : applianceFloorGate.blockReason === "style" ? t("kitchen.prop.applianceFloorBlockedStyle")
+              : "";
+            return `
+            <label>${t("kitchen.prop.applianceFloor")}
+              <select id="kitchenPropApplianceFloor" ${applianceFloorGate.enabled ? "" : "disabled"}>
+                <option value="false" ${!zone?.applianceFloorEnabled ? "selected" : ""}>${t("kitchen.prop.no")}</option>
+                <option value="true" ${zone?.applianceFloorEnabled ? "selected" : ""}>${t("kitchen.prop.yes")}</option>
+              </select>
+            </label>
+            <div class="message" style="grid-column:1/-1;opacity:0.85;">${escapeHtml(t("kitchen.prop.applianceFloorHint"))}</div>
+            ${blockMsg ? `<div class="message warn" style="grid-column:1/-1;">${escapeHtml(blockMsg)}</div>` : ""}
+            `;
+          })()}
+          <div class="grid2"><label>X0 <input class="oh-readonly" readonly value="${escapeHtml(kitchenRound1(xRange.x0))}"></label><label>X1 <input class="oh-readonly" readonly value="${escapeHtml(kitchenRound1(xRange.x1))}"></label></div>
+          <div class="grid2"><label>Z0 <input class="oh-readonly" readonly value="${escapeHtml(kitchenRound1(zRange.z0))}"></label><label>Z1 <input class="oh-readonly" readonly value="${escapeHtml(kitchenRound1(zRange.z1))}"></label></div>
           ${isFrontPanelZone ? `
             <details open style="grid-column:1/-1;margin-top:8px;">
               <summary>${t("kitchen.prop.frontPanel")}</summary>
@@ -8427,7 +9085,7 @@
       } else if (selection.type === "bottom_clearance") {
         badge.textContent = t("kitchen.sel.bottom");
         host.innerHTML = `
-          <label>${t("kitchen.prop.bottomH")} <input id="kitchenPropBottomHeight" type="number" value="${escapeHtml(kitchenState.globalSettings.bottomClearanceHeight)}"></label>
+          <label>${t("kitchen.prop.bottomH")} <input id="kitchenPropBottomHeight" type="number" step="0.1" value="${escapeHtml(kitchenState.globalSettings.bottomClearanceHeight)}"></label>
           <label>${t("kitchen.prop.bottomStyle")}
             <select id="kitchenPropBottomStyle">
               <option value="style_1" ${kitchenState.globalSettings.bottomClearanceStyle === "style_1" ? "selected" : ""}>${t("kitchen.style1")}</option>
@@ -8441,10 +9099,10 @@
         const avoidance = kitchenState.wheelAvoidances.find((item) => item.id === selection.avoidanceId);
         badge.textContent = t("kitchen.sel.wheel");
         host.innerHTML = `
-          <label>X0 <input id="kitchenPropWheelX0" type="number" value="${escapeHtml(avoidance?.x0 ?? 0)}"></label>
-          <label>X1 <input id="kitchenPropWheelX1" type="number" value="${escapeHtml(avoidance?.x1 ?? 0)}"></label>
-          <label>${t("kitchen.wheel.height")} <input id="kitchenPropWheelHeight" type="number" value="${escapeHtml(avoidance?.height ?? 0)}"></label>
-          <label>${t("kitchen.wheel.depth")} <input id="kitchenPropWheelDepth" type="number" value="${escapeHtml(avoidance?.depth ?? 0)}"></label>
+          <label>X0 <input id="kitchenPropWheelX0" type="number" step="0.1" value="${escapeHtml(avoidance?.x0 ?? 0)}"></label>
+          <label>X1 <input id="kitchenPropWheelX1" type="number" step="0.1" value="${escapeHtml(avoidance?.x1 ?? 0)}"></label>
+          <label>${t("kitchen.wheel.height")} <input id="kitchenPropWheelHeight" type="number" step="0.1" value="${escapeHtml(avoidance?.height ?? 0)}"></label>
+          <label>${t("kitchen.wheel.depth")} <input id="kitchenPropWheelDepth" type="number" step="0.1" value="${escapeHtml(avoidance?.depth ?? 0)}"></label>
           <button id="kitchenDeleteWheelBtn">${t("kitchen.prop.delWheel")}</button>`;
       } else {
         badge.textContent = t("kitchen.sel.kitchen");
@@ -8550,6 +9208,7 @@
     }
 
     function renderKitchenUi() {
+      kitchenState.columns.forEach((column) => kitchenEnsureStoveTop(column));
       kitchenState.columns.forEach((column) => (column.zones || []).forEach((zone) => kitchenEnsureZoneHardwareDefaults(zone)));
       kitchenSyncGlobalInputsFromState();
       renderKitchenColumnStrip();
@@ -8754,6 +9413,7 @@
             zoneType: zone.zoneType,
             ...(zone.shelfEnabled != null ? { shelfEnabled: zone.shelfEnabled !== false } : {}),
             ...(zone.shelfHeight != null ? { shelfHeight: Number(zone.shelfHeight) || 0 } : {}),
+            ...(zone.applianceFloorEnabled ? { applianceFloorEnabled: true } : {}),
             ...(zone.lockEnabled != null ? { lockEnabled: zone.lockEnabled !== false } : {}),
             ...(zone.lockSideCenterOffset != null ? { lockSideCenterOffset: Number(zone.lockSideCenterOffset) || 80 } : {}),
             ...(zone.hingeSettings ? { hingeSettings: { ...zone.hingeSettings } } : {}),
@@ -8776,9 +9436,9 @@
         const sourceTotal = heights.reduce((sum, height) => sum + height, 0);
         let allocated = 0;
         return heights.map((height, index) => {
-          if (index === heights.length - 1) return Math.max(1, editableHeight - allocated);
-          const value = Math.max(1, Math.round(editableHeight * height / sourceTotal));
-          allocated += value;
+          if (index === heights.length - 1) return Math.max(1, kitchenRound1(editableHeight - allocated));
+          const value = Math.max(1, kitchenRound1(editableHeight * height / sourceTotal));
+          allocated = kitchenRound1(allocated + value);
           return value;
         });
       };
@@ -8805,7 +9465,7 @@
       }
       const zone = { id: kitchenId("k-zone"), height: editableHeight, zoneType: columnType };
       if (kitchenIsDoorZone(columnType)) {
-        zone.shelfHeight = Math.round(editableHeight / 2);
+        zone.shelfHeight = kitchenRound1(editableHeight / 2);
       }
       kitchenEnsureZoneHardwareDefaults(zone);
       return [zone];
@@ -8837,7 +9497,7 @@
         columnType,
         zones: createKitchenDefaultZones(columnType),
       });
-      kitchenState.globalSettings.length = kitchenState.columns.reduce((sum, column) => sum + (Number(column.width) || 0), 0);
+      kitchenState.globalSettings.length = kitchenRound1(kitchenState.columns.reduce((sum, column) => sum + (Number(column.width) || 0), 0));
       kitchenSelect({ type: "column", columnId: kitchenState.columns[kitchenState.columns.length - 1].id });
     }
 
@@ -8865,7 +9525,7 @@
         zones: source.zones.map((zone) => ({ ...zone, id: kitchenId("k-zone") })),
       };
       kitchenState.columns.splice(index + 1, 0, copy);
-      kitchenState.globalSettings.length += Number(copy.width) || 0;
+      kitchenState.globalSettings.length = kitchenRound1(kitchenState.globalSettings.length + (Number(copy.width) || 0));
       kitchenSelect({ type: "column", columnId: copy.id });
     }
 
@@ -8885,14 +9545,21 @@
       const zoneIndex = kitchenZoneIndex(column, selection.zoneId);
       if (!column || zoneIndex < 0) return;
       const zone = column.zones[zoneIndex];
-      const upper = Math.round((Number(zone.height) || 0) / 2);
-      const lower = (Number(zone.height) || 0) - upper;
+      const upper = kitchenRound1((Number(zone.height) || 0) / 2);
+      const lower = kitchenRound1((Number(zone.height) || 0) - upper);
       zone.height = upper;
       if (kitchenIsDoorZone(zone.zoneType) && Number(zone.shelfHeight) >= upper) {
-        zone.shelfHeight = Math.round(upper / 2);
+        zone.shelfHeight = kitchenRound1(upper / 2);
       }
       column.zones.splice(zoneIndex + 1, 0, { id: kitchenId("k-zone"), height: lower, zoneType: "unassigned" });
       kitchenSelect({ type: "zone", columnId: column.id, zoneId: column.zones[zoneIndex + 1].id });
+    }
+
+    function kitchenEnsureStoveTop(column) {
+      const stoveIndex = (column?.zones || []).findIndex((zone) => zone.zoneType === "stove");
+      if (stoveIndex <= 0) return;
+      const [stoveZone] = column.zones.splice(stoveIndex, 1);
+      column.zones.unshift(stoveZone);
     }
 
     function kitchenReconcileZoneHeightFields(zone) {
@@ -8920,7 +9587,7 @@
       const removedHeight = Number(zone.height) || 0;
       const receiver = column.zones[zoneIndex + 1] || column.zones[zoneIndex - 1];
       column.zones.splice(zoneIndex, 1);
-      receiver.height = (Number(receiver.height) || 0) + removedHeight;
+      receiver.height = kitchenRound1((Number(receiver.height) || 0) + removedHeight);
       kitchenReconcileZoneHeightFields(receiver);
       refreshKitchenColumnTypeFromZones(column);
       kitchenClearMachiningConflictState();
@@ -8958,7 +9625,7 @@
       const columnWidth = document.getElementById("kitchenPropColumnWidth");
       if (columnWidth) columnWidth.addEventListener("change", () => {
         const column = kitchenState.columns[kitchenColumnIndex(kitchenState.selection.columnId)];
-        if (column) column.width = Math.max(1, Number(columnWidth.value || 0));
+        if (column) column.width = Math.max(1, kitchenRound1(columnWidth.value));
         renderKitchenUi();
       });
       const moveLeft = document.getElementById("kitchenMoveColumnLeft");
@@ -8973,9 +9640,12 @@
         if (zone) {
           zone.zoneType = zoneType.value;
           if (kitchenIsDoorZone(zone.zoneType)) {
-            zone.shelfHeight = zone.shelfHeight == null ? Math.round((Number(zone.height) || 0) / 2) : Number(zone.shelfHeight) || 0;
+            zone.shelfHeight = zone.shelfHeight == null ? kitchenRound1((Number(zone.height) || 0) / 2) : kitchenRound1(zone.shelfHeight);
           } else {
             delete zone.shelfHeight;
+          }
+          if (!kitchenIsSideDoorZone(zone.zoneType)) {
+            delete zone.applianceFloorEnabled;
           }
           if (kitchenIsFrontPanelZone(zone.zoneType)) {
             kitchenEnsureZoneHardwareDefaults(zone);
@@ -8994,16 +9664,17 @@
         const zoneIndex = kitchenZoneIndex(column, kitchenState.selection.zoneId);
         if (!column || zoneIndex < 0) return;
         const zone = column.zones[zoneIndex];
-        const diff = Number(zoneHeight.value || 0) - (Number(zone.height) || 0);
+        const nextHeight = Math.max(1, kitchenRound1(zoneHeight.value));
+        const diff = nextHeight - (Number(zone.height) || 0);
         const neighbor = column.zones[zoneIndex + 1] || column.zones[zoneIndex - 1];
         if (neighbor) {
-          zone.height = Math.max(1, Number(zoneHeight.value || 0));
-          neighbor.height = Math.max(1, (Number(neighbor.height) || 0) - diff);
+          zone.height = nextHeight;
+          neighbor.height = Math.max(1, kitchenRound1((Number(neighbor.height) || 0) - diff));
         } else {
-          zone.height = Math.max(1, Number(zoneHeight.value || 0));
+          zone.height = nextHeight;
         }
         if (zone.shelfHeight != null) {
-          zone.shelfHeight = Math.max(0, Math.min(Number(zone.height) || 0, Number(zone.shelfHeight) || 0));
+          zone.shelfHeight = Math.max(0, Math.min(Number(zone.height) || 0, kitchenRound1(zone.shelfHeight)));
         }
         kitchenClearMachiningConflictState();
         renderKitchenUi();
@@ -9013,7 +9684,7 @@
         const column = kitchenState.columns[kitchenColumnIndex(kitchenState.selection.columnId)];
         const zone = column?.zones[kitchenZoneIndex(column, kitchenState.selection.zoneId)];
         if (!zone) return;
-        zone.shelfHeight = Math.max(0, Math.min(Number(zone.height) || 0, Number(shelfHeight.value || 0)));
+        zone.shelfHeight = Math.max(0, Math.min(Number(zone.height) || 0, kitchenRound1(shelfHeight.value)));
         kitchenClearMachiningConflictState();
         renderKitchenUi();
       });
@@ -9023,7 +9694,24 @@
         const zone = column?.zones[kitchenZoneIndex(column, kitchenState.selection.zoneId)];
         if (!zone) return;
         zone.shelfEnabled = shelfEnabled.value !== "false";
-        if (zone.shelfEnabled && zone.shelfHeight == null) zone.shelfHeight = Math.round((Number(zone.height) || 0) / 2);
+        if (zone.shelfEnabled && zone.shelfHeight == null) zone.shelfHeight = kitchenRound1((Number(zone.height) || 0) / 2);
+        kitchenClearMachiningConflictState();
+        renderKitchenUi();
+      });
+      const applianceFloor = document.getElementById("kitchenPropApplianceFloor");
+      if (applianceFloor) applianceFloor.addEventListener("change", () => {
+        const columnIndex = kitchenColumnIndex(kitchenState.selection.columnId);
+        const column = kitchenState.columns[columnIndex];
+        const zoneIndex = kitchenZoneIndex(column, kitchenState.selection.zoneId);
+        const zone = column?.zones[zoneIndex];
+        if (!zone) return;
+        const gate = kitchenApplianceFloorGate(columnIndex, zoneIndex);
+        if (!gate.enabled) {
+          delete zone.applianceFloorEnabled;
+        } else {
+          zone.applianceFloorEnabled = applianceFloor.value === "true";
+          if (!zone.applianceFloorEnabled) delete zone.applianceFloorEnabled;
+        }
         kitchenClearMachiningConflictState();
         renderKitchenUi();
       });
@@ -9040,7 +9728,7 @@
         const column = kitchenState.columns[kitchenColumnIndex(kitchenState.selection.columnId)];
         const zone = column?.zones[kitchenZoneIndex(column, kitchenState.selection.zoneId)];
         if (!zone) return;
-        zone.lockSideCenterOffset = Math.max(0, Number(lockSideOffset.value || 0));
+        zone.lockSideCenterOffset = Math.max(0, kitchenRound1(lockSideOffset.value));
         renderKitchenUi();
       });
       const hingeFields = [
@@ -9057,7 +9745,7 @@
           const zone = column?.zones[kitchenZoneIndex(column, kitchenState.selection.zoneId)];
           if (!zone) return;
           zone.hingeSettings = { ...kitchenDefaultHingeSettings(zone), ...(zone.hingeSettings || {}) };
-          zone.hingeSettings[field] = Number(input.value || 0);
+          zone.hingeSettings[field] = kitchenRound1(input.value);
           renderKitchenUi();
         });
       });
@@ -9094,17 +9782,17 @@
       const bottomHeight = document.getElementById("kitchenPropBottomHeight");
       if (bottomHeight) bottomHeight.addEventListener("change", () => {
         const oldEditable = kitchenEditableHeight();
-        kitchenState.globalSettings.bottomClearanceHeight = Math.max(0, Number(bottomHeight.value || 0));
+        kitchenState.globalSettings.bottomClearanceHeight = Math.max(0, kitchenRound1(bottomHeight.value));
         const newEditable = kitchenEditableHeight();
         const scale = oldEditable > 0 ? newEditable / oldEditable : 1;
         kitchenState.columns.forEach((column) => {
           let allocated = 0;
           column.zones.forEach((zone, index) => {
             if (index === column.zones.length - 1) {
-              zone.height = Math.max(1, newEditable - allocated);
+              zone.height = Math.max(1, kitchenRound1(newEditable - allocated));
             } else {
-              zone.height = Math.max(1, Math.round((Number(zone.height) || 0) * scale));
-              allocated += zone.height;
+              zone.height = Math.max(1, kitchenRound1((Number(zone.height) || 0) * scale));
+              allocated = kitchenRound1(allocated + zone.height);
             }
           });
         });
@@ -9132,7 +9820,7 @@
           const item = kitchenState.wheelAvoidances.find((avoidance) => avoidance.id === kitchenState.selection.avoidanceId);
           if (!item) return;
           const field = { X0: "x0", X1: "x1", Height: "height", Depth: "depth" }[name];
-          item[field] = Number(el.value || 0);
+          item[field] = kitchenRound1(el.value);
           renderKitchenUi();
         });
       });
@@ -9160,9 +9848,9 @@
       if (index == null) return;
       const delta = event.clientX - kitchenState.dragStartX;
       const total = kitchenState.dragFirstStart + kitchenState.dragSecondStart;
-      const left = Math.max(40, Math.min(total - 40, kitchenState.dragFirstStart + delta));
+      const left = Math.max(40, Math.min(total - 40, kitchenRound1(kitchenState.dragFirstStart + delta)));
       kitchenState.columns[index].width = left;
-      kitchenState.columns[index + 1].width = total - left;
+      kitchenState.columns[index + 1].width = kitchenRound1(total - left);
       renderKitchenUi();
     }
 
@@ -9191,9 +9879,9 @@
       if (!column) return;
       const delta = event.clientY - kitchenState.dragStartY;
       const total = kitchenState.dragFirstStart + kitchenState.dragSecondStart;
-      const first = Math.max(20, Math.min(total - 20, kitchenState.dragFirstStart + delta));
+      const first = Math.max(20, Math.min(total - 20, kitchenRound1(kitchenState.dragFirstStart + delta)));
       column.zones[drag.zoneIndex].height = first;
-      column.zones[drag.zoneIndex + 1].height = total - first;
+      column.zones[drag.zoneIndex + 1].height = kitchenRound1(total - first);
       renderKitchenUi();
     }
 
@@ -9731,6 +10419,7 @@
           savedAt: new Date().toISOString(),
           controls: presetReadControlsFromPanels(["uohParamsPanel", "uohWorkspacePanel"]),
           params: buildUohUiParams(),
+          rangehood: { ...(uShapeOverheadState.rangehood || {}) },
           zones: JSON.parse(JSON.stringify(uShapeOverheadState.zones)),
           selectedRunId: uShapeOverheadState.selectedRunId,
           selectedZoneIndex: uShapeOverheadState.selectedZoneIndex,
@@ -10108,6 +10797,9 @@
 
     function buildUohUiParams() {
       ["LEFT", "BACK", "RIGHT"].forEach(normalizeUohZones);
+      const rangehood = uShapeOverheadState.rangehood || (uShapeOverheadState.rangehood = {
+        preset: "NCE", clearHeight: 75, alignment: "left", edgeOffsetX: 40,
+      });
       return {
         style: "style_1",
         totalWidth: uohNumber("uohTotalWidth", 2275),
@@ -10127,6 +10819,10 @@
           BACK: Boolean(document.getElementById("uohLedBack")?.checked),
           RIGHT: Boolean(document.getElementById("uohLedRight")?.checked),
         },
+        rangehoodPreset: rangehood.preset || "NCE",
+        rangehoodClearHeight: Math.max(1, Number(rangehood.clearHeight) || 75),
+        rangehoodAlignment: rangehood.alignment === "right" ? "right" : "left",
+        rangehoodEdgeOffsetX: Math.max(40, Number(rangehood.edgeOffsetX) || 40),
         zones: JSON.parse(JSON.stringify(uShapeOverheadState.zones)),
       };
     }
@@ -10134,6 +10830,13 @@
     function uohParamsForModel(uiParams) {
       // The Fusion assembly's stable coordinate IDs are opposite the
       // front-view LEFT/RIGHT convention used by the palette.
+      //
+      // Zone order is corner→tip in the UI for both arms. Model LEFT local +X
+      // also runs corner→tip, but model RIGHT local +X runs tip→corner (because
+      // of the -90° pose). So UI LEFT zones must be reversed when placed on
+      // model RIGHT; UI RIGHT zones map to model LEFT without reversing.
+      const uiLeftZones = JSON.parse(JSON.stringify(uiParams.zones?.LEFT || []));
+      const uiRightZones = JSON.parse(JSON.stringify(uiParams.zones?.RIGHT || []));
       return {
         ...uiParams,
         leftArmLength: uiParams.rightArmLength,
@@ -10144,9 +10847,9 @@
           RIGHT: uiParams.runLedGroove?.LEFT,
         },
         zones: {
-          LEFT: JSON.parse(JSON.stringify(uiParams.zones?.RIGHT || [])),
+          LEFT: uiRightZones,
           BACK: JSON.parse(JSON.stringify(uiParams.zones?.BACK || [])),
-          RIGHT: JSON.parse(JSON.stringify(uiParams.zones?.LEFT || [])),
+          RIGHT: uiLeftZones.reverse(),
         },
       };
     }
@@ -10275,6 +10978,7 @@
       const selected = selectedUohZoneBound();
       if (!selected) return;
       const { zone, index, x0, x1, width } = selected;
+      const runId = uShapeOverheadState.selectedRunId;
       const badge = document.getElementById("uohSelectedRun");
       const colors = overheadZoneColors(zone.type);
       if (badge) {
@@ -10283,7 +10987,7 @@
         badge.style.border = `1px solid ${colors.border}`;
         badge.style.color = colors.text;
         badge.textContent = tf("uoh.zone.selected", {
-          run: uohRunLabel(uShapeOverheadState.selectedRunId),
+          run: uohRunLabel(runId),
           n: index + 1,
           type: overheadZoneLabel(zone.type),
         });
@@ -10292,10 +10996,35 @@
       const widthInput = document.getElementById("uohZoneWidth");
       const x0Input = document.getElementById("uohZoneX0");
       const x1Input = document.getElementById("uohZoneX1");
-      if (type) type.value = zone.type;
+      const rangehoodOption = type?.querySelector('option[value="rangehood_flap"]');
+      if (rangehoodOption) rangehoodOption.hidden = runId === "BACK";
+      if (type) {
+        if (runId === "BACK" && zone.type === "rangehood_flap") {
+          zone.type = "up_flap";
+          invalidateUohResult();
+        }
+        type.value = zone.type;
+      }
       if (widthInput) widthInput.value = String(Math.round(width));
       if (x0Input) x0Input.value = String(Math.round(x0));
       if (x1Input) x1Input.value = String(Math.round(x1));
+      const rangehoodSettings = document.getElementById("uohRangehoodSettings");
+      const sideHood = runId === "LEFT" || runId === "RIGHT";
+      if (rangehoodSettings) {
+        rangehoodSettings.hidden = !(sideHood && zone.type === "rangehood_flap");
+        rangehoodSettings.open = sideHood && zone.type === "rangehood_flap";
+      }
+      const rangehood = uShapeOverheadState.rangehood || (uShapeOverheadState.rangehood = {
+        preset: "NCE", clearHeight: 75, alignment: "left", edgeOffsetX: 40,
+      });
+      const presetEl = document.getElementById("uohRangehoodPreset");
+      const clearEl = document.getElementById("uohRangehoodClearHeight");
+      const alignEl = document.getElementById("uohRangehoodAlignment");
+      const edgeEl = document.getElementById("uohRangehoodEdgeOffsetX");
+      if (presetEl) presetEl.value = rangehood.preset || "NCE";
+      if (clearEl) clearEl.value = String(rangehood.clearHeight ?? 75);
+      if (alignEl) alignEl.value = rangehood.alignment || "left";
+      if (edgeEl) edgeEl.value = String(rangehood.edgeOffsetX ?? 40);
     }
 
     function renderUohZoneEditor() {
@@ -10390,7 +11119,10 @@
         type.addEventListener("change", () => {
           const selected = selectedUohZoneBound();
           if (!selected) return;
-          selected.zone.type = type.value;
+          const runId = uShapeOverheadState.selectedRunId;
+          let nextType = type.value;
+          if (runId === "BACK" && nextType === "rangehood_flap") nextType = "up_flap";
+          selected.zone.type = nextType;
           invalidateUohResult();
           renderUohUi();
         });
@@ -10413,6 +11145,28 @@
           renderUohUi();
         });
       }
+      const bindRangehood = (id, apply) => {
+        const el = document.getElementById(id);
+        if (!el || el.dataset.bound) return;
+        el.dataset.bound = "1";
+        el.addEventListener("change", (event) => {
+          const rangehood = uShapeOverheadState.rangehood || (uShapeOverheadState.rangehood = {
+            preset: "NCE", clearHeight: 75, alignment: "left", edgeOffsetX: 40,
+          });
+          apply(rangehood, event.target.value);
+          invalidateUohResult();
+        });
+      };
+      bindRangehood("uohRangehoodPreset", (rangehood, value) => { rangehood.preset = value || "NCE"; });
+      bindRangehood("uohRangehoodClearHeight", (rangehood, value) => {
+        rangehood.clearHeight = Math.max(1, Number(value) || 75);
+      });
+      bindRangehood("uohRangehoodAlignment", (rangehood, value) => {
+        rangehood.alignment = value === "right" ? "right" : "left";
+      });
+      bindRangehood("uohRangehoodEdgeOffsetX", (rangehood, value) => {
+        rangehood.edgeOffsetX = Math.max(40, Number(value) || 40);
+      });
     }
 
     function addUohZone() {
@@ -10544,6 +11298,10 @@
 
     function applyUohPresetData(preset) {
       if (!preset || typeof preset !== "object") return;
+      const currentGeometryRevision = "back_owns_corners_v5";
+      const presetRevision = String(preset.geometryRevision || preset.params?.geometryRevision || "");
+      // Usable spans are unchanged across BOC revisions, so zones migrate losslessly;
+      // only invalidate cached result / Fusion evidence when the contract moved.
       if (preset.controls) presetApplyControls(preset.controls);
       const params = preset.params || {};
       const values = {
@@ -10555,6 +11313,20 @@
       Object.entries(values).forEach(([id, value]) => { if (value != null && document.getElementById(id)) document.getElementById(id).value = value; });
       if (preset.zones) uShapeOverheadState.zones = JSON.parse(JSON.stringify(preset.zones));
       else if (params.zones) uShapeOverheadState.zones = JSON.parse(JSON.stringify(params.zones));
+      const rh = preset.rangehood || {
+        preset: params.rangehoodPreset,
+        clearHeight: params.rangehoodClearHeight,
+        alignment: params.rangehoodAlignment,
+        edgeOffsetX: params.rangehoodEdgeOffsetX,
+      };
+      if (rh && typeof rh === "object") {
+        uShapeOverheadState.rangehood = {
+          preset: rh.preset || "NCE",
+          clearHeight: Math.max(1, Number(rh.clearHeight) || 75),
+          alignment: rh.alignment === "right" ? "right" : "left",
+          edgeOffsetX: Math.max(40, Number(rh.edgeOffsetX) || 40),
+        };
+      }
       uShapeOverheadState.selectedRunId = preset.selectedRunId || "BACK";
       ["LEFT", "BACK", "RIGHT"].forEach((id) => {
         const checkbox = document.getElementById(`uohLed${id[0]}${id.slice(1).toLowerCase()}`);
@@ -10562,6 +11334,12 @@
       });
       uShapeOverheadState.selectedZoneIndex = Math.max(0, Number(preset.selectedZoneIndex) || 0);
       uShapeOverheadState.result = null;
+      uShapeOverheadState.geometryRevision = currentGeometryRevision;
+      if (presetRevision && presetRevision !== currentGeometryRevision) {
+        uShapeOverheadState.geometryRevisionMigratedFrom = presetRevision;
+      } else {
+        delete uShapeOverheadState.geometryRevisionMigratedFrom;
+      }
       ["LEFT", "BACK", "RIGHT"].forEach(normalizeUohZones);
       renderUohUi();
     }
@@ -10664,6 +11442,7 @@
       designPage.classList.toggle("u-shape-overhead-mode", moduleName === "uShapeOverhead");
       designPage.classList.toggle("kitchen-mode", moduleName === "kitchen");
       designPage.classList.toggle("lounge-mode", moduleName === "lounge");
+      designPage.classList.toggle("smallCabinet-mode", moduleName === "smallCabinet");
       designPage.classList.toggle("generalTall-mode", moduleName === "generalTall");
       updateCommandbarPrimaryVerb(moduleName);
       document.querySelectorAll("[data-module]").forEach((item) => {
@@ -10694,6 +11473,9 @@
       } else if (moduleName === "lounge") {
         renderLoungeUi();
         document.getElementById("statusText").textContent = "Lounge ready";
+      } else if (moduleName === "smallCabinet") {
+        renderSmallCabinetUi();
+        document.getElementById("statusText").textContent = "Small Cabinet ready";
       } else {
         document.getElementById("statusText").textContent = "Ready";
       }
@@ -10727,6 +11509,10 @@
       }
       if (activeModule === "kitchen") {
         kitchenGeneratePreview();
+        return;
+      }
+      if (activeModule === "smallCabinet") {
+        smallCabinetGenerate();
       }
     }
 
@@ -11014,6 +11800,24 @@
             document.getElementById("statusText").textContent = parsed?.ok
               ? `Lounge assembly bodies: ${parsed.createdBodies || 0} bodies (deleted ${deleted.bodies || 0} old)${cutFails ? `; ${cutFails} cut issue(s) — see cutAudit` : ""}`
               : "Lounge assembly body creation failed";
+          } else if (action === "smallCabinetResult") {
+            if (parsed.ok && parsed.result) {
+              renderSmallCabinetResult(parsed.result);
+              document.getElementById("statusText").textContent = `Small Cabinet: ${(parsed.result.boards || []).length} boards`;
+            } else {
+              renderSmallCabinetResult(parsed.result || null);
+              renderSmallCabinetErrors(parsed.errors || parsed.result?.validation?.errors || ["Small Cabinet generation failed."]);
+              document.getElementById("statusText").textContent = "Small Cabinet generation failed";
+              const box = document.getElementById("scResultBox");
+              if (box) box.textContent = JSON.stringify(parsed, null, 2);
+            }
+          } else if (action === "smallCabinetFusionResult") {
+            if (parsed?.result) renderSmallCabinetResult(parsed.result);
+            const box = document.getElementById("scResultBox");
+            if (box) box.textContent = JSON.stringify(parsed, null, 2);
+            document.getElementById("statusText").textContent = parsed?.ok
+              ? `Small Cabinet Fusion: ${parsed.createdBodies || 0} bodies, ${parsed.sideGrooveCutsCreated || 0} grooves, ${parsed.lockCutsCreated || 0} locks${parsed.assemblyComponentName ? ` in ${parsed.assemblyComponentName}` : ""}`
+              : "Small Cabinet Fusion body creation failed";
           } else if (action === "relationshipScanResult") {
             connectUiHandleScanResult(parsed);
           } else if (action === "relationshipInspectResult") {
@@ -11075,6 +11879,8 @@
             document.getElementById("loungeResultBox").textContent = String(data || "");
           } else if (action === "loungeAssemblyBodyResult") {
             document.getElementById("loungeResultBox").textContent = String(data || "");
+          } else if (action === "smallCabinetResult" || action === "smallCabinetFusionResult") {
+            document.getElementById("scResultBox").textContent = String(data || "");
           } else {
             const status = document.getElementById("statusText");
             if (status) status.textContent = `Python bridge parse failed: ${action}`;
@@ -11158,6 +11964,32 @@
     document.getElementById("loungeRenderBtn").addEventListener("click", loungeGenerateGeometry);
     document.getElementById("loungeCreateFlatBodiesBtn").addEventListener("click", loungeCreateFlatBodies);
     document.getElementById("loungeCreateAssemblyBodiesBtn").addEventListener("click", loungeCreateAssemblyBodies);
+    document.getElementById("scGenerateBtn").addEventListener("click", smallCabinetGenerate);
+    document.getElementById("scCreateFusionBodiesBtn").addEventListener("click", smallCabinetCreateFusionBodies);
+    document.getElementById("scAddZoneBtn").addEventListener("click", () => {
+      smallCabinetState.zones.push({
+        id: `zone-${smallCabinetState.zones.length + 1}`,
+        type: "drawer",
+        height: 100,
+      });
+      scBalanceZoneHeights();
+      smallCabinetState.selectedZoneIndex = smallCabinetState.zones.length - 1;
+      renderSmallCabinetUi();
+    });
+    document.getElementById("scDeleteZoneBtn").addEventListener("click", () => {
+      if (smallCabinetState.zones.length <= 1) return;
+      const index = Math.min(smallCabinetState.selectedZoneIndex, smallCabinetState.zones.length - 1);
+      smallCabinetState.zones.splice(index, 1);
+      smallCabinetState.selectedZoneIndex = Math.max(0, index - 1);
+      scBalanceZoneHeights();
+      renderSmallCabinetUi();
+    });
+    document.querySelectorAll("#smallCabinetParamsPanel input").forEach((el) => {
+      el.addEventListener("change", () => {
+        if (el.id === "scCabinetHeight" || el.id === "scPanelThickness") scBalanceZoneHeights();
+        renderSmallCabinetUi();
+      });
+    });
     loungePresetManager.bind();
     [
       "kitchenLength",
@@ -11189,10 +12021,10 @@
             let allocated = 0;
             column.zones.forEach((zone, index) => {
               if (index === column.zones.length - 1) {
-                zone.height = Math.max(1, newEditable - allocated);
+                zone.height = Math.max(1, kitchenRound1(newEditable - allocated));
               } else {
-                zone.height = Math.max(1, Math.round((Number(zone.height) || 0) * scale));
-                allocated += zone.height;
+                zone.height = Math.max(1, kitchenRound1((Number(zone.height) || 0) * scale));
+                allocated = kitchenRound1(allocated + zone.height);
               }
             });
           });
@@ -12263,6 +13095,366 @@
         return;
       }
       fusionSend("panelAttributes.createNestingLayoutSketch", {});
+    }
+
+    function nestingExportManufacturingSnapshot(scope) {
+      const exportScope = scope === "all" ? "all" : "selection";
+      const summary = document.getElementById("nestingBuildOutlinesSummary");
+      const exportBtn = document.getElementById("nestingExportSnapshotBtn");
+      const exportAllBtn = document.getElementById("nestingExportAllSnapshotBtn");
+      if (exportBtn) exportBtn.disabled = true;
+      if (exportAllBtn) exportAllBtn.disabled = true;
+      if (summary) {
+        summary.textContent = exportScope === "selection"
+          ? "Exporting selected panels as one CabinetNC .cnjob..."
+          : "Exporting all panels as one CabinetNC .cnjob...";
+        summary.className = "message warn";
+      }
+      if (!attrFusionAvailable()) {
+        if (exportBtn) exportBtn.disabled = false;
+        if (exportAllBtn) exportAllBtn.disabled = false;
+        if (summary) {
+          summary.textContent = "Manufacturing export requires an active Fusion design.";
+          summary.className = "message error";
+        }
+        return;
+      }
+      fusionSend("panelAttributes.exportManufacturingSnapshot", { scope: exportScope });
+    }
+
+    function toolpathLayFlat() {
+      const summary = document.getElementById("toolpathLayFlatSummary");
+      const groupsHost = document.getElementById("toolpathLayFlatGroups");
+      const btn = document.getElementById("toolpathLayFlatBtn");
+      if (btn) btn.disabled = true;
+      if (groupsHost) groupsHost.innerHTML = "";
+      if (summary) {
+        summary.textContent = "Laying flat Nesting Ready panels (machining face up)...";
+        summary.className = "message warn";
+      }
+      if (!attrFusionAvailable()) {
+        if (btn) btn.disabled = false;
+        if (summary) {
+          summary.textContent = "Lay Flat requires an active Fusion design.";
+          summary.className = "message error";
+        }
+        return;
+      }
+      fusionSend("panelAttributes.createLayFlatLayout", { zoneFilter: "all" });
+    }
+
+    function toolpathCheckFacesUp() {
+      const summary = document.getElementById("toolpathCheckFacesUpSummary");
+      const btn = document.getElementById("toolpathCheckFacesUpBtn");
+      if (btn) btn.disabled = true;
+      if (summary) {
+        summary.textContent = "Checking Lay Flat faces (MILLING +Z, colour −Z)...";
+        summary.className = "message warn";
+      }
+      if (!attrFusionAvailable()) {
+        if (btn) btn.disabled = false;
+        if (summary) {
+          summary.textContent = "Check Faces Up requires an active Fusion design.";
+          summary.className = "message error";
+        }
+        return;
+      }
+      fusionSend("panelAttributes.checkLayFlatFacesUp", { selectFailed: true });
+    }
+
+    function toolpathReverseMillingFace() {
+      const summary = document.getElementById("toolpathReverseMillingFaceSummary");
+      const btn = document.getElementById("toolpathReverseMillingFaceBtn");
+      if (btn) btn.disabled = true;
+      if (summary) {
+        summary.textContent = "Reversing milling face (roles + LAY_FLAT geometry), then Analyze...";
+        summary.className = "message warn";
+      }
+      if (!attrFusionAvailable()) {
+        if (btn) btn.disabled = false;
+        if (summary) {
+          summary.textContent = "Reverse Milling Face requires an active Fusion design.";
+          summary.className = "message error";
+        }
+        return;
+      }
+      fusionSend("panelAttributes.reverseMillingFace", {});
+    }
+
+    function toolpathSetTagEditorOptions(selectId, values, currentValues) {
+      const select = document.getElementById(selectId);
+      if (!select) return;
+      const unique = [...new Set((values || []).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b));
+      const selectedValues = [...new Set((currentValues || []).filter(Boolean))];
+      select.innerHTML = [
+        `<option value="">Keep current value</option>`,
+        ...unique.map((value) => (
+          `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`
+        )),
+      ].join("");
+      select.value = selectedValues.length === 1 && unique.includes(selectedValues[0])
+        ? selectedValues[0]
+        : "";
+    }
+
+    function toolpathLoadLayFlatTags() {
+      const summary = document.getElementById("toolpathLayFlatTagsSummary");
+      const loadBtn = document.getElementById("toolpathLoadLayFlatTagsBtn");
+      const applyBtn = document.getElementById("toolpathApplyLayFlatTagsBtn");
+      if (loadBtn) loadBtn.disabled = true;
+      if (applyBtn) applyBtn.disabled = true;
+      if (summary) {
+        summary.textContent = "Loading selected LAY_FLAT bodies and project tag values...";
+        summary.className = "message warn";
+      }
+      if (!attrFusionAvailable()) {
+        if (loadBtn) loadBtn.disabled = false;
+        if (summary) {
+          summary.textContent = "LAY_FLAT tag editor requires an active Fusion design.";
+          summary.className = "message error";
+        }
+        return;
+      }
+      fusionSend("panelAttributes.getLayFlatTagEditor", {});
+    }
+
+    function toolpathApplyLayFlatTags() {
+      const summary = document.getElementById("toolpathLayFlatTagsSummary");
+      const loadBtn = document.getElementById("toolpathLoadLayFlatTagsBtn");
+      const applyBtn = document.getElementById("toolpathApplyLayFlatTagsBtn");
+      const boardTypeTag = document.getElementById("toolpathLayFlatBoardTypeList")?.value || "";
+      const colorTag = document.getElementById("toolpathLayFlatColorList")?.value || "";
+      if (!boardTypeTag && !colorTag) {
+        if (summary) {
+          summary.textContent = "Choose a Board Type, a Color, or both. “Keep current” changes nothing.";
+          summary.className = "message warn";
+        }
+        return;
+      }
+      if (loadBtn) loadBtn.disabled = true;
+      if (applyBtn) applyBtn.disabled = true;
+      if (summary) {
+        summary.textContent = "Writing LAY_FLAT + source tags, then moving selected bodies to column ends...";
+        summary.className = "message warn";
+      }
+      fusionSend("panelAttributes.applyLayFlatTags", { boardTypeTag, colorTag });
+    }
+
+    function toolpathAnalyzeLayFlat() {
+      const summary = document.getElementById("toolpathAnalyzeLayFlatSummary");
+      const btn = document.getElementById("toolpathAnalyzeLayFlatBtn");
+      if (btn) btn.disabled = true;
+      if (summary) {
+        summary.textContent = "Analyzing Lay Flat bodies (outline + features)...";
+        summary.className = "message warn";
+      }
+      if (!attrFusionAvailable()) {
+        if (btn) btn.disabled = false;
+        if (summary) {
+          summary.textContent = "Analyze Lay Flat requires an active Fusion design.";
+          summary.className = "message error";
+        }
+        return;
+      }
+      fusionSend("panelAttributes.analyzeLayFlatManufacturing", { forceRebuild: false });
+    }
+
+    function toolpathExportReady(selectNotReady) {
+      const summary = document.getElementById("toolpathExportReadySummary");
+      const list = document.getElementById("toolpathExportReadyList");
+      const btn = document.getElementById("toolpathExportReadyBtn");
+      const selectBtn = document.getElementById("toolpathSelectNotExportReadyBtn");
+      if (btn) btn.disabled = true;
+      if (selectBtn) selectBtn.disabled = true;
+      if (summary) {
+        summary.textContent = selectNotReady
+          ? "Selecting Export Not Ready bodies..."
+          : "Checking Export Ready on Lay Flat bodies...";
+        summary.className = "message warn";
+      }
+      if (list) list.innerHTML = "";
+      if (!attrFusionAvailable()) {
+        if (btn) btn.disabled = false;
+        if (summary) {
+          summary.textContent = "Export Ready requires an active Fusion design.";
+          summary.className = "message error";
+        }
+        return;
+      }
+      fusionSend("panelAttributes.checkLayFlatExportReady", {
+        selectNotReady: Boolean(selectNotReady),
+      });
+    }
+
+    function toolpathExportLayFlat() {
+      const summary = document.getElementById("toolpathExportSummary");
+      const btn = document.getElementById("toolpathExportLayFlatBtn");
+      if (btn) btn.disabled = true;
+      if (summary) {
+        summary.textContent = "Validating analyzed LAY_FLAT bodies before export...";
+        summary.className = "message warn";
+      }
+      if (!attrFusionAvailable()) {
+        if (btn) btn.disabled = false;
+        if (summary) {
+          summary.textContent = "LAY_FLAT export requires an active Fusion design.";
+          summary.className = "message error";
+        }
+        return;
+      }
+      fusionSend("panelAttributes.exportManufacturingSnapshot", { scope: "layflat" });
+    }
+
+    function toolpathTagScanValue(value, fallback = "—") {
+      if (value === null || value === undefined || value === "") return fallback;
+      if (typeof value === "boolean") return value ? "Yes" : "No";
+      return String(value);
+    }
+
+    function toolpathTagScanRow(label, value, fallback = "—") {
+      return `<dt>${escapeHtml(label)}</dt><dd>${escapeHtml(toolpathTagScanValue(value, fallback))}</dd>`;
+    }
+
+    function toolpathTagScanCard(item, index) {
+      const detail = item.detail || {};
+      const identity = detail.identity || {};
+      const defaults = detail.defaultAttributes || {};
+      const derived = detail.derivedTags || {};
+      const classification = detail.classification || {};
+      const boardState = classification.boardType || {};
+      const colorState = classification.color || {};
+      const cuttingState = classification.cuttingFace || {};
+      const dims = detail.dimensions || {};
+      const outline = detail.outline || {};
+      const featureSummary = detail.featureSummary || {};
+      const features = Array.isArray(detail.features) ? detail.features : [];
+      const faceUp = item.faceUp || {};
+      const tagsOk = item.ok === true;
+      const exportOk = item.exportReady === true;
+      const tagsBadge = tagsOk
+        ? `<span class="pill" style="background:#dcfce7;color:#166534;">Tags OK</span>`
+        : `<span class="pill" style="background:#fee2e2;color:#991b1b;">Tags Missing</span>`;
+      const exportBadge = exportOk
+        ? `<span class="pill" style="background:#dcfce7;color:#166534;">Export Ready</span>`
+        : `<span class="pill" style="background:#ffedd5;color:#9a3412;">Not Export Ready</span>`;
+      const missing = (item.missing || []).join(", ");
+      const troubleshoot = (item.troubleshoot || []).join(", ");
+      const byKind = featureSummary.byKind
+        ? Object.keys(featureSummary.byKind).map((k) => `${k}:${featureSummary.byKind[k]}`).join(", ")
+        : "";
+      const bodyRows = [
+        toolpathTagScanRow("Body", item.bodyName),
+        toolpathTagScanRow("Component", detail.componentName),
+        toolpathTagScanRow("Panel ID", item.panelId || identity.panelId),
+        toolpathTagScanRow("Source Panel", identity.sourcePanelId),
+        toolpathTagScanRow("Board Type", boardState.value || item.boardTypeTag || derived.boardTypeTag),
+        toolpathTagScanRow("Board Type Source", `${boardState.source || "legacy"}${boardState.locked ? " · MANUAL LOCK" : ""}`),
+        toolpathTagScanRow("Color", colorState.value || item.colorTag || derived.colorTag),
+        toolpathTagScanRow("Color Source", `${colorState.source || "legacy"}${colorState.locked ? " · MANUAL LOCK" : ""}`),
+        toolpathTagScanRow("Cutting Face", cuttingState.value || item.cuttingFace || derived.requiredFaceUp),
+        toolpathTagScanRow("Cutting Face Source", `${cuttingState.source || "legacy"}${cuttingState.locked ? " · MANUAL LOCK" : ""}`),
+        toolpathTagScanRow("Material Class", defaults.materialClass),
+        toolpathTagScanRow("Role", defaults.role),
+        toolpathTagScanRow("Detailed Type", identity.boardType),
+        toolpathTagScanRow("Lifecycle", item.lifecycleState),
+        toolpathTagScanRow("Analyzed", item.analyzed),
+      ].join("");
+      const geometryRows = [
+        toolpathTagScanRow(
+          "Dimensions (W×D×T)",
+          [
+            toolpathTagScanValue(dims.widthMm ?? outline.widthMm, "?"),
+            toolpathTagScanValue(dims.depthMm ?? outline.depthMm, "?"),
+            toolpathTagScanValue(item.thicknessMm ?? dims.thicknessMm, "?"),
+          ].join(" × ") + " mm"
+        ),
+        toolpathTagScanRow("Outline Source", item.outlineSource || outline.source),
+        toolpathTagScanRow("Outline Points", item.pointCount || outline.pointCount, "0"),
+        toolpathTagScanRow("Features", item.featureCount || featureSummary.total || 0, "0"),
+        toolpathTagScanRow(
+          "Feature Mix",
+          `half ${toolpathTagScanValue(featureSummary.half, "0")} · full ${toolpathTagScanValue(featureSummary.full, "0")}${byKind ? ` · ${byKind}` : ""}`
+        ),
+        toolpathTagScanRow(
+          "Face Up",
+          faceUp.ok === true
+            ? `OK (mill +Z ${toolpathTagScanValue(faceUp.millingDotPlusZ, "?")}, colour −Z ${toolpathTagScanValue(faceUp.colourDotMinusZ, "?")})`
+            : ((faceUp.reasons || []).join(", ") || (faceUp.ok === false ? "FAIL" : "—"))
+        ),
+      ].join("");
+      const featureRows = features.length
+        ? `<details style="margin-top:8px;" open>
+            <summary class="muted" style="cursor:pointer;">Feature details (${features.length})</summary>
+            ${features.map((f) => (
+              `<div class="attr-tag-pending-item" style="margin-top:6px;">
+                <strong>${escapeHtml(f.featureId || "feature")} · ${escapeHtml(f.cutType || "?")} · ${escapeHtml(f.kind || "unknown")}</strong>
+                <div class="muted">${[
+                  f.openSurfaceIs ? `open ${f.openSurfaceIs}` : "",
+                  f.depthMm != null ? `depth ${f.depthMm} mm` : "",
+                  f.diameterMm != null ? `Ø ${f.diameterMm} mm` : "",
+                  f.radiusMm != null ? `r ${f.radiusMm} mm` : "",
+                  f.widthMm != null ? `width ${f.widthMm} mm` : "",
+                  f.pointCount != null ? `${f.pointCount} pts` : "",
+                ].filter(Boolean).map(escapeHtml).join(" · ") || "no extras"}</div>
+              </div>`
+            )).join("")}
+          </details>`
+        : "";
+      const statusHtml = `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">${tagsBadge}${exportBadge}</div>
+        ${missing ? `<div class="message warn" style="margin-top:4px;">Missing tags: ${escapeHtml(missing)}</div>` : ""}
+        ${troubleshoot ? `<div class="message warn" style="margin-top:4px;">Export blockers: ${escapeHtml(troubleshoot)}</div>` : ""}
+        ${!missing && !troubleshoot && tagsOk && exportOk ? `<div class="message ok" style="margin-top:4px;">No tag or export blockers.</div>` : ""}
+      `;
+      return `
+        <div class="card" style="margin-top:10px;">
+          <h3>LAY_FLAT ${index + 1} · ${escapeHtml(item.bodyName || item.panelId || "body")}</h3>
+          <div class="card-body">
+            ${statusHtml}
+            <div class="attributes-grid2">
+              <div>
+                <div class="muted" style="margin-bottom:6px;">Tags / Classification</div>
+                <dl class="attr-kv">${bodyRows}</dl>
+              </div>
+              <div>
+                <div class="muted" style="margin-bottom:6px;">Geometry / Export</div>
+                <dl class="attr-kv">${geometryRows}</dl>
+                ${featureRows}
+              </div>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    function toolpathTagScanLayFlat(selectProblems) {
+      const summary = document.getElementById("toolpathTagScanLayFlatSummary");
+      const list = document.getElementById("toolpathTagScanLayFlatList");
+      const raw = document.getElementById("toolpathTagScanLayFlatRawJson");
+      const btn = document.getElementById("toolpathTagScanLayFlatBtn");
+      const selectBtn = document.getElementById("toolpathSelectMissingTagsBtn");
+      if (btn) btn.disabled = true;
+      if (selectBtn) selectBtn.disabled = true;
+      if (summary) {
+        summary.textContent = selectProblems
+          ? "Selecting problem bodies from current LAY_FLAT selection..."
+          : "Scanning selected LAY_FLAT bodies (tags + Export Ready)...";
+        summary.className = "message warn";
+      }
+      if (list) list.innerHTML = "";
+      if (raw) raw.textContent = "Scanning…";
+      if (!attrFusionAvailable()) {
+        if (btn) btn.disabled = false;
+        if (summary) {
+          summary.textContent = "Lay Flat Tag Scan requires an active Fusion design.";
+          summary.className = "message error";
+        }
+        return;
+      }
+      fusionSend("panelAttributes.tagScanLayFlat", {
+        selectProblems: Boolean(selectProblems),
+        selectMissing: Boolean(selectProblems),
+      });
     }
 
     function attrMetadataRecordToPanel(record) {
@@ -13867,6 +15059,32 @@
       fusionSend("panelAttributes.selectDoorColourFaces", {});
     }
 
+    function attrMakeSelectedFacesColour() {
+      const summary = document.getElementById("attrOrientSummary");
+      const pending = t("attr.status.makeSelectedFacesColour");
+      if (summary) {
+        summary.textContent = pending;
+        summary.className = "message warn";
+      }
+      attrShowFormMessage(pending, "warn", {
+        action: "makeSelectedFacesColour",
+        clearDetails: true,
+      });
+      if (!attrFusionAvailable()) {
+        const previewMsg = t("attr.status.makeSelectedFacesColour.preview");
+        if (summary) {
+          summary.textContent = previewMsg;
+          summary.className = "message warn";
+        }
+        attrShowFormMessage(previewMsg, "warn", {
+          action: "makeSelectedFacesColour",
+          details: { preview: true },
+        });
+        return;
+      }
+      fusionSend("panelAttributes.makeSelectedFacesColour", {});
+    }
+
     function attrResetAttributeToAuto(field) {
       const summary = document.getElementById("attrResetAutoSummary");
       const labels = { boardType: "Board Type", color: "Color", faceUp: "Cutting Face", cuttingFace: "Cutting Face" };
@@ -13922,6 +15140,26 @@
         return;
       }
       fusionSend("panelAttributes.selectMillingFaces", {});
+    }
+
+    function attrRevertSelectedMilling() {
+      const summary = document.getElementById("attrMillingAnalysisSummary");
+      const pending = t("attr.status.revertSelectedMilling");
+      if (summary) {
+        summary.textContent = pending;
+        summary.className = "message warn";
+      }
+      attrShowFormMessage(pending, "warn", { action: "revertSelectedMilling", clearDetails: true });
+      if (!attrFusionAvailable()) {
+        const previewMsg = t("attr.status.revertSelectedMilling.preview");
+        if (summary) {
+          summary.textContent = previewMsg;
+          summary.className = "message warn";
+        }
+        attrShowFormMessage(previewMsg, "warn", { action: "revertSelectedMilling", details: { preview: true } });
+        return;
+      }
+      fusionSend("panelAttributes.revertSelectedMilling", {});
     }
 
     function attrRenderMillingDiag(parsed) {
@@ -14001,14 +15239,14 @@
 
     function attrRevertDoorSurfaces() {
       const summary = document.getElementById("attrOrientSummary");
-      const pending = "Reverting panel surface: face/body selection flips that body; assembly selection flips doors only...";
+      const pending = "Reverting panel surface: face/body = fast flip on that board only; assembly = doors under selection...";
       if (summary) {
         summary.textContent = pending;
         summary.className = "message warn";
       }
       attrShowFormMessage(pending, "warn", { action: "revertDoorSurfaces", clearDetails: true });
       if (!attrFusionAvailable()) {
-        const previewMsg = "Preview only: would swap front/back on the body owning the selected face (or doors under an assembly).";
+        const previewMsg = "Preview only: face/body flips that board (no design-wide scan); assembly flips doors under it.";
         if (summary) {
           summary.textContent = previewMsg;
           summary.className = "message warn";
@@ -14764,11 +16002,63 @@
         });
         return;
       }
+      if (parsed.action === "revertSelectedMilling") {
+        const summary = document.getElementById("attrMillingAnalysisSummary");
+        let msg;
+        if (parsed.ok) {
+          msg = parsed.message
+            || `Flipped milling on ${Number(parsed.updatedCount || 0)} body(ies)`
+              + (Number(parsed.skippedCount || 0) ? ` · skipped ${parsed.skippedCount}` : "")
+              + ".";
+        } else {
+          msg = (parsed.errors || ["Revert selected milling failed."]).join(" ");
+        }
+        const kind = parsed.ok
+          ? (Number(parsed.skippedCount || 0) || (Array.isArray(parsed.warnings) && parsed.warnings.length) ? "warn" : "ok")
+          : "error";
+        if (summary) {
+          summary.textContent = msg;
+          summary.className = `message ${kind}`;
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "revertSelectedMilling",
+          details: attrBuildCommandDetails(parsed),
+        });
+        if (parsed.ok && Array.isArray(panelAttrMock.metadataScanRecords) && panelAttrMock.metadataScanRecords.length) {
+          panelAttrMock.refreshOverviewTagsAfterScan = true;
+          fusionSend("panelAttributes.scanMetadata", attrScanZonePayload());
+        }
+        return;
+      }
+      if (parsed.action === "makeSelectedFacesColour") {
+        const summary = document.getElementById("attrOrientSummary");
+        const msg = parsed.message || (parsed.ok
+          ? `Set ${Number(parsed.updatedCount || 0)} selected colour face(s).`
+          : "No selected colour face was changed.");
+        const kind = parsed.ok
+          ? (Number(parsed.skippedCount || 0) ? "warn" : "ok")
+          : "error";
+        if (summary) {
+          summary.textContent = msg;
+          summary.className = `message ${kind}`;
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "makeSelectedFacesColour",
+          details: attrBuildCommandDetails(parsed),
+        });
+        if (parsed.ok && Array.isArray(panelAttrMock.metadataScanRecords) && panelAttrMock.metadataScanRecords.length) {
+          panelAttrMock.refreshOverviewTagsAfterScan = true;
+          fusionSend("panelAttributes.scanMetadata", attrScanZonePayload());
+        }
+        return;
+      }
       if (parsed.action === "revertDoorSurfaces") {
         const summary = document.getElementById("attrOrientSummary");
         let msg;
         if (parsed.ok) {
           const bits = [`swapped ${Number(parsed.updatedCount || 0)}`];
+          if (Number(parsed.fastPathCount || 0)) bits.push(`fast ${parsed.fastPathCount}`);
+          if (Number(parsed.bulkCount || 0)) bits.push(`assembly bodies ${parsed.bulkCount}`);
           if (Number(parsed.skippedNonDoorCount || 0)) bits.push(`non-door ignored ${parsed.skippedNonDoorCount}`);
           const skippedOther = Number(parsed.skippedCount || 0) - Number(parsed.skippedNonDoorCount || 0);
           if (skippedOther > 0) bits.push(`skipped ${skippedOther}`);
@@ -14868,6 +16158,318 @@
         }
         attrShowFormMessage(msg, kind, {
           action: "buildNestingOutlines",
+          details: attrBuildCommandDetails(parsed),
+        });
+        return;
+      }
+      if (parsed.action === "exportManufacturingSnapshot") {
+        const isLayFlat = String(parsed.scope || "") === "layflat";
+        const summary = document.getElementById(
+          isLayFlat ? "toolpathExportSummary" : "nestingBuildOutlinesSummary"
+        );
+        const exportBtn = document.getElementById("nestingExportSnapshotBtn");
+        const exportAllBtn = document.getElementById("nestingExportAllSnapshotBtn");
+        const exportLayFlatBtn = document.getElementById("toolpathExportLayFlatBtn");
+        if (exportBtn) exportBtn.disabled = false;
+        if (exportAllBtn) exportAllBtn.disabled = false;
+        if (exportLayFlatBtn) exportLayFlatBtn.disabled = false;
+        const msg = parsed.message
+          || (parsed.ok
+            ? `Exported ${Number(parsed.workpieceCount || 0)} workpiece(s) to ${parsed.path || ".cnjob"}.`
+            : (parsed.errors || ["Manufacturing snapshot export failed."]).join(" "));
+        const kind = parsed.ok
+          ? (Number(parsed.warningCount || 0) ? "warn" : "ok")
+          : "error";
+        if (summary) {
+          let text = msg;
+          if (isLayFlat && Array.isArray(parsed.notReady) && parsed.notReady.length) {
+            const sample = parsed.notReady.slice(0, 6).map((item) => {
+              const reasons = (item.reasons || []).join(", ") || "not ready";
+              return `${item.bodyName || item.panelId || "body"}: ${reasons}`;
+            }).join("; ");
+            text += ` ${sample}${parsed.notReady.length > 6 ? "…" : ""}`;
+          }
+          summary.textContent = text;
+          summary.className = `message ${kind}`;
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "exportManufacturingSnapshot",
+          details: attrBuildCommandDetails(parsed),
+        });
+        return;
+      }
+      if (parsed.action === "createLayFlatLayout") {
+        const summary = document.getElementById("toolpathLayFlatSummary");
+        const groupsHost = document.getElementById("toolpathLayFlatGroups");
+        const btn = document.getElementById("toolpathLayFlatBtn");
+        if (btn) btn.disabled = false;
+        const msg = parsed.message
+          || (parsed.ok
+            ? `Lay Flat created ${Number(parsed.createdCount || 0)}/${Number(parsed.bodyCount || parsed.preparedCount || 0)} panel(s) in ${Number(parsed.groupCount || 0)} column(s).`
+            : (parsed.errors || ["Lay Flat failed."]).join(" "));
+        const kind = parsed.ok
+          ? (Number(parsed.notReadyCount || 0) || Number(parsed.failedCount || 0) ? "warn" : "ok")
+          : "error";
+        if (summary) {
+          let text = msg;
+          if (Number(parsed.failedCount || 0) > 0) {
+            text += ` Failed resolve/prepare: ${Number(parsed.failedCount)}.`;
+          }
+          summary.textContent = text;
+          summary.className = `message ${kind}`;
+        }
+        if (groupsHost) {
+          const groups = parsed.groups || [];
+          groupsHost.innerHTML = groups.length
+            ? groups.map((g) => (
+              `<div class="attr-section-note">${escapeHtml(g.boardTypeTag || "unknown")} · ${Number(g.count || 0)} panel(s)</div>`
+            )).join("")
+            : "";
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "createLayFlatLayout",
+          details: attrBuildCommandDetails(parsed),
+        });
+        return;
+      }
+      if (parsed.action === "checkLayFlatFacesUp") {
+        const summary = document.getElementById("toolpathCheckFacesUpSummary");
+        const btn = document.getElementById("toolpathCheckFacesUpBtn");
+        if (btn) btn.disabled = false;
+        const msg = parsed.message
+          || (parsed.ok
+            ? `Check Faces Up: ${Number(parsed.passedCount || 0)}/${Number(parsed.checkedCount || 0)} OK.`
+            : (parsed.errors || ["Check Faces Up failed."]).join(" "));
+        const kind = parsed.ok ? "ok" : "error";
+        if (summary) {
+          let text = msg;
+          const failed = parsed.failed || [];
+          if (failed.length) {
+            const sample = failed.slice(0, 8).map((item) => {
+              const reasons = (item.reasons || []).join(",") || "fail";
+              return `${item.bodyName || "body"} (${reasons})`;
+            }).join("; ");
+            text += ` Examples: ${sample}${failed.length > 8 ? "…" : ""}`;
+          }
+          summary.textContent = text;
+          summary.className = `message ${kind}`;
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "checkLayFlatFacesUp",
+          details: attrBuildCommandDetails(parsed),
+        });
+        return;
+      }
+      if (parsed.action === "analyzeLayFlatManufacturing") {
+        const summary = document.getElementById("toolpathAnalyzeLayFlatSummary");
+        const btn = document.getElementById("toolpathAnalyzeLayFlatBtn");
+        if (btn) btn.disabled = false;
+        const msg = parsed.message
+          || (parsed.ok
+            ? `Analyze Lay Flat: built ${Number(parsed.analyzedCount || 0)}, reused ${Number(parsed.skippedFreshCount || 0)}.`
+            : (parsed.errors || ["Analyze Lay Flat failed."]).join(" "));
+        const kind = parsed.ok
+          ? (Number(parsed.failedCount || 0) ? "warn" : "ok")
+          : "error";
+        if (summary) {
+          let text = msg;
+          const failed = parsed.failed || [];
+          if (failed.length) {
+            const sample = failed.slice(0, 6).map((item) => (
+              `${item.bodyName || "body"}: ${item.reason || "fail"}`
+            )).join("; ");
+            text += ` Failures: ${sample}${failed.length > 6 ? "…" : ""}`;
+          }
+          summary.textContent = text;
+          summary.className = `message ${kind}`;
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "analyzeLayFlatManufacturing",
+          details: attrBuildCommandDetails(parsed),
+        });
+        return;
+      }
+      if (parsed.action === "checkLayFlatExportReady") {
+        const summary = document.getElementById("toolpathExportReadySummary");
+        const list = document.getElementById("toolpathExportReadyList");
+        const btn = document.getElementById("toolpathExportReadyBtn");
+        const selectBtn = document.getElementById("toolpathSelectNotExportReadyBtn");
+        if (btn) btn.disabled = false;
+        const notReady = Array.isArray(parsed.notReady) ? parsed.notReady : [];
+        if (selectBtn) selectBtn.disabled = notReady.length === 0;
+        const msg = parsed.message
+          || (parsed.ok
+            ? `Export Ready: ${Number(parsed.readyCount || 0)}/${Number(parsed.bodyCount || 0)} ready.`
+            : (parsed.errors || ["Export Ready check failed."]).join(" "));
+        const kind = parsed.ok
+          ? "ok"
+          : (Number(parsed.bodyCount || 0) ? "warn" : "error");
+        if (summary) {
+          summary.textContent = msg;
+          summary.className = `message ${kind}`;
+        }
+        if (list) {
+          if (!notReady.length) {
+            list.innerHTML = "";
+          } else {
+            list.innerHTML = notReady.slice(0, 40).map((item) => {
+              const reasons = (item.reasons || []).join(", ") || "not ready";
+              return `<div class="message warn" style="margin-top:4px;">${escapeHtml(item.bodyName || item.panelId || "body")}: ${escapeHtml(reasons)}</div>`;
+            }).join("");
+            if (notReady.length > 40) {
+              list.innerHTML += `<div class="message" style="margin-top:4px;">…and ${notReady.length - 40} more</div>`;
+            }
+          }
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "checkLayFlatExportReady",
+          details: attrBuildCommandDetails(parsed),
+        });
+        return;
+      }
+      if (parsed.action === "reverseMillingFace") {
+        const summary = document.getElementById("toolpathReverseMillingFaceSummary");
+        const btn = document.getElementById("toolpathReverseMillingFaceBtn");
+        if (btn) btn.disabled = false;
+        let msg;
+        if (parsed.ok) {
+          msg = parsed.message
+            || `Reversed milling: selected ${Number(parsed.updatedCount || 0)} · source ${Number(parsed.sourceUpdatedCount || 0)}`
+              + ` · geometry ${Number(parsed.geometryFlippedCount || 0)}`
+              + ` · Analyze ${Number(parsed.analyzedCount || 0)}/${Number(parsed.analyzeBodyCount || 0)}`
+              + (Number(parsed.skippedCount || 0) ? ` · skipped ${parsed.skippedCount}` : "")
+              + ".";
+        } else {
+          msg = (parsed.errors || ["Reverse milling face failed."]).join(" ");
+        }
+        const kind = parsed.ok
+          ? (Number(parsed.skippedCount || 0) || Number(parsed.analyzeFailedCount || 0) || Number(parsed.geometryFailedCount || 0) || (Array.isArray(parsed.warnings) && parsed.warnings.length) ? "warn" : "ok")
+          : "error";
+        if (summary) {
+          summary.textContent = msg;
+          summary.className = `message ${kind}`;
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "reverseMillingFace",
+          details: attrBuildCommandDetails(parsed),
+        });
+        return;
+      }
+      if (parsed.action === "getLayFlatTagEditor") {
+        const summary = document.getElementById("toolpathLayFlatTagsSummary");
+        const selection = document.getElementById("toolpathLayFlatTagsSelection");
+        const loadBtn = document.getElementById("toolpathLoadLayFlatTagsBtn");
+        const applyBtn = document.getElementById("toolpathApplyLayFlatTagsBtn");
+        if (loadBtn) loadBtn.disabled = false;
+        const selected = Array.isArray(parsed.selected) ? parsed.selected : [];
+        toolpathSetTagEditorOptions(
+          "toolpathLayFlatBoardTypeList",
+          parsed.boardTypes || [],
+          selected.map((item) => item.boardTypeTag),
+        );
+        toolpathSetTagEditorOptions(
+          "toolpathLayFlatColorList",
+          parsed.colors || [],
+          selected.map((item) => item.colorTag),
+        );
+        if (applyBtn) applyBtn.disabled = !parsed.ok || !selected.length;
+        const msg = parsed.ok
+          ? `Loaded ${selected.length} selected LAY_FLAT body(ies) · ${(parsed.boardTypes || []).length} Board Type(s) · ${(parsed.colors || []).length} Color(s).`
+          : (parsed.errors || ["Could not load LAY_FLAT tag editor."]).join(" ");
+        const kind = parsed.ok ? "ok" : "error";
+        if (summary) {
+          summary.textContent = msg;
+          summary.className = `message ${kind}`;
+        }
+        if (selection) {
+          selection.innerHTML = selected.length
+            ? selected.slice(0, 30).map((item) => (
+              `<div class="message" style="margin-top:4px;">${escapeHtml(item.bodyName || "body")}: `
+              + `${escapeHtml(item.boardTypeTag || "UNASSIGNED")} / ${escapeHtml(item.colorTag || "UNASSIGNED")}</div>`
+            )).join("")
+            : "";
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "getLayFlatTagEditor",
+          details: attrBuildCommandDetails(parsed),
+        });
+        return;
+      }
+      if (parsed.action === "applyLayFlatTags") {
+        const summary = document.getElementById("toolpathLayFlatTagsSummary");
+        const loadBtn = document.getElementById("toolpathLoadLayFlatTagsBtn");
+        const applyBtn = document.getElementById("toolpathApplyLayFlatTagsBtn");
+        if (loadBtn) loadBtn.disabled = false;
+        if (applyBtn) applyBtn.disabled = false;
+        const msg = parsed.message
+          || (parsed.ok
+            ? `Updated ${Number(parsed.updatedCount || 0)} LAY_FLAT and ${Number(parsed.sourceUpdatedCount || 0)} source body(ies).`
+            : (parsed.errors || ["LAY_FLAT tag update failed."]).join(" "));
+        const kind = parsed.ok
+          ? (Number(parsed.failedCount || 0) ? "warn" : "ok")
+          : "error";
+        if (summary) {
+          summary.textContent = msg;
+          summary.className = `message ${kind}`;
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "applyLayFlatTags",
+          details: attrBuildCommandDetails(parsed),
+        });
+        return;
+      }
+      if (parsed.action === "tagScanLayFlat") {
+        const summary = document.getElementById("toolpathTagScanLayFlatSummary");
+        const list = document.getElementById("toolpathTagScanLayFlatList");
+        const raw = document.getElementById("toolpathTagScanLayFlatRawJson");
+        const btn = document.getElementById("toolpathTagScanLayFlatBtn");
+        const selectBtn = document.getElementById("toolpathSelectMissingTagsBtn");
+        if (btn) btn.disabled = false;
+        const records = Array.isArray(parsed.records) ? parsed.records : [];
+        const problems = Array.isArray(parsed.problems)
+          ? parsed.problems
+          : (Array.isArray(parsed.missing) ? parsed.missing : []);
+        if (selectBtn) selectBtn.disabled = problems.length === 0;
+        const msg = parsed.message
+          || (parsed.ok
+            ? `Lay Flat Tag Scan (selection): tags ${Number(parsed.completeCount || 0)}/${Number(parsed.bodyCount || 0)} · export-ready ${Number(parsed.exportReadyCount || 0)}/${Number(parsed.bodyCount || 0)}.`
+            : (parsed.errors || ["Lay Flat Tag Scan failed."]).join(" "));
+        const kind = parsed.ok
+          ? "ok"
+          : (Number(parsed.bodyCount || 0) ? "warn" : "error");
+        if (summary) {
+          summary.textContent = msg;
+          summary.className = `message ${kind}`;
+        }
+        if (list) {
+          if (!records.length) {
+            list.innerHTML = `<div class="blank-page" style="min-height:120px;">${escapeHtml((parsed.errors && parsed.errors[0]) || "No LAY_FLAT bodies in selection.")}</div>`;
+          } else {
+            // Show problem cards first, then OK cards, so troubleshoot is visible.
+            const ordered = [
+              ...records.filter((item) => item.problem),
+              ...records.filter((item) => !item.problem),
+            ];
+            list.innerHTML = ordered.slice(0, 40).map((item, index) => toolpathTagScanCard(item, index)).join("");
+            if (ordered.length > 40) {
+              list.innerHTML += `<div class="message" style="margin-top:8px;">…and ${ordered.length - 40} more (see Raw JSON)</div>`;
+            }
+          }
+        }
+        if (raw) {
+          raw.textContent = JSON.stringify({
+            bodyCount: parsed.bodyCount,
+            completeCount: parsed.completeCount,
+            exportReadyCount: parsed.exportReadyCount,
+            problemCount: parsed.problemCount,
+            reasonCounts: parsed.reasonCounts,
+            records,
+            problems,
+            warnings: parsed.warnings || [],
+          }, null, 2);
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "tagScanLayFlat",
           details: attrBuildCommandDetails(parsed),
         });
         return;
@@ -15312,10 +16914,12 @@
       document.getElementById("attrOrientPreviewPointBtn").addEventListener("click", attrOrientPreviewPoint);
       document.getElementById("attrOrientDoorsBtn").addEventListener("click", attrOrientDoors);
       document.getElementById("attrOrientSelectColourFacesBtn").addEventListener("click", attrOrientSelectColourFaces);
+      document.getElementById("attrMakeSelectedFacesColourBtn").addEventListener("click", attrMakeSelectedFacesColour);
       document.getElementById("attrOrientSelectConflictsBtn").addEventListener("click", attrOrientSelectConflicts);
       document.getElementById("attrRevertDoorSurfacesBtn").addEventListener("click", attrRevertDoorSurfaces);
       document.getElementById("attrAnalyzeMillingBtn").addEventListener("click", attrAnalyzeMillingSurfaces);
       document.getElementById("attrSelectMillingFacesBtn").addEventListener("click", attrSelectMillingFaces);
+      document.getElementById("attrRevertSelectedMillingBtn").addEventListener("click", attrRevertSelectedMilling);
       document.getElementById("attrMillingDiagCopyBtn").addEventListener("click", attrCopyMillingDiag);
       document.getElementById("attrHingeDiagBtn").addEventListener("click", attrDiagnoseHingeFaces);
       document.getElementById("attrHingeDiagCopyBtn").addEventListener("click", attrCopyHingeDiagReport);
@@ -15331,6 +16935,19 @@
       document.getElementById("nestingSelectNotReadyBtn").addEventListener("click", nestingSelectAllNotReady);
       document.getElementById("nestingBuildOutlinesBtn").addEventListener("click", () => nestingBuildOutlines(false));
       document.getElementById("nestingRebuildOutlinesBtn").addEventListener("click", () => nestingBuildOutlines(true));
+      document.getElementById("nestingExportSnapshotBtn").addEventListener("click", () => nestingExportManufacturingSnapshot("selection"));
+      document.getElementById("nestingExportAllSnapshotBtn").addEventListener("click", () => nestingExportManufacturingSnapshot("all"));
+      document.getElementById("toolpathLayFlatBtn").addEventListener("click", toolpathLayFlat);
+      document.getElementById("toolpathCheckFacesUpBtn").addEventListener("click", toolpathCheckFacesUp);
+      document.getElementById("toolpathReverseMillingFaceBtn").addEventListener("click", toolpathReverseMillingFace);
+      document.getElementById("toolpathLoadLayFlatTagsBtn").addEventListener("click", toolpathLoadLayFlatTags);
+      document.getElementById("toolpathApplyLayFlatTagsBtn").addEventListener("click", toolpathApplyLayFlatTags);
+      document.getElementById("toolpathAnalyzeLayFlatBtn").addEventListener("click", toolpathAnalyzeLayFlat);
+      document.getElementById("toolpathExportReadyBtn").addEventListener("click", () => toolpathExportReady(false));
+      document.getElementById("toolpathSelectNotExportReadyBtn").addEventListener("click", () => toolpathExportReady(true));
+      document.getElementById("toolpathTagScanLayFlatBtn").addEventListener("click", () => toolpathTagScanLayFlat(false));
+      document.getElementById("toolpathSelectMissingTagsBtn").addEventListener("click", () => toolpathTagScanLayFlat(true));
+      document.getElementById("toolpathExportLayFlatBtn").addEventListener("click", toolpathExportLayFlat);
       document.getElementById("nestingCreateLayoutBtn").addEventListener("click", nestingCreateZoneLayout);
       document.getElementById("nestingCreateSketchBtn").addEventListener("click", nestingCreateLayoutSketch);
       document.getElementById("nestingSheetAddTypeBtn").addEventListener("click", nestingAddSheetBoardType);

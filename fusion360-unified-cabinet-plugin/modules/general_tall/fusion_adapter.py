@@ -39,7 +39,7 @@ except Exception:
         write_panel_metadata_to_body,
     )
 
-ADAPTER_BUILD = "2026-07-29-u-shape-ohc-21"
+ADAPTER_BUILD = "2026-07-31-u-shape-ohc-22"
 U_SHAPE_CASE_FINGERPRINT_KEYS = (
     "totalWidth",
     "leftArmLength",
@@ -441,6 +441,200 @@ def audit_u_shape_corner_ownership(boards, params=None, tol_mm=2.5):
                 "code": "corner_double_occupancy",
                 "runId": run_id,
                 "detail": "{}.BP positively overlaps BACK.BP in a corner.".format(run_id),
+            })
+    return {"ok": not findings, "checks": checks, "findings": findings}
+
+
+def audit_u_shape_back_corner_closure(boards, params=None, tol_mm=2.5):
+    """Corner closed by outer edge dividers + BACK connectors + side rear dividers (no D_CORNER)."""
+    params = params if isinstance(params, dict) else {}
+    by_id = {str(row.get("id") or ""): row for row in (boards or []) if isinstance(row, dict)}
+    findings = []
+    checks = []
+
+    def _bb(board_id):
+        row = by_id.get(board_id) or {}
+        return row.get("bboxMm") or {}
+
+    def _close(a, b):
+        return abs(float(a) - float(b)) <= float(tol_mm)
+
+    ownership = audit_u_shape_corner_ownership(boards, params=params, tol_mm=tol_mm)
+    if not ownership.get("ok"):
+        findings.extend(ownership.get("findings") or [])
+        return {"ok": False, "checks": ownership.get("checks") or [], "findings": findings}
+
+    back = _bb("BACK.BP")
+    depth = float(params.get("cabinetDepth") or (float(back.get("y1", 0)) - float(back.get("y0", 0))))
+    cpt = float(params.get("featureWidth") or 15.0)
+    ox = float(back.get("x0", 0.0))
+    oy = float(back.get("y0", 0.0))
+    total_width = float(params.get("totalWidth") or (float(back.get("x1", 0)) - ox))
+
+    back_dividers = sorted(
+        [
+            row for row in (boards or [])
+            if isinstance(row, dict)
+            and str(row.get("runId") or "") == "BACK"
+            and str(row.get("localBoardId") or "").startswith("D")
+            and str(row.get("localBoardId") or "").lstrip("D").isdigit()
+        ],
+        key=lambda row: float((row.get("bboxMm") or {}).get("x0") or 0.0),
+    )
+    if len(back_dividers) < 2:
+        findings.append({
+            "severity": "error",
+            "code": "back_corner_closure",
+            "detail": "BACK needs outer edge dividers to close both corners.",
+        })
+    else:
+        left_d = back_dividers[0].get("bboxMm") or {}
+        right_d = back_dividers[-1].get("bboxMm") or {}
+        checks.append({"outerLeftDivider": left_d, "outerRightDivider": right_d})
+        if not (_close(left_d.get("x0"), ox) and _close(left_d.get("x1"), ox + cpt)):
+            findings.append({
+                "severity": "error",
+                "code": "back_corner_closure",
+                "detail": "BACK left outer edge divider must sit at x=[{:.2f},{:.2f}].".format(ox, ox + cpt),
+            })
+        if not (_close(right_d.get("x0"), ox + total_width - cpt) and _close(right_d.get("x1"), ox + total_width)):
+            findings.append({
+                "severity": "error",
+                "code": "back_corner_closure",
+                "detail": "BACK right outer edge divider must sit at x=[{:.2f},{:.2f}].".format(
+                    ox + total_width - cpt, ox + total_width
+                ),
+            })
+
+    left_conn = _bb("BACK.U_CONNECTOR_LEFT")
+    right_conn = _bb("BACK.U_CONNECTOR_RIGHT")
+    if not left_conn or not right_conn:
+        findings.append({
+            "severity": "error",
+            "code": "back_corner_closure",
+            "detail": "Both BACK.U_CONNECTOR_LEFT and BACK.U_CONNECTOR_RIGHT are required for corner closure.",
+        })
+    else:
+        checks.append({"leftConnector": left_conn, "rightConnector": right_conn})
+        if not (
+            _close(left_conn.get("x0"), ox + cpt)
+            and _close(left_conn.get("x1"), ox + depth)
+            and _close(left_conn.get("y1"), oy + depth)
+        ):
+            findings.append({
+                "severity": "error",
+                "code": "back_corner_closure",
+                "detail": "BACK.U_CONNECTOR_LEFT must occupy the left D×D corner band.",
+            })
+        if not (
+            _close(right_conn.get("x0"), ox + total_width - depth)
+            and _close(right_conn.get("x1"), ox + total_width - cpt)
+            and _close(right_conn.get("y1"), oy + depth)
+        ):
+            findings.append({
+                "severity": "error",
+                "code": "back_corner_closure",
+                "detail": "BACK.U_CONNECTOR_RIGHT must occupy the right D×D corner band.",
+            })
+
+    side_rear = []
+    for run_id in ("LEFT", "RIGHT"):
+        candidates = sorted(
+            [
+                row for row in (boards or [])
+                if isinstance(row, dict)
+                and str(row.get("runId") or "") == run_id
+                and str(row.get("localBoardId") or "").startswith("D")
+            ],
+            key=lambda row: float((row.get("bboxMm") or {}).get("y0") or 0.0),
+        )
+        if not candidates:
+            findings.append({
+                "severity": "error",
+                "code": "back_corner_closure",
+                "detail": "{} rear edge divider missing at y=D seam.".format(run_id),
+            })
+            continue
+        rear = candidates[0].get("bboxMm") or {}
+        side_rear.append(rear)
+        if not _close(rear.get("y0"), oy + depth):
+            findings.append({
+                "severity": "error",
+                "code": "back_corner_closure",
+                "detail": "{}.{} must start at y=D for corner screw face.".format(
+                    run_id, candidates[0].get("localBoardId")
+                ),
+            })
+    checks.append({"sideRearDividers": side_rear})
+    return {"ok": not findings, "checks": checks, "findings": findings}
+
+
+def audit_u_shape_postprocess(run_summaries, params=None):
+    """Require per-run T4/LED/connector postprocess counts for BACK-owned corners."""
+    params = params if isinstance(params, dict) else {}
+    findings = []
+    checks = []
+    runs = [row for row in (run_summaries or []) if isinstance(row, dict)]
+    by_id = {str(row.get("runId") or "").upper(): row for row in runs}
+    for run_id in ("LEFT", "BACK", "RIGHT"):
+        row = by_id.get(run_id)
+        if not row:
+            findings.append({
+                "severity": "error",
+                "code": "postprocess_missing_run",
+                "runId": run_id,
+                "detail": "Postprocess audit missing {} run summary.".format(run_id),
+            })
+            continue
+        post = row.get("overheadPostprocess") if isinstance(row.get("overheadPostprocess"), dict) else {}
+        rotations = [item for item in (post.get("rotations") or []) if isinstance(item, dict) and item.get("status") == "created"]
+        translations = [
+            item for item in (post.get("topPanelTranslations") or [])
+            if isinstance(item, dict) and item.get("status") == "created"
+        ]
+        led_cuts = [item for item in (post.get("ledGrooveCuts") or []) if isinstance(item, dict) and item.get("status") == "created"]
+        bp_conn = [item for item in (post.get("uConnectorBpGrooves") or []) if isinstance(item, dict) and item.get("status") == "created"]
+        t3_conn = [item for item in (post.get("uConnectorT3Grooves") or []) if isinstance(item, dict) and item.get("status") == "created"]
+        check = {
+            "runId": run_id,
+            "t4Rotations": len(rotations),
+            "topPanelTranslations": len(translations),
+            "ledGrooveCuts": len(led_cuts),
+            "uConnectorBpGrooves": len(bp_conn),
+            "uConnectorT3Grooves": len(t3_conn),
+        }
+        checks.append(check)
+        if len(rotations) < 1:
+            findings.append({
+                "severity": "error",
+                "code": "postprocess_t4_rotation",
+                "runId": run_id,
+                "detail": "{} needs at least one T4 rotation in overhead postprocess.".format(run_id),
+            })
+        if run_id == "BACK":
+            if len(bp_conn) < 2 or len(t3_conn) < 2:
+                findings.append({
+                    "severity": "error",
+                    "code": "postprocess_connector_grooves",
+                    "runId": run_id,
+                    "detail": "BACK postprocess must create 2 BP + 2 T3 connector grooves (got {}/{}).".format(
+                        len(bp_conn), len(t3_conn)
+                    ),
+                })
+        elif len(bp_conn) or len(t3_conn):
+            findings.append({
+                "severity": "error",
+                "code": "postprocess_connector_on_side",
+                "runId": run_id,
+                "detail": "{} must not own connector grooves after BACK migration.".format(run_id),
+            })
+        led_enabled = params.get("runLedGroove", {}).get(run_id) if isinstance(params.get("runLedGroove"), dict) else params.get("ledGroove")
+        if led_enabled is not False and len(led_cuts) < 1:
+            findings.append({
+                "severity": "error",
+                "code": "postprocess_led_cuts",
+                "runId": run_id,
+                "detail": "{} LED enabled but postprocess created no LED groove cuts.".format(run_id),
             })
     return {"ok": not findings, "checks": checks, "findings": findings}
 
@@ -1206,6 +1400,8 @@ def measure_u_shape_assembly(
         "ledGrooveAudit": None,
         "clearanceFrontAudit": None,
         "cornerOwnershipAudit": None,
+        "backCornerClosureAudit": None,
+        "postprocessAudit": None,
         "backT3NotchAudit": None,
         "t4GeometryAudit": None,
         "expectedBoards": [],
@@ -1416,6 +1612,19 @@ def measure_u_shape_assembly(
             [row.get("detail") for row in (corner_audit.get("findings") or []) if row.get("detail")]
         )
 
+    corner_closure_audit = audit_u_shape_back_corner_closure(
+        measure.get("boards") or [],
+        resolved_params,
+        tol_mm=tol_mm,
+    )
+    measure["backCornerClosureAudit"] = corner_closure_audit
+    measure["findings"].extend(corner_closure_audit.get("findings") or [])
+    if not corner_closure_audit.get("ok"):
+        measure["ok"] = False
+        measure["errors"].extend(
+            [row.get("detail") for row in (corner_closure_audit.get("findings") or []) if row.get("detail")]
+        )
+
     back_t3_notch_audit = audit_u_shape_back_t3_profile(
         result,
         measured_boards=measure.get("boards") or [],
@@ -1492,6 +1701,23 @@ def measure_u_shape_assembly(
         measure["findings"].extend(pose.get("findings") or [])
         if not pose.get("ok"):
             measure["ok"] = False
+
+    # Self-check path: restore create-time postprocess audit from assembly attrs.
+    if not isinstance(measure.get("postprocessAudit"), dict):
+        try:
+            attr = parent_component.attributes.itemByName(ATTRIBUTE_GROUP, "uShapePostprocessAudit")
+            if attr and attr.value:
+                stored = json.loads(attr.value)
+                if isinstance(stored, dict) and isinstance(stored.get("ok"), bool):
+                    measure["postprocessAudit"] = stored
+                    if stored.get("ok") is False:
+                        measure["ok"] = False
+                        measure["findings"].extend(stored.get("findings") or [])
+                        measure["errors"].extend(
+                            [row.get("detail") for row in (stored.get("findings") or []) if row.get("detail")]
+                        )
+        except Exception:
+            pass
     return measure
 
 
@@ -4031,6 +4257,25 @@ def create_rough_bodies_from_board_result(
                 summary["warnings"].append("Could not write panel metadata for generalTall board {}.".format(board_id))
             if panel_metadata_written:
                 panel_metadata_by_id[board_id] = panel_metadata
+        elif module_name in ("smallCabinet", "small_cabinet"):
+            try:
+                panel_metadata = build_panel_metadata(
+                    "smallCabinet",
+                    board,
+                    bbox=bbox,
+                    run_label=summary["runLabel"],
+                    carcass_color=carcass_color_tag,
+                    carcass_color_name=carcass_color_name,
+                )
+                panel_metadata_written = write_panel_metadata_to_body(body, panel_metadata)
+            except Exception as ex:
+                panel_metadata = None
+                panel_metadata_written = False
+                summary["warnings"].append("Small Cabinet metadata failed for {}: {}".format(board_id, ex))
+            if not panel_metadata_written:
+                summary["warnings"].append("Could not write panel metadata for smallCabinet board {}.".format(board_id))
+            if panel_metadata_written:
+                panel_metadata_by_id[board_id] = panel_metadata
 
         summary["createdBodies"] += 1
         summary["createdBoardIds"].append(board_id)
@@ -4798,6 +5043,7 @@ def create_u_shape_overhead_assembly(
             "uShapeOriginMm",
             json.dumps({"x": resolved_x, "y": resolved_y, "z": 0.0}, ensure_ascii=False),
         )
+        parent.attributes.add(ATTRIBUTE_GROUP, "adapterBuild", ADAPTER_BUILD)
     except Exception:
         pass
 
@@ -4912,7 +5158,24 @@ def create_u_shape_overhead_assembly(
         parent_occurrence=parent_occurrence,
         origin_offset_mm={"x": resolved_x, "y": resolved_y, "z": 0.0},
     )
+    postprocess_audit = audit_u_shape_postprocess(summary.get("runs") or [], params)
+    measure["postprocessAudit"] = postprocess_audit
+    measure.setdefault("findings", []).extend(postprocess_audit.get("findings") or [])
+    if not postprocess_audit.get("ok"):
+        measure["ok"] = False
+        measure.setdefault("errors", []).extend(
+            [row.get("detail") for row in (postprocess_audit.get("findings") or []) if row.get("detail")]
+        )
+    try:
+        parent.attributes.add(
+            ATTRIBUTE_GROUP,
+            "uShapePostprocessAudit",
+            json.dumps(postprocess_audit, ensure_ascii=False, separators=(",", ":")),
+        )
+    except Exception:
+        pass
     summary["measure"] = measure
+    summary["postprocessAudit"] = postprocess_audit
     footprint = measure.get("footprint") if isinstance(measure.get("footprint"), dict) else {}
     pose = measure.get("poseCompare") if isinstance(measure.get("poseCompare"), dict) else {}
     led_audit = measure.get("ledGrooveAudit") if isinstance(measure.get("ledGrooveAudit"), dict) else {}
@@ -4921,6 +5184,9 @@ def create_u_shape_overhead_assembly(
     corner_audit = measure.get("cornerOwnershipAudit") if isinstance(measure.get("cornerOwnershipAudit"), dict) else {}
     summary["cornerOwnershipAudit"] = corner_audit
     summary["cornerOwnershipFailed"] = bool(corner_audit and corner_audit.get("ok") is False)
+    closure_audit = measure.get("backCornerClosureAudit") if isinstance(measure.get("backCornerClosureAudit"), dict) else {}
+    summary["backCornerClosureAudit"] = closure_audit
+    summary["backCornerClosureFailed"] = bool(closure_audit and closure_audit.get("ok") is False)
     summary["notUShape"] = footprint.get("isUShape") is False
     contact = measure.get("contactAudit") if isinstance(measure.get("contactAudit"), dict) else {}
     summary["contactFailed"] = bool(contact and contact.get("ok") is False)

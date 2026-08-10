@@ -815,17 +815,41 @@ def _entity_record(entity, entity_kind, occurrence_path, component_name="", body
     )
     face_records = None
     if isinstance(metadata, dict):
-        # One disposable copy → live face overlay → single migrate.
-        working = copy.deepcopy(metadata)
-        if entity_kind in ("body", "selected_body"):
-            working, face_records = _overlay_face_registry_from_entities(
-                entity,
-                working,
-                collect_face_records=not light,
+        if light:
+            # Nesting / Ready / Lay Flat only need classification + outline cache.
+            # Skipping live face-attribute walk avoids ~0.5–6s/body on dense panels.
+            # Shallow copy + drop heavy SVG/registry keeps migrate cheap without
+            # losing features / nestingFlatOutline used by prepare + export stamp.
+            working = {
+                key: value
+                for key, value in metadata.items()
+                if key not in ("millingSurfaceSvg", "faceRegistry")
+            }
+            for key in (
+                "identity",
+                "classification",
+                "defaultAttributes",
+                "derivedTags",
+                "typedTags",
+                "lifecycle",
+            ):
+                if isinstance(working.get(key), dict):
+                    working[key] = dict(working[key])
+            normalized_metadata = attribute_state_service.migrate_metadata(
+                working, inplace=True
             )
-        normalized_metadata = attribute_state_service.migrate_metadata(
-            working, inplace=True
-        )
+        else:
+            # One disposable copy → live face overlay → single migrate.
+            working = copy.deepcopy(metadata)
+            if entity_kind in ("body", "selected_body"):
+                working, face_records = _overlay_face_registry_from_entities(
+                    entity,
+                    working,
+                    collect_face_records=True,
+                )
+            normalized_metadata = attribute_state_service.migrate_metadata(
+                working, inplace=True
+            )
     else:
         normalized_metadata = metadata
     summary = _metadata_summary(normalized_metadata, fallback_panel_id)
@@ -1001,9 +1025,34 @@ def _is_nested_instance(body):
             return False
     try:
         attr = body.attributes.itemByName("UnifiedCabinet", "instanceRole")
-        return bool(attr and str(attr.value) == "nested")
+        return bool(attr and str(attr.value) in ("nested", "layFlat"))
     except Exception:
         return False
+
+
+def _is_lay_flat_workpiece(body):
+    if work_zones is not None:
+        try:
+            return work_zones.is_lay_flat_workpiece(body)
+        except Exception:
+            return False
+    try:
+        attr = body.attributes.itemByName("UnifiedCabinet", "systemRole")
+        if attr and str(attr.value or "") == "layFlatWorkpiece":
+            return True
+        role = body.attributes.itemByName("UnifiedCabinet", "instanceRole")
+        return bool(role and str(role.value or "") == "layFlat")
+    except Exception:
+        return False
+
+
+def _skip_copy_body(body, include_lay_flat=False):
+    """Skip Nesting copies; optionally keep Lay Flat manufacturing copies."""
+    if not _is_nested_instance(body):
+        return False
+    if include_lay_flat and _is_lay_flat_workpiece(body):
+        return False
+    return True
 
 
 def _safe_entity_token(entity):
@@ -1455,7 +1504,9 @@ def _occurrence_path_indices(occurrence):
     return path
 
 
-def _collect_bodies_under_occurrence(occurrence, root_component, sink, seen):
+def _collect_bodies_under_occurrence(
+    occurrence, root_component, sink, seen, include_lay_flat=False
+):
     """Append unique solid panel bodies under an occurrence as selectable proxies.
 
     Prefer ``occurrence.bRepBodies`` — Fusion returns body proxies already in
@@ -1484,7 +1535,7 @@ def _collect_bodies_under_occurrence(occurrence, root_component, sink, seen):
             pass
         if _is_assembly_zone(body):
             continue
-        if _is_nested_instance(body):
+        if _skip_copy_body(body, include_lay_flat=include_lay_flat):
             continue
         key = _body_key(body)
         if key in seen:
@@ -1502,10 +1553,14 @@ def _collect_bodies_under_occurrence(occurrence, root_component, sink, seen):
             child = children.item(index)
         except Exception:
             continue
-        _collect_bodies_under_occurrence(child, root_component, sink, seen)
+        _collect_bodies_under_occurrence(
+            child, root_component, sink, seen, include_lay_flat=include_lay_flat
+        )
 
 
-def _collect_bodies_under_component(component, occurrence_path, root_component, sink, seen):
+def _collect_bodies_under_component(
+    component, occurrence_path, root_component, sink, seen, include_lay_flat=False
+):
     """Append unique solid panel bodies under component (skip zones / nested copies)."""
     if not component:
         return
@@ -1513,7 +1568,7 @@ def _collect_bodies_under_component(component, occurrence_path, root_component, 
     for body in list_solid_bodies(component):
         if _is_assembly_zone(body):
             continue
-        if _is_nested_instance(body):
+        if _skip_copy_body(body, include_lay_flat=include_lay_flat):
             continue
         scan_body = _body_proxy_in_root(body, root, occurrence_path)
         key = _body_key(scan_body)
@@ -1540,7 +1595,9 @@ def _collect_bodies_under_component(component, occurrence_path, root_component, 
                         child_proxy = child.createForAssemblyContext(parent_occ) or child
                     except Exception:
                         child_proxy = child
-            _collect_bodies_under_occurrence(child_proxy, root, sink, seen)
+            _collect_bodies_under_occurrence(
+                child_proxy, root, sink, seen, include_lay_flat=include_lay_flat
+            )
             continue
         except Exception:
             pass
@@ -1550,13 +1607,16 @@ def _collect_bodies_under_component(component, occurrence_path, root_component, 
             root,
             sink,
             seen,
+            include_lay_flat=include_lay_flat,
         )
 
 
-def bodies_from_selected_entities(selected_entities, root_component=None):
+def bodies_from_selected_entities(selected_entities, root_component=None, include_lay_flat=True):
     """Expand Fusion selection to unique solid bodies (assemblies included).
 
     Supports Occurrence / Component / BRepBody / BRepFace / BRepEdge.
+    Lay Flat manufacturing copies are included by default so .cnjob export can
+    use underside outlines; Nesting Zone sheet copies stay excluded.
     Returns (bodies, warnings).
     """
     bodies = []
@@ -1567,7 +1627,9 @@ def bodies_from_selected_entities(selected_entities, root_component=None):
         kind = _entity_kind(entity)
         if kind == "occurrence":
             before = len(bodies)
-            _collect_bodies_under_occurrence(entity, root_component, bodies, seen)
+            _collect_bodies_under_occurrence(
+                entity, root_component, bodies, seen, include_lay_flat=include_lay_flat
+            )
             if len(bodies) == before:
                 # Fallback: path-based walk if occurrence.bRepBodies was empty.
                 try:
@@ -1576,14 +1638,28 @@ def bodies_from_selected_entities(selected_entities, root_component=None):
                     component = None
                 if component:
                     path = _occurrence_path_indices(entity)
-                    _collect_bodies_under_component(component, path, root_component, bodies, seen)
+                    _collect_bodies_under_component(
+                        component,
+                        path,
+                        root_component,
+                        bodies,
+                        seen,
+                        include_lay_flat=include_lay_flat,
+                    )
             if len(bodies) == before:
                 warnings.append("No solid panel bodies under selected occurrence.")
             continue
 
         if kind == "component":
             before = len(bodies)
-            _collect_bodies_under_component(entity, [], root_component or entity, bodies, seen)
+            _collect_bodies_under_component(
+                entity,
+                [],
+                root_component or entity,
+                bodies,
+                seen,
+                include_lay_flat=include_lay_flat,
+            )
             if len(bodies) == before:
                 warnings.append("No solid panel bodies under selected component.")
             continue
@@ -1595,7 +1671,7 @@ def bodies_from_selected_entities(selected_entities, root_component=None):
         if _is_assembly_zone(body):
             warnings.append("Skipped work-zone helper body.")
             continue
-        if _is_nested_instance(body):
+        if _skip_copy_body(body, include_lay_flat=include_lay_flat):
             warnings.append("Skipped nested-instance copy (nesting output).")
             continue
         key = _body_key(body)

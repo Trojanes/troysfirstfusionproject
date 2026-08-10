@@ -124,6 +124,69 @@ def face_world_plane(face):
     return normalize_vector(normal), [float(centroid[0]), float(centroid[1]), float(centroid[2])]
 
 
+_CARDINAL_DIRECTION_VEC = {
+    "+X": [1.0, 0.0, 0.0],
+    "-X": [-1.0, 0.0, 0.0],
+    "+Y": [0.0, 1.0, 0.0],
+    "-Y": [0.0, -1.0, 0.0],
+    "+Z": [0.0, 0.0, 1.0],
+    "-Z": [0.0, 0.0, -1.0],
+}
+
+
+def roles_from_milling_direction(normal_a, normal_b, milling_direction, min_dot=0.7):
+    """Map generator millingDirection (±axis) onto two broad-face normals.
+
+    Returns ``(role_a, role_b)`` or None when the direction cannot be matched.
+    MILLING is the face whose outward normal aligns with ``millingDirection``
+    (cutting face); the opposite face is NON_MILLING (colour).
+    """
+    target = _CARDINAL_DIRECTION_VEC.get(str(milling_direction or "").strip().upper())
+    if not target or not normal_a or not normal_b:
+        return None
+    n_a = normalize_vector(normal_a)
+    n_b = normalize_vector(normal_b)
+    dot_a = dot3(n_a, target)
+    dot_b = dot3(n_b, target)
+    if dot_a >= float(min_dot) and dot_a > dot_b + 1e-9:
+        return MILLING_SURFACE, NON_MILLING_SURFACE
+    if dot_b >= float(min_dot) and dot_b > dot_a + 1e-9:
+        return NON_MILLING_SURFACE, MILLING_SURFACE
+    return None
+
+
+def _body_generator_milling_direction(body):
+    """Read millingDirection from generator panel metadata on the body."""
+    try:
+        from tag_metadata_editor import _read_body_metadata_raw
+    except Exception:
+        try:
+            from panel_attributes.tag_metadata_editor import _read_body_metadata_raw
+        except Exception:
+            return ""
+    if not callable(_read_body_metadata_raw):
+        return ""
+    try:
+        metadata, _err = _read_body_metadata_raw(body)
+    except Exception:
+        return ""
+    if not isinstance(metadata, dict):
+        return ""
+    defaults = metadata.get("defaultAttributes") if isinstance(metadata.get("defaultAttributes"), dict) else {}
+    design = metadata.get("designGeometry") if isinstance(metadata.get("designGeometry"), dict) else {}
+    return str(defaults.get("millingDirection") or design.get("millingDirection") or "").strip().upper()
+
+
+def roles_from_body_milling_direction(body, surface_a, surface_b):
+    """Resolve MILLING/NON_MILLING from stored generator millingDirection."""
+    direction = _body_generator_milling_direction(body)
+    if not direction:
+        return None
+    n_a, _c_a = face_world_plane(surface_a)
+    n_b, _c_b = face_world_plane(surface_b)
+    return roles_from_milling_direction(n_a, n_b, direction)
+
+
 def faces_coplanar_same_orientation(face_a, face_b, tol_mm=PLANE_OFFSET_TOLERANCE_MM):
     n_a, c_a = face_world_plane(face_a)
     n_b, c_b = face_world_plane(face_b)
@@ -368,6 +431,11 @@ def analyze_milling_surfaces(bodies, write_pair):
             if slot_roles and MILLING_SURFACE in slot_roles:
                 role_a, role_b = slot_roles[0], slot_roles[1]
                 source = "half_slot"
+            else:
+                directed = roles_from_body_milling_direction(body, surface_a, surface_b)
+                if directed:
+                    role_a, role_b = directed
+                    source = "generator_direction"
 
         # Colour (NON_MILLING) and milling must stay opposite — never same role.
         if role_a == MILLING_SURFACE and role_b == MILLING_SURFACE:
@@ -633,6 +701,254 @@ def swap_decision(role_a, role_b):
     if b_milling and not a_milling:
         return "A"
     return None
+
+
+def resolve_flip_faces(surface_a, surface_b, role_a, role_b, preferred_face=None):
+    """Pure role flip for one body — no hinge/slot geometry.
+
+    Cost is independent of how many other boards are in the design:
+    complementary MILLING/NON_MILLING → swap; otherwise commit a definite
+    pair (preferred face, if any, becomes colour / NON_MILLING).
+    """
+    decision = swap_decision(role_a, role_b)
+    if decision == "A":
+        return surface_a, surface_b
+    if decision == "B":
+        return surface_b, surface_a
+
+    key_a = _safe_face_key(surface_a)
+    key_b = _safe_face_key(surface_b)
+    pref_key = _safe_face_key(preferred_face) if preferred_face is not None else ""
+    if pref_key and pref_key == key_a:
+        return surface_b, surface_a
+    if pref_key and pref_key == key_b:
+        return surface_a, surface_b
+    return surface_a, surface_b
+
+
+def _iter_body_attr_entities(body):
+    """Yield proxy then native so occurrence attribute reads are not missed."""
+    seen = set()
+    candidates = [body]
+    try:
+        native = getattr(body, "nativeObject", None)
+        if native is not None:
+            candidates.append(native)
+    except Exception:
+        pass
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        key = id(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield candidate
+
+
+def _source_panel_id_from_panel_id(panel_id):
+    """Derive source id from Lay Flat panelId like ``overhead.D1@layflat-2-0``."""
+    text = str(panel_id or "").strip()
+    if not text:
+        return ""
+    marker = "@layflat"
+    idx = text.lower().find(marker)
+    if idx > 0:
+        return text[:idx].strip()
+    return ""
+
+
+def read_source_panel_id(body):
+    """Return Lay Flat / Nesting ``sourcePanelId`` when present on a copy body."""
+    if body is None:
+        return ""
+    for entity in _iter_body_attr_entities(body):
+        try:
+            attrs = entity.attributes
+            attr = (
+                attrs.itemByName("UnifiedCabinet", "sourcePanelId") if attrs else None
+            )
+            value = str(attr.value or "").strip() if attr and attr.value else ""
+            if value:
+                return value
+        except Exception:
+            pass
+        try:
+            attrs = entity.attributes
+            attr = (
+                attrs.itemByName("UnifiedCabinet.Panel", "panelId") if attrs else None
+            )
+            derived = _source_panel_id_from_panel_id(
+                str(attr.value or "").strip() if attr and attr.value else ""
+            )
+            if derived:
+                return derived
+        except Exception:
+            pass
+    try:
+        from tag_metadata_editor import _read_body_metadata_raw
+    except Exception:
+        try:
+            from panel_attributes.tag_metadata_editor import _read_body_metadata_raw
+        except Exception:
+            return ""
+    if not callable(_read_body_metadata_raw):
+        return ""
+    try:
+        metadata, _err = _read_body_metadata_raw(body)
+    except Exception:
+        return ""
+    if not isinstance(metadata, dict):
+        return ""
+    identity = (
+        metadata.get("identity") if isinstance(metadata.get("identity"), dict) else {}
+    )
+    value = str(identity.get("sourcePanelId") or "").strip()
+    if value:
+        return value
+    return _source_panel_id_from_panel_id(identity.get("panelId"))
+
+
+def flip_selected_body_milling(bodies, write_roles, preferred_faces=None):
+    """Fast manual flip: only the given bodies, no design-wide scan.
+
+    Does **not** expand assemblies, detect hinge cups, or extract half-slots.
+    Per body: classify two broad faces → flip stored MILLING to the other side
+    → write + lock. Intended for Tag Edit → Milling Analysis “Revert Selected”.
+    """
+    updated = []
+    skipped = []
+    warnings = []
+    preferred_faces = preferred_faces or {}
+    for body in bodies or []:
+        name = _body_name(body)
+        surface_a, surface_b, classify_warnings = classify_body_surfaces(body)
+        warnings.extend(classify_warnings or [])
+        if surface_a is None or surface_b is None:
+            skipped.append({"bodyName": name, "reason": "no broad surfaces"})
+            continue
+        role_a = _current_milling_role(surface_a)
+        role_b = _current_milling_role(surface_b)
+        new_milling, new_non = resolve_flip_faces(
+            surface_a,
+            surface_b,
+            role_a,
+            role_b,
+            preferred_face=preferred_faces.get(id(body)),
+        )
+        if new_milling is None or new_non is None or new_milling is new_non:
+            skipped.append({
+                "bodyName": name,
+                "reason": "could not resolve opposite broad faces (roles: {}/{})".format(
+                    role_a or "UNASSIGNED", role_b or "UNASSIGNED"
+                ),
+            })
+            continue
+        if callable(write_roles):
+            try:
+                write_roles(body, new_milling, new_non)
+            except Exception as ex:
+                skipped.append({"bodyName": name, "reason": str(ex)})
+                warnings.append("{}: write failed ({})".format(name, ex))
+                continue
+        updated.append({
+            "bodyName": name,
+            "fromRoles": [role_a or "UNASSIGNED", role_b or "UNASSIGNED"],
+            "fastPath": True,
+        })
+
+    message = "Flipped milling face: updated {}, skipped {}.".format(len(updated), len(skipped))
+    return {
+        "ok": len(updated) > 0,
+        "updatedCount": len(updated),
+        "skippedCount": len(skipped),
+        "updated": updated,
+        "skipped": skipped,
+        "warnings": warnings[:40],
+        "message": message,
+    }
+
+
+def make_selected_faces_colour(entries, write_roles):
+    """Make explicitly selected broad faces the colour side, in O(selection).
+
+    ``entries`` contains one item per selected body:
+    ``{"body": body, "faces": [...], "surfaceMode": "SINGLE_SIDED"}``.
+    Single-sided panels receive a definite complementary pair: selected face is
+    NON_MILLING (colour), opposite face is MILLING (non-colour). Double-sided
+    panels need no orientation write because both broad faces carry the colour.
+    No hinge/slot extraction or design-wide expansion is performed.
+    """
+    updated = []
+    unchanged_double = []
+    skipped = []
+    warnings = []
+    for entry in entries or []:
+        body = (entry or {}).get("body")
+        name = _body_name(body)
+        mode = str((entry or {}).get("surfaceMode") or "").strip().upper()
+        selected_faces = list((entry or {}).get("faces") or [])
+        if mode == "DOUBLE_SIDED":
+            unchanged_double.append({"bodyName": name})
+            continue
+        if mode != "SINGLE_SIDED":
+            skipped.append({
+                "bodyName": name,
+                "reason": "surfaceMode is not SINGLE_SIDED or DOUBLE_SIDED",
+            })
+            continue
+
+        surface_a, surface_b, classify_warnings = classify_body_surfaces(body)
+        warnings.extend(classify_warnings or [])
+        if surface_a is None or surface_b is None:
+            skipped.append({"bodyName": name, "reason": "no broad surfaces"})
+            continue
+
+        selected_keys = {
+            _safe_face_key(face) for face in selected_faces if face is not None
+        }
+        selected_a = _safe_face_key(surface_a) in selected_keys
+        selected_b = _safe_face_key(surface_b) in selected_keys
+        if selected_a and selected_b:
+            skipped.append({
+                "bodyName": name,
+                "reason": "both broad faces selected on a single-sided panel",
+            })
+            continue
+        if not selected_a and not selected_b:
+            skipped.append({
+                "bodyName": name,
+                "reason": "selected face is not one of the two broad surfaces",
+            })
+            continue
+
+        colour_face = surface_a if selected_a else surface_b
+        milling_face = surface_b if selected_a else surface_a
+        try:
+            if callable(write_roles):
+                write_roles(body, milling_face, colour_face)
+        except Exception as ex:
+            skipped.append({"bodyName": name, "reason": str(ex)})
+            warnings.append("{}: write failed ({})".format(name, ex))
+            continue
+        updated.append({"bodyName": name, "fastPath": True})
+
+    effective_count = len(updated) + len(unchanged_double)
+    message = (
+        "Set selected colour faces: updated {}, double-sided unchanged {}, skipped {}."
+        .format(len(updated), len(unchanged_double), len(skipped))
+    )
+    return {
+        "ok": effective_count > 0,
+        "updatedCount": len(updated),
+        "doubleSidedCount": len(unchanged_double),
+        "skippedCount": len(skipped),
+        "updated": updated,
+        "doubleSided": unchanged_double,
+        "skipped": skipped,
+        "warnings": warnings[:40],
+        "message": message,
+    }
 
 
 def _resolve_swap_faces(body, surface_a, surface_b, role_a, role_b, preferred_face=None):

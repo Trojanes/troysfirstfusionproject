@@ -35,6 +35,8 @@ INSTANCE_ROLE_ATTR_NAME = "instanceRole"
 INSTANCE_ROLE_GENERATED = "generated"
 INSTANCE_ROLE_NESTED = "nested"
 SYSTEM_ROLE_NESTING_WORKPIECE = "nestingWorkpiece"
+SYSTEM_ROLE_LAY_FLAT_WORKPIECE = "layFlatWorkpiece"
+INSTANCE_ROLE_LAY_FLAT = "layFlat"
 
 WORK_ZONE_MARKER_GROUP = "UnifiedCabinet"
 WORK_ZONE_MARKER_NAME = "systemRole"
@@ -263,37 +265,79 @@ def zone_of_body(body, layout):
     return zone_of_point(layout, center[0], center[1])
 
 
+def _attribute_bodies(body):
+    """Try proxy then native — Fusion often hides attrs on one side."""
+    seen = set()
+    for candidate in (body, getattr(body, "nativeObject", None) if body is not None else None):
+        if candidate is None:
+            continue
+        key = id(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield candidate
+
+
 def instance_role_of_body(body):
-    try:
-        attr = body.attributes.itemByName(INSTANCE_ROLE_ATTR_GROUP, INSTANCE_ROLE_ATTR_NAME)
-        return str(attr.value) if attr and attr.value else ""
-    except Exception:
-        return ""
+    for entity in _attribute_bodies(body):
+        try:
+            attr = entity.attributes.itemByName(
+                INSTANCE_ROLE_ATTR_GROUP, INSTANCE_ROLE_ATTR_NAME
+            )
+            if attr and attr.value:
+                return str(attr.value)
+        except Exception:
+            continue
+    return ""
 
 
 def is_nested_instance(body):
-    if instance_role_of_body(body) == INSTANCE_ROLE_NESTED:
+    """True for Nesting / Lay Flat manufacturing copies (skip in source scans)."""
+    role = instance_role_of_body(body)
+    if role in (INSTANCE_ROLE_NESTED, INSTANCE_ROLE_LAY_FLAT):
         return True
-    try:
-        attr = body.attributes.itemByName(
-            WORK_ZONE_MARKER_GROUP, WORK_ZONE_MARKER_NAME
-        )
-        return bool(
-            attr
-            and str(attr.value or "") == SYSTEM_ROLE_NESTING_WORKPIECE
-        )
-    except Exception:
-        return False
+    for entity in _attribute_bodies(body):
+        try:
+            attr = entity.attributes.itemByName(
+                WORK_ZONE_MARKER_GROUP, WORK_ZONE_MARKER_NAME
+            )
+            value = str(attr.value or "") if attr else ""
+            if value in (
+                SYSTEM_ROLE_NESTING_WORKPIECE,
+                SYSTEM_ROLE_LAY_FLAT_WORKPIECE,
+            ):
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def is_lay_flat_workpiece(body):
+    if instance_role_of_body(body) == INSTANCE_ROLE_LAY_FLAT:
+        return True
+    for entity in _attribute_bodies(body):
+        try:
+            attr = entity.attributes.itemByName(
+                WORK_ZONE_MARKER_GROUP, WORK_ZONE_MARKER_NAME
+            )
+            if attr and str(attr.value or "") == SYSTEM_ROLE_LAY_FLAT_WORKPIECE:
+                return True
+        except Exception:
+            continue
+    return False
 
 
 def mark_instance_role(body, role):
-    try:
-        attrs = body.attributes
-        existing = attrs.itemByName(INSTANCE_ROLE_ATTR_GROUP, INSTANCE_ROLE_ATTR_NAME)
-        if existing is not None:
-            existing.value = str(role)
-        else:
-            attrs.add(INSTANCE_ROLE_ATTR_GROUP, INSTANCE_ROLE_ATTR_NAME, str(role))
-        return True
-    except Exception:
-        return False
+    wrote = False
+    for entity in _attribute_bodies(body):
+        try:
+            attrs = entity.attributes
+            existing = attrs.itemByName(INSTANCE_ROLE_ATTR_GROUP, INSTANCE_ROLE_ATTR_NAME)
+            if existing is not None:
+                existing.value = str(role)
+            else:
+                attrs.add(INSTANCE_ROLE_ATTR_GROUP, INSTANCE_ROLE_ATTR_NAME, str(role))
+            wrote = True
+        except Exception:
+            continue
+    return wrote

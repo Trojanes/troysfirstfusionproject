@@ -17,6 +17,8 @@ export interface KitchenGlobalSettings {
   height: number;
   materialThickness: number;
   frontThickness: number;
+  /** Gap between front panels and adjacent structural references. */
+  frontClearance?: number;
   bottomClearanceHeight: number;
   bottomClearanceStyle: "style_1" | "style_2" | string;
   /** Style 1 B3 bottom-face LED T-groove. Default on when omitted. */
@@ -32,6 +34,12 @@ export interface KitchenZone {
   zoneType: KitchenZoneType;
   shelfEnabled?: boolean;
   shelfHeight?: number;
+  /**
+   * Side-door bottom bay only (left_door/right_door, Style 1): add full-depth
+   * appliance floor behind B3 + underside supports for a washing machine.
+   * Hard-gated: column must not intersect any wheel avoidance.
+   */
+  applianceFloorEnabled?: boolean;
   leftSidePanelOptions?: SidePanelOptions;
   rightSidePanelOptions?: SidePanelOptions;
 }
@@ -192,6 +200,9 @@ export interface BoardGeometry {
     | "drawer_divider"
     | "full_depth_shelf"
     | "door_shelf"
+    | "appliance_floor"
+    | "underside_support"
+    | "stove_side_panel"
     | "avoidance_top"
     | "avoidance_front"
     | "side_strengthening_strip";

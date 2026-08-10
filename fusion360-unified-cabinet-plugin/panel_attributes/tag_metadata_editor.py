@@ -403,33 +403,103 @@ FACE_FIELD_PATCHERS = {
 }
 
 
+def _iter_attribute_entities(body):
+    """Yield proxy then native so Lay Flat / occurrence attrs are not missed."""
+    seen = set()
+    candidates = [body]
+    try:
+        is_proxy = getattr(body, "isProxy", False)
+        if isinstance(is_proxy, bool) and is_proxy:
+            native = getattr(body, "nativeObject", None)
+            if native is not None:
+                candidates.append(native)
+    except Exception:
+        pass
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        key = id(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield candidate
+
+
+def _classification_richness(metadata):
+    if not isinstance(metadata, dict):
+        return 0
+    score = 0
+    classification = metadata.get("classification")
+    if isinstance(classification, dict):
+        for field in ("boardType", "color", "cuttingFace"):
+            state = classification.get(field)
+            # Only real values count — empty classification shells must not beat
+            # identity-rich Lay Flat copies that still carry derivedTags.
+            if isinstance(state, dict) and str(state.get("value") or "").strip():
+                score += 2
+            elif not isinstance(state, dict) and str(state or "").strip():
+                score += 1
+    derived = metadata.get("derivedTags") if isinstance(metadata.get("derivedTags"), dict) else {}
+    typed = metadata.get("typedTags") if isinstance(metadata.get("typedTags"), dict) else {}
+    for key in ("boardTypeTag", "colorTag"):
+        if str(derived.get(key) or typed.get(key) or "").strip():
+            score += 1
+    identity = metadata.get("identity") if isinstance(metadata.get("identity"), dict) else {}
+    if str(identity.get("sourcePanelId") or identity.get("panelId") or "").strip():
+        score += 2
+    if metadata.get("nestingFlatOutline") or metadata.get("features"):
+        score += 1
+    return score
+
+
 def _read_body_metadata_raw(body):
     if not body:
         return None, "Missing body"
-    try:
-        attrs = body.attributes
-        attr = attrs.itemByName(PANEL_ATTRIBUTE_GROUP, PANEL_METADATA_ATTR) if attrs else None
-        if not attr:
-            return None, None
-        raw = str(attr.value or "").strip()
-        if not raw:
-            return None, "Empty metadata attribute"
-        return json.loads(raw), None
-    except json.JSONDecodeError as ex:
-        return None, "Invalid metadata JSON: {}".format(ex)
-    except Exception as ex:
-        return None, str(ex)
+    best = None
+    best_score = -1
+    last_error = None
+    found_any = False
+    for entity in _iter_attribute_entities(body):
+        try:
+            attrs = entity.attributes
+            attr = attrs.itemByName(PANEL_ATTRIBUTE_GROUP, PANEL_METADATA_ATTR) if attrs else None
+            if not attr:
+                continue
+            raw = str(attr.value or "").strip()
+            if not raw:
+                last_error = "Empty metadata attribute"
+                continue
+            found_any = True
+            data = json.loads(raw)
+            if not isinstance(data, dict):
+                continue
+            score = _classification_richness(data)
+            if score > best_score:
+                best = data
+                best_score = score
+        except json.JSONDecodeError as ex:
+            last_error = "Invalid metadata JSON: {}".format(ex)
+        except Exception as ex:
+            last_error = str(ex)
+    if best is not None:
+        return best, None
+    if found_any:
+        return None, last_error or "Empty metadata attribute"
+    return None, None
 
 
 def _bootstrap_body_metadata(body, existing_metadata=None):
     metadata = copy.deepcopy(existing_metadata) if isinstance(existing_metadata, dict) else {}
     panel_id = ""
-    try:
-        attrs = body.attributes
-        attr = attrs.itemByName(PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR) if attrs else None
-        panel_id = str(attr.value or "").strip() if attr and attr.value else ""
-    except Exception:
-        panel_id = ""
+    for entity in _iter_attribute_entities(body):
+        try:
+            attrs = entity.attributes
+            attr = attrs.itemByName(PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR) if attrs else None
+            panel_id = str(attr.value or "").strip() if attr and attr.value else ""
+        except Exception:
+            panel_id = ""
+        if panel_id:
+            break
 
     metadata.setdefault("schemaVersion", 1)
     identity = _ensure_dict(metadata, "identity")
@@ -447,18 +517,26 @@ def _write_body_metadata(body, metadata):
     metadata = attribute_state_service.migrate_metadata(metadata)
     payload = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
     panel_id = str(_ensure_dict(metadata, "identity").get("panelId") or "").strip()
-    attrs = body.attributes
-    if panel_id:
-        existing_id = attrs.itemByName(PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR) if attrs else None
-        if existing_id:
-            existing_id.value = panel_id
-        else:
-            attrs.add(PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR, panel_id)
-    existing_payload = attrs.itemByName(PANEL_ATTRIBUTE_GROUP, PANEL_METADATA_ATTR) if attrs else None
-    if existing_payload:
-        existing_payload.value = payload
-    else:
-        attrs.add(PANEL_ATTRIBUTE_GROUP, PANEL_METADATA_ATTR, payload)
+    wrote = False
+    for entity in _iter_attribute_entities(body):
+        try:
+            attrs = entity.attributes
+            if panel_id:
+                existing_id = attrs.itemByName(PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR) if attrs else None
+                if existing_id:
+                    existing_id.value = panel_id
+                else:
+                    attrs.add(PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR, panel_id)
+            existing_payload = attrs.itemByName(PANEL_ATTRIBUTE_GROUP, PANEL_METADATA_ATTR) if attrs else None
+            if existing_payload:
+                existing_payload.value = payload
+            else:
+                attrs.add(PANEL_ATTRIBUTE_GROUP, PANEL_METADATA_ATTR, payload)
+            wrote = True
+        except Exception:
+            continue
+    if not wrote:
+        raise ValueError("Could not write body metadata attributes.")
     return metadata
 
 

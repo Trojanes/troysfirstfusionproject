@@ -46,6 +46,7 @@ def _ensure_paths(plugin_dir):
         os.path.join(plugin_dir, "modules", "overhead"),
         os.path.join(plugin_dir, "modules", "kitchen"),
         os.path.join(plugin_dir, "modules", "lounge"),
+        os.path.join(plugin_dir, "modules", "small_cabinet"),
         os.path.join(plugin_dir, "modules", "tools"),
         os.path.join(plugin_dir, "modules", "hardware"),
         os.path.join(plugin_dir, "modules", "relationships"),
@@ -97,6 +98,7 @@ class UnifiedCabinetPluginApp:
         u_shape_overhead_module = importlib.reload(importlib.import_module("modules.u_shape_overhead.controller"))
         kitchen_module = importlib.reload(importlib.import_module("modules.kitchen.controller"))
         lounge_module = importlib.reload(importlib.import_module("modules.lounge.controller"))
+        small_cabinet_module = importlib.reload(importlib.import_module("modules.small_cabinet.controller"))
         tools_module = importlib.reload(importlib.import_module("modules.tools.controller"))
         hardware_module = importlib.reload(importlib.import_module("modules.hardware.controller"))
         relationships_module = importlib.reload(importlib.import_module("modules.relationships.controller"))
@@ -111,6 +113,7 @@ class UnifiedCabinetPluginApp:
         u_shape_overhead = u_shape_overhead_module.UShapeOverheadController(self.plugin_dir, self.fusion)
         kitchen = kitchen_module.KitchenController(self.plugin_dir, self.fusion)
         lounge = lounge_module.LoungeController(self.plugin_dir, self.fusion)
+        small_cabinet = small_cabinet_module.SmallCabinetController(self.plugin_dir, self.fusion)
         tools = tools_module.ToolsController()
         hardware = hardware_module.HardwareController(self.plugin_dir, self.fusion)
         relationships = relationships_module.RelationshipsController(self.fusion)
@@ -132,6 +135,8 @@ class UnifiedCabinetPluginApp:
             "lounge.generateGeometry": lounge.generate_geometry,
             "lounge.createFlatBodies": lounge.create_flat_bodies,
             "lounge.createAssemblyBodies": lounge.create_assembly_bodies,
+            "smallCabinet.generate": small_cabinet.generate,
+            "smallCabinet.createFusionRoughBodies": small_cabinet.create_fusion_rough_bodies,
             "tools.status": tools.status,
             "hardware.previewScrewHolesFromRelationship": hardware.preview_screw_holes_from_relationship,
             "hardware.createScrewHolesFromRelationship": hardware.create_screw_holes_from_relationship,
@@ -184,6 +189,14 @@ class UnifiedCabinetPluginApp:
             "panelAttributes.createNestingZoneLayout": panel_attributes.create_nesting_zone_layout,
             "panelAttributes.createNestingLayoutSketch": panel_attributes.create_nesting_layout_sketch,
             "panelAttributes.exportNestingLayoutDxf": panel_attributes.export_nesting_layout_dxf,
+            "panelAttributes.exportManufacturingSnapshot": panel_attributes.export_manufacturing_snapshot,
+            "panelAttributes.createLayFlatLayout": panel_attributes.create_lay_flat_layout,
+            "panelAttributes.checkLayFlatFacesUp": panel_attributes.check_lay_flat_faces_up,
+            "panelAttributes.analyzeLayFlatManufacturing": panel_attributes.analyze_lay_flat_manufacturing,
+            "panelAttributes.checkLayFlatExportReady": panel_attributes.check_lay_flat_export_ready,
+            "panelAttributes.tagScanLayFlat": panel_attributes.tag_scan_lay_flat,
+            "panelAttributes.getLayFlatTagEditor": panel_attributes.get_lay_flat_tag_editor,
+            "panelAttributes.applyLayFlatTags": panel_attributes.apply_lay_flat_tags,
             "panelAttributes.tagScanSelected": panel_attributes.tag_scan_selected,
             "panelAttributes.applyTagScanDrafts": panel_attributes.apply_tag_scan_drafts,
             "panelAttributes.resetAttributeToAuto": panel_attributes.reset_attribute_to_auto,
@@ -191,6 +204,9 @@ class UnifiedCabinetPluginApp:
             "panelAttributes.propagateMillingFromHingeCups": panel_attributes.propagate_milling_from_hinge_cups,
             "panelAttributes.diagnoseHingeFaces": panel_attributes.diagnose_hinge_faces,
             "panelAttributes.revertDoorSurfaces": panel_attributes.revert_door_surfaces,
+            "panelAttributes.revertSelectedMilling": panel_attributes.revert_selected_milling,
+            "panelAttributes.reverseMillingFace": panel_attributes.reverse_milling_face,
+            "panelAttributes.makeSelectedFacesColour": panel_attributes.make_selected_faces_colour,
             "panelAttributes.analyzeMillingSurfaces": panel_attributes.analyze_milling_surfaces,
             "panelAttributes.selectMillingFaces": panel_attributes.select_milling_faces,
             "panelAttributes.orientDoorFaces": panel_attributes.orient_door_faces_from_view_point,

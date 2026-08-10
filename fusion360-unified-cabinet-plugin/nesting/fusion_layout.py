@@ -13,10 +13,12 @@ try:
     from nesting import collision_validate
     from nesting.layout import grouped_row_layout
     from nesting.sheet_pack import sheet_pack_layout
+    from nesting.workpiece_names import nesting_workpiece_name
 except Exception:
     import collision_validate
     from layout import grouped_row_layout
     from sheet_pack import sheet_pack_layout
+    from workpiece_names import nesting_workpiece_name
 
 
 OUTPUT_MARKER_GROUP = "UnifiedCabinet"
@@ -27,6 +29,8 @@ INSTANCE_ROLE_NESTED = "nested"
 WORKPIECE_GROUP = "UnifiedCabinet.NestingWorkpiece"
 WORKPIECE_MANIFEST_NAME = "workpieceManifest"
 LAYOUT_COMPONENT_NAME = "NESTING_LAYOUT"
+LAY_FLAT_COMPONENT_NAME = "LAY_FLAT"
+LAY_FLAT_OUTPUT_VALUE = "layFlatOutput"
 SHEET_BOUNDARY_SKETCH_NAME = "NESTING_SHEETS"
 
 
@@ -101,10 +105,8 @@ def delete_previous_layouts(root_component, exclude_component=None):
                 or (exclude_token and component_token == exclude_token)
             ):
                 continue
-            marked = (
-                _attr(component, OUTPUT_MARKER_GROUP, OUTPUT_MARKER_NAME)
-                == OUTPUT_MARKER_VALUE
-            )
+            role = _attr(component, OUTPUT_MARKER_GROUP, OUTPUT_MARKER_NAME)
+            marked = role in (OUTPUT_MARKER_VALUE, LAY_FLAT_OUTPUT_VALUE)
             try:
                 component_name = str(component.name or "").strip().upper()
             except Exception:
@@ -114,11 +116,14 @@ def delete_previous_layouts(root_component, exclude_component=None):
             except Exception:
                 occurrence_name = ""
             def is_reserved_layout_name(name):
-                return (
-                    name == LAYOUT_COMPONENT_NAME
-                    or name.startswith(LAYOUT_COMPONENT_NAME + ":")
-                    or name.startswith(LAYOUT_COMPONENT_NAME + " (")
-                )
+                for base in (LAYOUT_COMPONENT_NAME, LAY_FLAT_COMPONENT_NAME):
+                    if (
+                        name == base
+                        or name.startswith(base + ":")
+                        or name.startswith(base + " (")
+                    ):
+                        return True
+                return False
 
             reserved_name = is_reserved_layout_name(
                 component_name
@@ -669,6 +674,8 @@ def _mark_workpiece(body, placement, run_id):
         "runId": run_id,
         "sourcePanelId": placement.get("panelId") or "",
         "sourceBodyName": placement.get("bodyName") or "",
+        "sourceComponentName": placement.get("componentName") or "",
+        "sourceAssemblyName": placement.get("assemblyName") or "",
         "boardTypeTag": placement.get("boardTypeTag") or "",
         "colorTag": placement.get("colorTag") or "",
         "groupIndex": placement.get("groupIndex"),
@@ -802,6 +809,7 @@ def create_layout(
     created = []
     pending_marks = []
     workpiece_manifest = {}
+    used_body_names = set()
     placements = list(layout.get("placements") or [])
     # Batch finishEdit — one base feature with 200+ bodies freezes Fusion for minutes.
     CREATE_BATCH = 40
@@ -818,6 +826,13 @@ def create_layout(
                     index = batch_start + offset
                     item_t0 = _time.perf_counter()
                     item = by_id[str(placement["id"])]
+                    # Prefer prepared source identity; pack may have copied fields.
+                    if not placement.get("assemblyName") and item.get("assemblyName"):
+                        placement["assemblyName"] = item.get("assemblyName")
+                    if not placement.get("componentName") and item.get("componentName"):
+                        placement["componentName"] = item.get("componentName")
+                    if not placement.get("bodyName") and item.get("bodyName"):
+                        placement["bodyName"] = item.get("bodyName")
                     temp_body = item["tempBody"]
                     rotation_deg = float(placement.get("rotationDeg") or 0.0)
                     if abs(rotation_deg) > 1e-9:
@@ -836,13 +851,7 @@ def create_layout(
                         ),
                     )
                     new_body = component.bRepBodies.add(temp_body, base_feature)
-                    sheet_index = int(placement.get("sheetIndex") or 0) + 1
-                    new_body.name = "NEST_S{:02d}_{:02d}_{:03d}_{}".format(
-                        sheet_index,
-                        int(placement.get("groupIndex") or 0) + 1,
-                        int(placement.get("itemIndex") or 0) + 1,
-                        str(placement.get("bodyName") or "panel"),
-                    )
+                    new_body.name = nesting_workpiece_name(placement, used_body_names)
                     pending_marks.append((new_body, placement))
                     item_ms = int((_time.perf_counter() - item_t0) * 1000)
                     if profiler is not None:

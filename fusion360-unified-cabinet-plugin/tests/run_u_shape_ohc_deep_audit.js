@@ -418,6 +418,8 @@ const adapterChecks = [
   ["u_top_contact_audit", adapterSource.includes("def audit_u_shape_top_contacts(")],
   ["case_fingerprint", adapterSource.includes("\"caseFingerprint\"")],
   ["measure", adapterSource.includes("def measure_u_shape_assembly(")],
+  ["corner_closure", adapterSource.includes("def audit_u_shape_back_corner_closure(")],
+  ["postprocess_audit", adapterSource.includes("def audit_u_shape_postprocess(")],
   ["compare", adapterSource.includes("def compare_u_shape_board_poses(")],
   ["no_create_posed_comment", !adapterSource.includes("Create each run already posed")],
   ["create_rot0", createSlice.includes("origin_rotation_deg=0.0")],

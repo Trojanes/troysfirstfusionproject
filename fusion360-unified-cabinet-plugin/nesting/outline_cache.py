@@ -6,6 +6,7 @@ Create Layout reuses it only when the geometry signature and options still match
 
 from __future__ import annotations
 
+import hashlib
 import time
 
 CACHE_KEY = "nestingFlatOutline"
@@ -19,8 +20,45 @@ def _num(value, default=0.0):
         return float(default)
 
 
-def body_geometry_signature(body):
-    """Cheap change detector for source solid geometry (pre-flatten)."""
+def native_brep_entity(entity):
+    """Prefer native BRep for attributes/signatures.
+
+    Occurrence proxies use world-space bounds and sometimes hide body
+    attributes written on the native entity (and vice versa). Signature and
+    metadata freshness must stay on the native object.
+    """
+    if entity is None:
+        return None
+    try:
+        native = getattr(entity, "nativeObject", None)
+        if native is not None:
+            return native
+    except Exception:
+        pass
+    return entity
+
+
+def attribute_entities(entity):
+    """Yield proxy then native so attribute reads/writes can try both."""
+    seen = set()
+    for candidate in (entity, native_brep_entity(entity)):
+        if candidate is None:
+            continue
+        key = id(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        yield candidate
+
+
+def body_geometry_signature(body, detail=False):
+    """Geometry change detector.
+
+    ``detail=True`` adds sorted per-face area/bounds descriptors. Lay Flat
+    manufacturing analysis uses this because volume/topology/bbox alone cannot
+    detect a same-size hole moving inside an otherwise unchanged panel.
+    """
+    body = native_brep_entity(body)
     volume = 0.0
     face_count = 0
     edge_count = 0
@@ -49,7 +87,7 @@ def body_geometry_signature(body):
         )
     except Exception:
         pass
-    return "v{:.6f}|f{}|e{}|b{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f}".format(
+    base = "v{:.6f}|f{}|e{}|b{:.4f},{:.4f},{:.4f},{:.4f},{:.4f},{:.4f}".format(
         volume,
         face_count,
         edge_count,
@@ -60,6 +98,39 @@ def body_geometry_signature(body):
         box[4],
         box[5],
     )
+    if not detail:
+        return base
+
+    faces = []
+    try:
+        count = int(body.faces.count or 0)
+    except Exception:
+        count = 0
+    for index in range(count):
+        try:
+            face = body.faces.item(index)
+            area = float(getattr(face, "area", 0.0) or 0.0)
+            bounds = face.boundingBox
+            geometry = getattr(face, "geometry", None)
+            object_type = str(getattr(geometry, "objectType", "") or "")
+            edges = int(getattr(getattr(face, "edges", None), "count", 0) or 0)
+            descriptor = (
+                object_type,
+                round(area, 7),
+                edges,
+                round(float(bounds.minPoint.x), 5),
+                round(float(bounds.minPoint.y), 5),
+                round(float(bounds.minPoint.z), 5),
+                round(float(bounds.maxPoint.x), 5),
+                round(float(bounds.maxPoint.y), 5),
+                round(float(bounds.maxPoint.z), 5),
+            )
+            faces.append(repr(descriptor))
+        except Exception:
+            continue
+    faces.sort()
+    digest = hashlib.sha256("|".join(faces).encode("utf-8")).hexdigest()[:24]
+    return "{}|fh{}".format(base, digest)
 
 
 def get_cached_outline(metadata):

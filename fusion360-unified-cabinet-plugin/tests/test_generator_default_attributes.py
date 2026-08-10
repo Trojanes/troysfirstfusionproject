@@ -180,10 +180,17 @@ class GeneratorDefaultAttributesTests(unittest.TestCase):
             {"id": "V1", "kind": "vPanel", "sidePanelOptions": {"panelType": "panel"}},
             v_panels=[{"id": "V0"}, {"id": "V1"}],
         )
+        stove_side = self.mod.kitchen_board_semantics(
+            {"id": "stove-zone-stove-side-panel-left", "type": "stove_side_panel"}
+        )
         self.assertEqual(b1["panelClass"], "door")
         self.assertEqual(t1["panelClass"], "carcass")
         self.assertEqual(v_door["panelClass"], "door")
         self.assertEqual(v_carcass["panelClass"], "carcass")
+        self.assertEqual(stove_side["panelClass"], "door")
+        self.assertEqual(stove_side["role"], "door")
+        self.assertEqual(stove_side["doorColorSlot"], 1)
+        self.assertIn("door", stove_side["tags"])
 
     def test_kitchen_milling_directions_xyz(self):
         left_half = [{
@@ -237,6 +244,9 @@ class GeneratorDefaultAttributesTests(unittest.TestCase):
             ({"id": "B2", "type": "B2"}, "", "", "EITHER"),
             ({"id": "T2", "type": "T2"}, "", "", "EITHER"),
             ({"id": "shelf-1", "type": "full_depth_shelf"}, "", "", "EITHER"),
+            ({"id": "col-zone-appliance-floor", "type": "appliance_floor"}, "", "", "EITHER"),
+            ({"id": "col-zone-underside-support-1", "type": "underside_support"}, "", "", "EITHER"),
+            ({"id": "stove-zone-stove-side-panel-left", "type": "stove_side_panel"}, "+Y", "-Y", "MILLING"),
         ]
         v_panels = [{"id": "V0", "index": 0}, {"id": "V1", "index": 1}, {"id": "V2", "index": 2}]
         for board, milling_dir, colour_dir, cutting in cases:
@@ -281,6 +291,55 @@ class GeneratorDefaultAttributesTests(unittest.TestCase):
         self.assertEqual(meta["classification"]["boardType"]["value"], "partition")
         self.assertNotEqual(meta["classification"]["boardType"]["value"], "carcass")
         self.assertIn("lounge.lounge1.", meta["identity"]["panelId"])
+
+    def test_small_cabinet_side_door_color_and_fronts(self):
+        door = self.mod.small_cabinet_board_semantics({
+            "id": "FP_1", "category": "front_panel", "boardType": "left_door",
+        })
+        drawer = self.mod.small_cabinet_board_semantics({
+            "id": "FP_2", "category": "front_panel", "boardType": "drawer_front",
+        })
+        side_door = self.mod.small_cabinet_board_semantics({
+            "id": "SIDE_L", "boardType": "left_side_panel", "useDoorColor": True,
+        })
+        side_carcass = self.mod.small_cabinet_board_semantics({
+            "id": "SIDE_R", "boardType": "right_side_panel", "useDoorColor": False,
+        })
+        back = self.mod.small_cabinet_board_semantics({"id": "BACK", "boardType": "rear_vertical"})
+        self.assertEqual(door["panelClass"], "door")
+        self.assertEqual(door["doorColorSlot"], 1)
+        self.assertEqual(drawer["panelClass"], "door")
+        self.assertEqual(side_door["panelClass"], "door")
+        self.assertEqual(side_door["doorColorSlot"], 1)
+        self.assertEqual(side_carcass["panelClass"], "carcass")
+        self.assertNotIn("doorColorSlot", side_carcass)
+        self.assertEqual(back["panelClass"], "carcass")
+        meta = self.mod.build_panel_metadata(
+            "smallCabinet",
+            {"id": "SIDE_L", "boardType": "left_side_panel", "useDoorColor": True,
+             "x0": 0, "x1": 16, "y0": 0, "y1": 560, "z0": 0, "z1": 800},
+            run_label="sc1",
+        )
+        self.assertEqual(meta["identity"]["generator"], "smallCabinet")
+        self.assertIn("smallCabinet.sc1.", meta["identity"]["panelId"])
+        self.assertEqual(meta["defaultAttributes"]["doorColorSlot"], 1)
+
+    def test_small_cabinet_milling_directions(self):
+        cases = [
+            ({"id": "FP_1", "category": "front_panel", "boardType": "left_door"}, "+Y", "-Y", "MILLING"),
+            ({"id": "SIDE_L", "boardType": "left_side_panel"}, "+X", "-X", "MILLING"),
+            ({"id": "SIDE_R", "boardType": "right_side_panel"}, "-X", "+X", "MILLING"),
+            ({"id": "TOP", "boardType": "top_panel"}, "-Z", "+Z", "MILLING"),
+            ({"id": "BOTTOM", "boardType": "bottom_panel"}, "+Z", "-Z", "MILLING"),
+            ({"id": "BACK", "boardType": "rear_vertical"}, "-Y", "+Y", "MILLING"),
+            ({"id": "MID_1", "boardType": "middle_shelf"}, "+Z", "-Z", "MILLING"),
+        ]
+        for board, milling_dir, colour_dir, cutting in cases:
+            milling = self.mod.small_cabinet_milling_direction(board)
+            label = board["id"]
+            self.assertEqual(milling["millingDirection"], milling_dir, label)
+            self.assertEqual(milling["colourDirection"], colour_dir, label)
+            self.assertEqual(milling["cuttingFace"], cutting, label)
 
     def test_lounge_milling_directions_xyz(self):
         cases = [

@@ -15,6 +15,7 @@ from panel_geometry import (  # noqa: E402
     FEATURE_KIND_HOLE,
     FEATURE_KIND_POCKET,
     _half_feature_open_surface,
+    _to_local_point_mm,
     build_svg_document,
     bounds_of,
     classify_cut_type,
@@ -27,6 +28,17 @@ from panel_geometry import (  # noqa: E402
 
 
 class PanelGeometryPureTests(unittest.TestCase):
+    def test_world_coordinate_mode_keeps_lay_flat_xy(self):
+        class Point:
+            x = 12.5
+            y = -3.0
+            z = 1.8
+
+        self.assertEqual(
+            _to_local_point_mm(Point(), None, coordinate_mode="world"),
+            [125.0, -30.0, 18.0],
+        )
+
     def test_thickness_axis_from_normal(self):
         self.assertEqual(thickness_axis_from_normal([0, 0, 1]), 2)
         self.assertEqual(thickness_axis_from_normal([0.99, 0.0, 0.1]), 0)
@@ -156,6 +168,35 @@ class PanelGeometryPureTests(unittest.TestCase):
         self.assertEqual(feature_kind_from_loop(1, True), FEATURE_KIND_HOLE)
         self.assertEqual(feature_kind_from_loop(4, False), FEATURE_KIND_GROOVE)
         self.assertEqual(feature_kind_from_loop(6, False), FEATURE_KIND_POCKET)
+        self.assertEqual(
+            feature_kind_from_loop(
+                4, False, points=[(0, 0), (20, 0), (20, 20), (0, 20)]
+            ),
+            FEATURE_KIND_POCKET,
+        )
+        self.assertEqual(
+            feature_kind_from_loop(
+                4, False, points=[(0, 0), (100, 0), (100, 8), (0, 8)]
+            ),
+            FEATURE_KIND_GROOVE,
+        )
+        self.assertEqual(
+            feature_kind_from_loop(
+                8,
+                False,
+                points=[
+                    (0, 0),
+                    (50, 0),
+                    (100, 0),
+                    (100, 4),
+                    (100, 8),
+                    (50, 8),
+                    (0, 8),
+                    (0, 4),
+                ],
+            ),
+            FEATURE_KIND_GROOVE,
+        )
 
     def test_polyline_to_path(self):
         path = polyline_to_path([(0, 0), (10, 0), (10, 5)], close=True)
@@ -204,6 +245,7 @@ class PanelGeometryPureTests(unittest.TestCase):
             "isCircle": False,
             "radiusMm": None,
             "openSurfaceToken": "tok",
+            "openSurfaceIs": "A",
             "center": None,
             "points": [(2, 2), (8, 2), (8, 4), (2, 4)],
         }
@@ -213,6 +255,25 @@ class PanelGeometryPureTests(unittest.TestCase):
             [[2.0, 2.0], [8.0, 2.0], [8.0, 4.0], [2.0, 4.0]],
         )
         self.assertIsNone(public["center2d"])
+        self.assertEqual(public["openSurfaceIs"], "A")
+
+    def test_duplicate_filter_only_merges_same_through_opening(self):
+        from panel_geometry import _is_duplicate_feature
+
+        base = {
+            "cutType": CUT_TYPE_FULL,
+            "kind": FEATURE_KIND_POCKET,
+            "points": [(0, 0), (10, 0), (10, 10), (0, 10)],
+        }
+        self.assertTrue(_is_duplicate_feature(dict(base), [dict(base)]))
+
+        blind = dict(base)
+        blind["cutType"] = CUT_TYPE_HALF
+        self.assertFalse(_is_duplicate_feature(blind, [dict(blind)]))
+
+        other_shape = dict(base)
+        other_shape["points"] = [(0, 0), (20, 0), (20, 10), (0, 10)]
+        self.assertFalse(_is_duplicate_feature(other_shape, [dict(base)]))
 
     def test_build_svg_full_cut_marked(self):
         outer = [{"points": [(0, 0), (10, 0)], "edgeToken": "E", "signature": None}]

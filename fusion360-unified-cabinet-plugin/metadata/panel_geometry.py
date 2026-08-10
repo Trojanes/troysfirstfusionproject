@@ -126,11 +126,56 @@ def classify_cut_type(reaches_opposite, depth_mm, thickness_mm):
     return CUT_TYPE_HALF
 
 
-def feature_kind_from_loop(edge_count, has_arc):
+def _simplify_collinear_2d(points, tolerance=1e-6):
+    simplified = [list(point[:2]) for point in (points or []) if len(point) >= 2]
+    if len(simplified) <= 4:
+        return simplified
+    changed = True
+    while changed and len(simplified) > 4:
+        changed = False
+        kept = []
+        count = len(simplified)
+        for index, current in enumerate(simplified):
+            previous = simplified[(index - 1) % count]
+            following = simplified[(index + 1) % count]
+            ax = float(current[0]) - float(previous[0])
+            ay = float(current[1]) - float(previous[1])
+            bx = float(following[0]) - float(current[0])
+            by = float(following[1]) - float(current[1])
+            cross = abs(ax * by - ay * bx)
+            scale = max(1.0, ((ax * ax + ay * ay) * (bx * bx + by * by)) ** 0.5)
+            if cross <= tolerance * scale:
+                changed = True
+                continue
+            kept.append(current)
+        if len(kept) < 3 or len(kept) == len(simplified):
+            break
+        simplified = kept
+    return simplified
+
+
+def feature_kind_from_loop(edge_count, has_arc, points=None):
     if has_arc and edge_count <= 2:
         return FEATURE_KIND_HOLE
-    if edge_count == 4 and not has_arc:
-        return FEATURE_KIND_GROOVE
+    if not has_arc:
+        corners = _simplify_collinear_2d(points) if points else []
+        if edge_count == 4 or len(corners) == 4:
+            shape = corners or points
+            if shape:
+                xs = [float(point[0]) for point in shape]
+                ys = [float(point[1]) for point in shape]
+                width = max(xs) - min(xs)
+                height = max(ys) - min(ys)
+                short_side = min(width, height)
+                long_side = max(width, height)
+                # A four-corner polygon is not automatically a groove. Only a
+                # clearly elongated channel is safe to reduce to centerline.
+                if short_side <= 1e-6 or long_side / short_side < 3.0:
+                    return FEATURE_KIND_POCKET
+                return FEATURE_KIND_GROOVE
+        if edge_count == 4 and not points:
+            # Backward-compatible pure classification when geometry is absent.
+            return FEATURE_KIND_GROOVE
     return FEATURE_KIND_POCKET
 
 
@@ -347,9 +392,14 @@ def _body_frame(body):
     return frame
 
 
-def _to_local_point_mm(point, body):
+def _to_local_point_mm(point, body, coordinate_mode="body"):
     if point is None:
         return [0.0, 0.0, 0.0]
+    if str(coordinate_mode or "body").lower() == "world":
+        try:
+            return [point.x * 10.0, point.y * 10.0, point.z * 10.0]
+        except Exception:
+            return [0.0, 0.0, 0.0]
     frame = _body_frame(body)
     if frame is not None and express_point_in_frame is not None:
         try:
@@ -373,7 +423,7 @@ def _to_local_point_mm(point, body):
     return [point.x * 10.0, point.y * 10.0, point.z * 10.0]
 
 
-def _face_normal_local(face, body):
+def _face_normal_local(face, body, coordinate_mode="body"):
     try:
         evaluator = face.evaluator
         pt = face.pointOnFace
@@ -385,6 +435,8 @@ def _face_normal_local(face, body):
             normal = result
         if normal is None:
             return [0.0, 0.0, 1.0]
+        if str(coordinate_mode or "body").lower() == "world":
+            return normalize_vector([normal.x, normal.y, normal.z])
         frame = _body_frame(body)
         if frame is not None and express_vector_in_frame is not None:
             try:
@@ -409,9 +461,9 @@ def _face_normal_local(face, body):
         return [0.0, 0.0, 1.0]
 
 
-def _face_centroid_local_mm(face, body):
+def _face_centroid_local_mm(face, body, coordinate_mode="body"):
     try:
-        return _to_local_point_mm(face.pointOnFace, body)
+        return _to_local_point_mm(face.pointOnFace, body, coordinate_mode=coordinate_mode)
     except Exception:
         return [0.0, 0.0, 0.0]
 
@@ -447,7 +499,7 @@ def _edge_is_circle(edge):
     return False, None
 
 
-def _loop_segments_2d(loop, body, thickness_axis):
+def _loop_segments_2d(loop, body, thickness_axis, coordinate_mode="body"):
     """Return ordered (points2d, edge) per coEdge for a loop, plus arc flag."""
     segments = []
     has_arc = False
@@ -465,7 +517,10 @@ def _loop_segments_2d(loop, body, thickness_axis):
         except Exception:
             pass
         pts2d = [
-            project_local_to_2d(_to_local_point_mm(pt, body), thickness_axis)
+            project_local_to_2d(
+                _to_local_point_mm(pt, body, coordinate_mode=coordinate_mode),
+                thickness_axis,
+            )
             for pt in pts3d
         ]
         is_circle, _geom = _edge_is_circle(edge)
@@ -484,10 +539,12 @@ def _concat_points(segments):
     return points
 
 
-def _circle_center_radius_2d(edge, body, thickness_axis):
+def _circle_center_radius_2d(edge, body, thickness_axis, coordinate_mode="body"):
     try:
         geometry = edge.geometry
-        center_local = _to_local_point_mm(geometry.center, body)
+        center_local = _to_local_point_mm(
+            geometry.center, body, coordinate_mode=coordinate_mode
+        )
         center2d = project_local_to_2d(center_local, thickness_axis)
         radius_mm = float(geometry.radius) * 10.0
         return center2d, radius_mm
@@ -521,17 +578,24 @@ def _between(value, a, b, tol=0.3):
     return (lo + tol) < value < (hi - tol)
 
 
-def _face_outer_loop_2d(face, body, thickness_axis):
+def _face_outer_loop_2d(face, body, thickness_axis, coordinate_mode="body"):
     outer, _inners = _loops_of_face(face)
     if outer is None:
         return [], [], False
-    segments, has_arc = _loop_segments_2d(outer, body, thickness_axis)
+    segments, has_arc = _loop_segments_2d(
+        outer, body, thickness_axis, coordinate_mode=coordinate_mode
+    )
     return _concat_points(segments), segments, has_arc
 
 
-def _circle_feature_fields(segments, body, thickness_axis):
+def _circle_feature_fields(segments, body, thickness_axis, coordinate_mode="body"):
     if len(segments) == 1 and segments[0].get("isCircle"):
-        center2d, radius_mm = _circle_center_radius_2d(segments[0]["edge"], body, thickness_axis)
+        center2d, radius_mm = _circle_center_radius_2d(
+            segments[0]["edge"],
+            body,
+            thickness_axis,
+            coordinate_mode=coordinate_mode,
+        )
         if center2d is not None:
             return {"isCircle": True, "center": center2d, "radiusMm": round(radius_mm, 3), "kind": FEATURE_KIND_HOLE}
     return {"isCircle": False, "center": None, "radiusMm": None}
@@ -637,7 +701,16 @@ def _half_feature_open_surface(
     return surface_a if offset_a < floor_offset else surface_b
 
 
-def extract_features(body, surface_a, surface_b, thickness_axis, offset_a, offset_b, thickness_mm):
+def extract_features(
+    body,
+    surface_a,
+    surface_b,
+    thickness_axis,
+    offset_a,
+    offset_b,
+    thickness_mm,
+    coordinate_mode="body",
+):
     """Detect internal features and classify each as HALF (blind) or FULL (through).
 
     HALF features are found from their floor face (a planar face parallel to the
@@ -653,13 +726,17 @@ def extract_features(body, surface_a, surface_b, thickness_axis, offset_a, offse
     for face in _iter_body_faces(body):
         if _face_key(face) in surface_keys:
             continue
-        normal = _face_normal_local(face, body)
+        normal = _face_normal_local(face, body, coordinate_mode=coordinate_mode)
         if abs(dot3(normal, axis_unit)) < PARALLEL_DOT:
             continue
-        offset = _face_centroid_local_mm(face, body)[thickness_axis]
+        offset = _face_centroid_local_mm(
+            face, body, coordinate_mode=coordinate_mode
+        )[thickness_axis]
         if not _between(offset, offset_a, offset_b):
             continue
-        points, segments, has_arc = _face_outer_loop_2d(face, body, thickness_axis)
+        points, segments, has_arc = _face_outer_loop_2d(
+            face, body, thickness_axis, coordinate_mode=coordinate_mode
+        )
         if len(points) < 2:
             continue
         # Prefer wall-adjacency / inner-loop topology over nearest-surface:
@@ -675,7 +752,7 @@ def extract_features(body, surface_a, surface_b, thickness_axis, offset_a, offse
         feature = {
             "featureId": "",
             "cutType": CUT_TYPE_HALF,
-            "kind": feature_kind_from_loop(len(segments), has_arc),
+            "kind": feature_kind_from_loop(len(segments), has_arc, points=points),
             "depthMm": depth,
             "points": points,
             "openSurfaceToken": _entity_token(open_surface),
@@ -683,7 +760,11 @@ def extract_features(body, surface_a, surface_b, thickness_axis, offset_a, offse
             "openDecision": open_debug,
             "floorOffsetMm": round(float(offset), 3),
         }
-        feature.update(_circle_feature_fields(segments, body, thickness_axis))
+        feature.update(
+            _circle_feature_fields(
+                segments, body, thickness_axis, coordinate_mode=coordinate_mode
+            )
+        )
         if not _is_duplicate_feature(feature, features):
             features.append(feature)
 
@@ -692,7 +773,9 @@ def extract_features(body, surface_a, surface_b, thickness_axis, offset_a, offse
         _outer, inner_loops = _loops_of_face(face)
         other = surface_b if face is surface_a else surface_a
         for loop in inner_loops:
-            segments, has_arc = _loop_segments_2d(loop, body, thickness_axis)
+            segments, has_arc = _loop_segments_2d(
+                loop, body, thickness_axis, coordinate_mode=coordinate_mode
+            )
             if not segments:
                 continue
             reaches_opposite = False
@@ -716,12 +799,18 @@ def extract_features(body, surface_a, surface_b, thickness_axis, offset_a, offse
             feature = {
                 "featureId": "",
                 "cutType": CUT_TYPE_FULL,
-                "kind": feature_kind_from_loop(len(segments), has_arc),
+                "kind": feature_kind_from_loop(
+                    len(segments), has_arc, points=points
+                ),
                 "depthMm": thickness_mm,
                 "points": points,
                 "openSurfaceToken": _entity_token(face),
             }
-            feature.update(_circle_feature_fields(segments, body, thickness_axis))
+            feature.update(
+                _circle_feature_fields(
+                    segments, body, thickness_axis, coordinate_mode=coordinate_mode
+                )
+            )
             if not _is_duplicate_feature(feature, features):
                 features.append(feature)
 
@@ -859,7 +948,7 @@ def build_body_geometry(body, surface_faces, milling_roles, panel_context=None):
 
 
 def _public_feature(feature):
-    return {
+    payload = {
         "featureId": feature.get("featureId"),
         "cutType": feature.get("cutType"),
         "kind": feature.get("kind"),
@@ -867,6 +956,7 @@ def _public_feature(feature):
         "isCircle": bool(feature.get("isCircle")),
         "radiusMm": feature.get("radiusMm"),
         "openSurfaceToken": feature.get("openSurfaceToken"),
+        "openSurfaceIs": feature.get("openSurfaceIs"),
         "center2d": list(feature.get("center")) if feature.get("center") else None,
         # Face-local mm polygon of the feature opening (same frame as the
         # outline pointsLocal). Required by CAM/nesting feature transforms.
@@ -874,6 +964,12 @@ def _public_feature(feature):
             [round(x, 3), round(y, 3)] for (x, y) in (feature.get("points") or [])
         ],
     }
+    if feature.get("floorOffsetMm") is not None:
+        try:
+            payload["floorOffsetMm"] = round(float(feature.get("floorOffsetMm")), 3)
+        except Exception:
+            pass
+    return payload
 
 
 def _feature_summary(features):
@@ -900,17 +996,30 @@ def _feature_centroid_2d(feature):
 
 
 def _is_duplicate_feature(feature, existing):
-    """A through feature appears on both broad faces; dedupe by centroid."""
+    """Dedupe only the same through opening seen from both broad faces."""
+    if str(feature.get("cutType") or "").upper() != CUT_TYPE_FULL:
+        return False
     centroid = _feature_centroid_2d(feature)
     if centroid is None:
         return False
+    kind = str(feature.get("kind") or "")
+    area = _polygon_area(feature.get("points") or [])
+    radius = float(feature.get("radiusMm") or 0.0)
     for other in existing:
+        if str(other.get("cutType") or "").upper() != CUT_TYPE_FULL:
+            continue
+        if str(other.get("kind") or "") != kind:
+            continue
         other_centroid = _feature_centroid_2d(other)
         if other_centroid is None:
             continue
+        other_area = _polygon_area(other.get("points") or [])
+        other_radius = float(other.get("radiusMm") or 0.0)
         if (
-            abs(centroid[0] - other_centroid[0]) <= CENTROID_MATCH_MM
-            and abs(centroid[1] - other_centroid[1]) <= CENTROID_MATCH_MM
+            abs(centroid[0] - other_centroid[0]) <= 0.2
+            and abs(centroid[1] - other_centroid[1]) <= 0.2
+            and abs(area - other_area) <= max(0.1, area * 0.01)
+            and abs(radius - other_radius) <= 0.1
         ):
             return True
     return False

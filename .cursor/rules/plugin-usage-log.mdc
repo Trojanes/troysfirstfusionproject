@@ -1,0 +1,26 @@
+---
+description: When debugging Fusion plugin / Nesting / Tag Edit behavior from user reports, read the plugin usage log first.
+alwaysApply: true
+---
+
+# Plugin usage log (read before guessing)
+
+When the user asks about a Fusion plugin run that just happened (Nesting layout, outlines, Tag Edit, create bodies, errors, unplaced parts, missing boards, sketches, etc.), **read the usage log before asking them to re-describe numbers**.
+
+## Files
+
+1. `fusion360-unified-cabinet-plugin/logs/plugin_usage_latest.json` — last palette action result (start here)
+2. `fusion360-unified-cabinet-plugin/logs/plugin_usage.jsonl` — append-only history (read the last ~30 lines if latest is insufficient)
+3. `fusion360-unified-cabinet-plugin/nesting/nesting_runtime_profile.json` — Nesting phase timings / counters only (may omit unplaced board names)
+
+## What to extract
+
+- `action`, `ok`, `errors`, `message`
+- Nesting: `unplacedCount`, each `unplaced[].bodyName` / `widthMm` / `depthMm` / `reason`
+- `createdCount`, `readyCount`, `sheetCount`, outline fallback counts
+- `kind` values: `action_start`, `action_result`, `action_exception`, `send_serialize_error`
+
+## Notes
+
+- Logs are written from the Fusion plugin host after each palette action. If files are missing or stale, say so — do not invent counts.
+- Payloads are JSON-sanitized (no Fusion `BRepBody` handles).
