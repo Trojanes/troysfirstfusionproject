@@ -34,6 +34,7 @@ import nesting.outline_cache as nesting_outline_cache
 import nesting.preflight as nesting_preflight
 import nesting.runtime_profile as nesting_runtime_profile
 import nesting.sheet_pack as nesting_sheet_pack
+import nesting.workpiece_names as nesting_workpiece_names
 from panel_search_service import collect_all_tags, collect_defined_panels, resolve_panel_targets, search_panels
 
 
@@ -60,6 +61,7 @@ nesting_outline_cache = importlib.reload(nesting_outline_cache)
 nesting_preflight = importlib.reload(nesting_preflight)
 nesting_runtime_profile = importlib.reload(nesting_runtime_profile)
 nesting_sheet_pack = importlib.reload(nesting_sheet_pack)
+nesting_workpiece_names = importlib.reload(nesting_workpiece_names)
 
 body_matches_record = panel_body_resolver.body_matches_record
 find_body_in_design = panel_body_resolver.find_body_in_design
@@ -105,16 +107,51 @@ def _discard_prepared_temp_bodies(items):
 
 
 def _assembly_name_for_record(root, record):
-    """Top-level occurrence name under the design root (= assembly name)."""
+    """Resolve canonical assembly name, with occurrence names as legacy fallback."""
+    record = record or {}
+    metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+    identity = metadata.get("identity") if isinstance(metadata.get("identity"), dict) else {}
+    source_ref = identity.get("sourceRef") if isinstance(identity.get("sourceRef"), dict) else {}
+
+    candidates = [
+        record.get("assemblyName"),
+        record.get("sourceAssemblyName"),
+        identity.get("assemblyName"),
+        identity.get("sourceAssemblyName"),
+        source_ref.get("assemblyName"),
+    ]
+    for candidate in candidates:
+        name = str(candidate or "").strip()
+        if (
+            name
+            and not nesting_workpiece_names.is_blob_label(name)
+            and not nesting_workpiece_names.is_layout_container_label(name)
+        ):
+            return name
+
     path = list((record or {}).get("occurrencePath") or [])
     if root is not None and path:
         try:
             occurrence = root.occurrences.item(int(path[0]))
-            name = str(getattr(occurrence, "name", "") or "")
-            if name:
-                return name
             component = getattr(occurrence, "component", None)
-            return str(getattr(component, "name", "") or "")
+            for entity in (component, occurrence):
+                if entity is None:
+                    continue
+                name = str(
+                    metadata_inspector._module_attr_value(entity, "assemblyName")
+                    or ""
+                ).strip()
+                if (
+                    name
+                    and not nesting_workpiece_names.is_blob_label(name)
+                    and not nesting_workpiece_names.is_layout_container_label(name)
+                ):
+                    return name
+            # Old designs may only have the browser occurrence/component name.
+            for entity in (occurrence, component):
+                name = str(getattr(entity, "name", "") or "").strip()
+                if name:
+                    return name
         except Exception:
             pass
     try:
@@ -261,6 +298,90 @@ class PanelAttributesController:
             seen.add(key)
             bodies.append(body)
         return bodies
+
+    def _source_bodies_from_ui_selection(self, root):
+        """Resolve the current Fusion selection to original panel bodies.
+
+        Cabinet occurrences expand to their solids. LAY_FLAT copies map back
+        to the source body. Returns ``(bodies, warnings, error)``.
+        """
+        selected_entities = self._selected_entities()
+        if not selected_entities:
+            return [], [], (
+                "Select one or more panels (or a cabinet occurrence), then Lay Flat Selected."
+            )
+        bodies, warnings = metadata_inspector.bodies_from_selected_entities(
+            selected_entities, root
+        )
+        source_bodies = []
+        seen = set()
+        for body in bodies or []:
+            candidates = [body]
+            if work_zones.is_lay_flat_workpiece(body):
+                resolved, _ref, _how = panel_body_resolver.resolve_source_bodies_for_lay_flat(
+                    root, body
+                )
+                if not resolved:
+                    warnings.append(
+                        "Could not resolve source for LAY_FLAT body {}.".format(
+                            getattr(body, "name", "") or "body"
+                        )
+                    )
+                    continue
+                candidates = list(resolved)
+            for src in candidates:
+                if metadata_inspector._is_assembly_zone(src):
+                    continue
+                key = metadata_inspector._body_key(src)
+                if key in seen:
+                    continue
+                seen.add(key)
+                source_bodies.append(src)
+        if not source_bodies:
+            return [], warnings, (
+                "No panel bodies in the current selection."
+            )
+        return source_bodies, warnings, None
+
+    def _records_for_selected_lay_flat(self, root, bodies):
+        """Nesting-detail records for selected source bodies only (no full scan)."""
+        records = []
+        skipped = []
+        for body in bodies or []:
+            occurrence_path = []
+            try:
+                if root is not None:
+                    occurrence_path = metadata_inspector.resolve_occurrence_path_for_body(
+                        root, body
+                    ) or []
+            except Exception:
+                occurrence_path = []
+            record = metadata_inspector._entity_record(
+                body,
+                "selected_body",
+                occurrence_path,
+                component_name=metadata_inspector._component_name_for_body(body),
+                body_name=getattr(body, "name", "") or "",
+                include_missing=True,
+                detail="nesting",
+            )
+            if not record:
+                skipped.append(
+                    "No panel metadata for {}".format(
+                        getattr(body, "name", "") or "body"
+                    )
+                )
+                continue
+            record["entityKind"] = "body"
+            try:
+                token = str(getattr(body, "entityToken", "") or "")
+            except Exception:
+                token = ""
+            if token:
+                record["entityToken"] = token
+            record["assemblyName"] = _assembly_name_for_record(root, record)
+            records.append(record)
+        return records, skipped
 
     def _body_by_name(self, component, body_name):
         target_name = str(body_name or "").strip()
@@ -2241,6 +2362,26 @@ class PanelAttributesController:
                 "errors": ["No active Fusion design."],
             }
 
+        scope = str((payload or {}).get("scope") or "selection").strip().lower() or "selection"
+        if scope not in ("selection", "all"):
+            scope = "selection"
+
+        selected_source_bodies = []
+        selection_warnings = []
+        if scope == "selection":
+            selected_source_bodies, selection_warnings, selection_error = (
+                self._source_bodies_from_ui_selection(root)
+            )
+            if selection_error:
+                return "panelAttributesResult", {
+                    "ok": False,
+                    "action": "createLayFlatLayout",
+                    "errors": [selection_error],
+                    "warnings": selection_warnings[:20],
+                    "scope": scope,
+                    "selectedBodyCount": 0,
+                }
+
         # Source metadata is the only classification authority. Overrides were
         # a compensation for failed source writes and caused panelId fan-out.
         # Transactional Apply now verifies source writes, so purge legacy maps.
@@ -2294,14 +2435,29 @@ class PanelAttributesController:
         # Light/nesting scan is enough for Ready + outline cache; full face
         # registry / SVG walk is the expensive path and unused here.
         zone_filter = str((payload or {}).get("zoneFilter") or "all").strip().lower() or "all"
-        records, _counts, diagnostics = metadata_inspector.scan_panel_metadata(
-            root, zone_filter=zone_filter, detail="nesting", profiler=profiler
-        )
-        body_records = [
-            record
-            for record in records
-            if "body" in str(record.get("entityKind") or "").lower()
-        ]
+        diagnostics = {}
+        if scope == "selection":
+            body_records, rec_skips = self._records_for_selected_lay_flat(
+                root, selected_source_bodies
+            )
+            diagnostics = {
+                "warnings": list(selection_warnings or []) + list(rec_skips or []),
+            }
+            profiler.sample(
+                "selectedLayFlatRecords",
+                0,
+                selected=len(selected_source_bodies),
+                records=len(body_records),
+            )
+        else:
+            records, _counts, diagnostics = metadata_inspector.scan_panel_metadata(
+                root, zone_filter=zone_filter, detail="nesting", profiler=profiler
+            )
+            body_records = [
+                record
+                for record in records
+                if "body" in str(record.get("entityKind") or "").lower()
+            ]
 
         prepared = []
         not_ready = []
@@ -2333,7 +2489,10 @@ class PanelAttributesController:
                 continue
             metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
             panel_id = str(record.get("panelId") or "").strip()
-            source_ref = panel_source_ref.from_scan_record(record)
+            assembly_name = _assembly_name_for_record(root, record)
+            source_record = dict(record)
+            source_record["assemblyName"] = assembly_name
+            source_ref = panel_source_ref.from_scan_record(source_record)
             if not source_ref:
                 failed.append(
                     {
@@ -2377,7 +2536,7 @@ class PanelAttributesController:
                     "panelId": panel_id,
                     "bodyName": record.get("bodyName") or "",
                     "componentName": record.get("componentName") or "",
-                    "assemblyName": _assembly_name_for_record(root, record),
+                    "assemblyName": assembly_name,
                     "boardTypeTag": board_tag,
                     "colorTag": color_tag,
                     "cuttingFace": check["cuttingFace"],
@@ -2406,14 +2565,19 @@ class PanelAttributesController:
 
         if not prepared:
             profile = profiler.flush(status="noPrepared")
+            no_ready_msg = (
+                "No Nesting Ready panels in the current selection."
+                if scope == "selection"
+                else "No Nesting Ready panels to lay flat."
+            )
             return "panelAttributesResult", {
                 "ok": False,
                 "action": "createLayFlatLayout",
                 "errors": [
-                    "No Nesting Ready panels to lay flat. "
-                    "failed={} notReady={} (see failed/notReady lists)."
-                    .format(len(failed), len(not_ready))
+                    "{} failed={} notReady={} (see failed/notReady lists)."
+                    .format(no_ready_msg, len(failed), len(not_ready))
                 ],
+                "scope": scope,
                 "bodyCount": len(body_records),
                 "notReadyCount": len(not_ready),
                 "failedCount": len(failed),
@@ -2430,6 +2594,7 @@ class PanelAttributesController:
                 "ok": False,
                 "action": "createLayFlatLayout",
                 "errors": ["Nesting Zone is not configured. Set Work Zones first."],
+                "scope": scope,
                 "preparedCount": len(prepared),
                 "notReadyCount": len(not_ready),
                 "failedCount": len(failed),
@@ -2514,6 +2679,7 @@ class PanelAttributesController:
                 "ok": False,
                 "action": "createLayFlatLayout",
                 "errors": ["Lay Flat failed: {}".format(ex)],
+                "scope": scope,
                 "preparedCount": len(prepared),
                 "notReadyCount": len(not_ready),
                 "failedCount": len(failed),
@@ -2523,11 +2689,13 @@ class PanelAttributesController:
         deleted_total = deleted_previous + int(result.get("deletedPrevious") or 0)
         profile = profiler.flush(status="done")
         created_n = int(result.get("created") or 0)
+        scope_label = "Lay Flat Selected" if scope == "selection" else "Lay Flat All"
         message = (
-            "Lay Flat → {} with {} named body(ies) "
+            "{} → {} with {} named body(ies) "
             "(Assembly-Component), {}/{} panel(s) in {} column(s)."
             "{}{}{}"
         ).format(
+            scope_label,
             result.get("componentName") or "LAY_FLAT",
             created_n,
             created_n,
@@ -2540,6 +2708,7 @@ class PanelAttributesController:
         return "panelAttributesResult", {
             "ok": True,
             "action": "createLayFlatLayout",
+            "scope": scope,
             "createdCount": created_n,
             "groupCount": len(result.get("groups") or []),
             "deletedPreviousCount": deleted_total,
@@ -2571,8 +2740,252 @@ class PanelAttributesController:
             "message": message,
         }
 
+    def _auto_fix_lay_flat_bottom_half(
+        self,
+        root,
+        body,
+        min_dot=None,
+        source_fixed_keys=None,
+    ):
+        """Transactionally swap roles, write source, flip copy, then re-check."""
+        source_fixed_keys = source_fixed_keys if isinstance(source_fixed_keys, set) else set()
+        body_name = str(getattr(body, "name", "") or "")
+        canonical_ref = panel_source_ref.from_lay_flat_body(body)
+        source_key = panel_source_ref.key(canonical_ref)
+        if not source_key:
+            return {
+                "ok": False,
+                "bodyName": body_name,
+                "reason": "missing exact source lineage",
+                "sourceKey": "",
+                "rollback": False,
+            }
+        source_bodies, _fields, resolved_via = (
+            panel_body_resolver.resolve_source_bodies_for_lay_flat(
+                root,
+                body,
+                index=None,
+                allow_panel_id_fallback=False,
+            )
+        )
+        if len(source_bodies) != 1:
+            return {
+                "ok": False,
+                "bodyName": body_name,
+                "reason": "exact source lineage did not resolve: {} ({})".format(
+                    source_key, resolved_via or "none"
+                ),
+                "sourceKey": source_key,
+                "resolvedVia": resolved_via,
+                "rollback": False,
+            }
+        source_body = source_bodies[0]
+        source_already_fixed = source_key in source_fixed_keys
+        source_snapshot = None
+        copy_snapshot = None
+        geometry_flipped = False
+        source_written = False
+        rollback_errors = []
+
+        precheck = nesting_lay_flat_face_up.evaluate_body_faces_up(
+            body, min_dot=min_dot
+        )
+        half_inspection = precheck.get("halfInspection") or {}
+        if (
+            precheck.get("halfStatus") != "bottomHalf"
+            or half_inspection.get("bottomFace") is None
+            or half_inspection.get("topFace") is None
+        ):
+            return {
+                "ok": False,
+                "bodyName": body_name,
+                "sourceKey": source_key,
+                "resolvedVia": resolved_via,
+                "reason": "repair requires bottom-only HALF evidence",
+                "rollback": False,
+            }
+
+        def _write_half_roles(target, milling, non_milling):
+            return tag_metadata_editor.apply_surface_milling_roles(
+                target,
+                milling,
+                non_milling,
+                source="half_feature",
+                lock=False,
+                force=True,
+            )
+
+        def _role_signature(metadata):
+            registry = (
+                metadata.get("faceRegistry")
+                if isinstance(metadata, dict)
+                and isinstance(metadata.get("faceRegistry"), dict)
+                else {}
+            )
+            rows = []
+            for face in registry.get("faces") or []:
+                if not isinstance(face, dict):
+                    continue
+                role = str(face.get("millingSurface") or "").strip().upper()
+                if role not in ("MILLING", "NON_MILLING", "EITHER"):
+                    continue
+                rows.append(
+                    (
+                        str(face.get("entityToken") or face.get("faceId") or ""),
+                        role,
+                        bool(face.get("millingLocked")),
+                    )
+                )
+            return tuple(sorted(rows))
+
+        try:
+            copy_snapshot = tag_metadata_editor.snapshot_milling_state(body)
+            if not source_already_fixed:
+                source_snapshot = tag_metadata_editor.snapshot_milling_state(source_body)
+                source_before = _role_signature(
+                    source_snapshot.get("bodyMetadata") or {}
+                )
+                source_result = milling_surface_propagation.analyze_milling_surfaces(
+                    [source_body],
+                    write_pair=lambda target, face_a, role_a, face_b, role_b: (
+                        tag_metadata_editor.apply_surface_roles(
+                            target,
+                            face_a,
+                            role_a,
+                            face_b,
+                            role_b,
+                            source="half_feature",
+                            lock=False,
+                            force=True,
+                        )
+                    ),
+                )
+                if int(source_result.get("updatedCount") or 0) != 1:
+                    raise ValueError(
+                        "source role swap failed: {}".format(
+                            (source_result.get("skipped") or [{}])[0].get("reason")
+                            or "unknown"
+                        )
+                    )
+                source_evidence = str(
+                    ((source_result.get("updated") or [{}])[0]).get("source")
+                    or ""
+                )
+                if source_evidence not in ("hinge_cups", "half_slot"):
+                    raise ValueError(
+                        "source HALF evidence was not authoritative ({})".format(
+                            source_evidence or "none"
+                        )
+                    )
+                source_after_metadata, source_read_error = (
+                    tag_metadata_editor._read_body_metadata_raw(source_body)
+                )
+                if source_read_error:
+                    raise ValueError(source_read_error)
+                source_after = _role_signature(source_after_metadata or {})
+                if not source_after or source_after == source_before:
+                    raise ValueError("source milling roles did not change after write")
+                cutting = (
+                    (
+                        (source_after_metadata.get("classification") or {}).get(
+                            "cuttingFace"
+                        )
+                        or {}
+                    )
+                    if isinstance(source_after_metadata, dict)
+                    else {}
+                )
+                if bool(cutting.get("locked")):
+                    raise ValueError("source cuttingFace remained locked after write")
+                source_written = True
+
+            _write_half_roles(
+                body,
+                half_inspection.get("bottomFace"),
+                half_inspection.get("topFace"),
+            )
+
+            flip_result = nesting_lay_flat_fusion.flip_lay_flat_body_thickness(body)
+            if not flip_result.get("ok"):
+                raise ValueError(
+                    "LAY_FLAT geometry flip failed: {}".format(
+                        flip_result.get("reason") or "unknown"
+                    )
+                )
+            geometry_flipped = True
+
+            recheck = nesting_lay_flat_face_up.evaluate_body_faces_up(
+                body, min_dot=min_dot
+            )
+            if not recheck.get("ok"):
+                raise ValueError(
+                    "post-fix check failed: {}".format(
+                        ",".join(recheck.get("reasons") or ["unknown"])
+                    )
+                )
+
+            copy_metadata, copy_read_error = (
+                tag_metadata_editor._read_body_metadata_raw(body)
+            )
+            if copy_read_error:
+                raise ValueError(copy_read_error)
+            if isinstance(copy_metadata, dict):
+                copy_metadata = dict(copy_metadata)
+                copy_metadata.pop("nestingFlatOutline", None)
+                copy_metadata["features"] = []
+                copy_metadata["lifecycle"] = {"state": "lay_flat"}
+                tag_metadata_editor._write_body_metadata(body, copy_metadata)
+            if source_written:
+                source_fixed_keys.add(source_key)
+            return {
+                "ok": True,
+                "bodyName": body_name,
+                "sourceBodyName": str(getattr(source_body, "name", "") or ""),
+                "sourceKey": source_key,
+                "resolvedVia": resolved_via,
+                "sourceUpdated": bool(source_written),
+                "geometryFlipped": True,
+                "halfStatus": recheck.get("halfStatus") or "",
+                "rollback": False,
+            }
+        except Exception as ex:
+            if geometry_flipped:
+                try:
+                    flipped_back = (
+                        nesting_lay_flat_fusion.flip_lay_flat_body_thickness(body)
+                    )
+                    if not flipped_back.get("ok"):
+                        rollback_errors.append(
+                            flipped_back.get("reason") or "geometry flip-back failed"
+                        )
+                except Exception as rollback_ex:
+                    rollback_errors.append(str(rollback_ex))
+            if isinstance(copy_snapshot, dict):
+                try:
+                    tag_metadata_editor.restore_milling_state(body, copy_snapshot)
+                except Exception as rollback_ex:
+                    rollback_errors.append("copy metadata: {}".format(rollback_ex))
+            if source_written and isinstance(source_snapshot, dict):
+                try:
+                    tag_metadata_editor.restore_milling_state(
+                        source_body, source_snapshot
+                    )
+                except Exception as rollback_ex:
+                    rollback_errors.append("source metadata: {}".format(rollback_ex))
+            return {
+                "ok": False,
+                "bodyName": body_name,
+                "sourceKey": source_key,
+                "resolvedVia": resolved_via,
+                "reason": str(ex),
+                "rollback": bool(
+                    geometry_flipped or copy_snapshot or source_snapshot
+                ),
+                "rollbackErrors": rollback_errors,
+            }
+
     def check_lay_flat_faces_up(self, payload, _palette):
-        """Check Lay Flat bodies: MILLING ≈ +Z, NON_MILLING (colour) ≈ −Z."""
+        """Validate HALF openings; repair bottom-only HALF via exact SourceRef."""
         root = self.fusion.get_root_component()
         if not root:
             return "panelAttributesResult", {
@@ -2616,6 +3029,26 @@ class PanelAttributesController:
                 "warnings": warnings[:20],
             }
 
+        first_pass = nesting_lay_flat_face_up.check_bodies(bodies, min_dot=min_dot)
+        auto_fixed = []
+        auto_fix_failed = []
+        source_fixed_keys = set()
+        for item in first_pass.get("failed") or []:
+            if not item.get("autoFixRecommended"):
+                continue
+            target = item.get("_body")
+            fix = self._auto_fix_lay_flat_bottom_half(
+                root,
+                target,
+                min_dot=min_dot,
+                source_fixed_keys=source_fixed_keys,
+            )
+            if fix.get("ok"):
+                auto_fixed.append(fix)
+            else:
+                auto_fix_failed.append(fix)
+
+        # Always report a fresh post-repair view of every body.
         result = nesting_lay_flat_face_up.check_bodies(bodies, min_dot=min_dot)
         failed = list(result.get("failed") or [])
         selected_count = 0
@@ -2627,8 +3060,10 @@ class PanelAttributesController:
                 if face is not None:
                     faces.append(face)
         for item in (result.get("passed") or []) + failed:
+            item.pop("_body", None)
             item.pop("_millingFace", None)
             item.pop("_colourFace", None)
+            item.pop("_halfInspection", None)
         if faces:
             selected_count, select_failures = self._select_faces_and_fit(faces)
             warnings.extend(select_failures or [])
@@ -2636,13 +3071,21 @@ class PanelAttributesController:
         ok = bool(result.get("ok"))
         message = (
             "Check Faces Up: {}/{} Lay Flat body(ies) OK "
-            "(MILLING +Z, colour −Z, minDot={:.2f})."
+            "(MILLING +Z, HALF top-only, minDot={:.2f})."
             .format(
                 int(result.get("passedCount") or 0),
                 int(result.get("checkedCount") or 0),
                 float(result.get("minDot") or 0.95),
             )
         )
+        if auto_fixed:
+            message += " Auto-fixed {} body(ies), wrote {} source(s).".format(
+                len(auto_fixed),
+                sum(1 for item in auto_fixed if item.get("sourceUpdated")),
+            )
+        double_side_n = int(result.get("doubleSideCount") or 0)
+        if double_side_n:
+            message += " Double-sided HALF blocked: {}.".format(double_side_n)
         if not ok:
             message += " Failed: {}.".format(int(result.get("failedCount") or 0))
             if selected_count:
@@ -2654,6 +3097,19 @@ class PanelAttributesController:
             "checkedCount": int(result.get("checkedCount") or 0),
             "passedCount": int(result.get("passedCount") or 0),
             "failedCount": int(result.get("failedCount") or 0),
+            "autoFixedCount": len(auto_fixed),
+            "sourceUpdatedCount": sum(
+                1 for item in auto_fixed if item.get("sourceUpdated")
+            ),
+            "geometryFlippedCount": sum(
+                1 for item in auto_fixed if item.get("geometryFlipped")
+            ),
+            "doubleSideBlockedCount": double_side_n,
+            "rollbackCount": sum(
+                1 for item in auto_fix_failed if item.get("rollback")
+            ),
+            "autoFixed": auto_fixed[:80],
+            "autoFixFailed": auto_fix_failed[:80],
             "minDot": result.get("minDot"),
             "failed": [
                 {
@@ -2664,6 +3120,9 @@ class PanelAttributesController:
                     "colourDotMinusZ": item.get("colourDotMinusZ"),
                     "reasons": item.get("reasons") or [],
                     "assignment": item.get("assignment") or "",
+                    "halfStatus": item.get("halfStatus") or "",
+                    "topHalfCount": int(item.get("topHalfCount") or 0),
+                    "bottomHalfCount": int(item.get("bottomHalfCount") or 0),
                 }
                 for item in failed[:80]
             ],
@@ -2720,15 +3179,15 @@ class PanelAttributesController:
         failed_n = int(result.get("failedCount") or 0)
         analyzed_n = int(result.get("analyzedCount") or 0)
         skipped_n = int(result.get("skippedFreshCount") or 0)
-        flipped_n = int(result.get("flippedForViewCount") or 0)
+        tint_n = int(result.get("millingTintAppliedCount") or 0)
         ok = failed_n == 0 and (analyzed_n + skipped_n) > 0
         message = (
-            "Analyze Lay Flat: built {} · reused fresh {} · flipped for view {} · "
+            "Analyze Lay Flat: built {} · reused fresh {} · milling tint {} · "
             "failed {} / {} body(ies)."
             .format(
                 analyzed_n,
                 skipped_n,
-                flipped_n,
+                tint_n,
                 failed_n,
                 int(result.get("bodyCount") or 0),
             )
@@ -2738,7 +3197,8 @@ class PanelAttributesController:
             "action": "analyzeLayFlatManufacturing",
             "analyzedCount": analyzed_n,
             "skippedFreshCount": skipped_n,
-            "flippedForViewCount": flipped_n,
+            "millingTintAppliedCount": tint_n,
+            "millingTintFailedCount": int(result.get("millingTintFailedCount") or 0),
             "failedCount": failed_n,
             "bodyCount": int(result.get("bodyCount") or 0),
             "forceRebuild": force,
@@ -5054,11 +5514,10 @@ class PanelAttributesController:
         )
         warnings = warnings + list(primary.get("warnings") or [])
 
-        # Primary path: write milling roles back to sources now (no rebuild).
-        # One index walk O(N), then O(k) resolves — not O(k·N).
-        source_index = panel_body_resolver.build_original_body_index_by_panel_id(root)
+        # Exact SourceRef path: never authorize a source write from panelId.
         source_bodies = []
         source_seen = set()
+        source_for_lay_flat = {}
         source_updated = []
         source_skipped = []
         for body in bodies:
@@ -5070,23 +5529,34 @@ class PanelAttributesController:
             if not is_lay_flat:
                 # Selection already is (or includes) the assembly model body.
                 continue
-            source_panel_id = milling_surface_propagation.read_source_panel_id(body)
-            if not source_panel_id:
+            canonical_ref = panel_source_ref.from_lay_flat_body(body)
+            lineage_key = panel_source_ref.key(canonical_ref)
+            if not lineage_key:
                 source_skipped.append({
                     "bodyName": str(getattr(body, "name", "") or ""),
-                    "reason": "missing sourcePanelId on Lay Flat body",
+                    "reason": "missing exact source lineage",
                 })
                 continue
-            source_body = find_original_body_by_panel_id(
-                root, source_panel_id, index=source_index
+            resolved, _fields, resolution = (
+                panel_body_resolver.resolve_source_bodies_for_lay_flat(
+                    root,
+                    body,
+                    index=None,
+                    allow_panel_id_fallback=False,
+                )
             )
-            if source_body is None:
+            if len(resolved) != 1:
                 source_skipped.append({
                     "bodyName": str(getattr(body, "name", "") or ""),
-                    "reason": "source body not found for panelId={}".format(source_panel_id),
+                    "sourceKey": lineage_key,
+                    "reason": "exact source lineage did not resolve ({})".format(
+                        resolution or "none"
+                    ),
                 })
                 continue
+            source_body = resolved[0]
             source_key = metadata_inspector._body_key(source_body)
+            source_for_lay_flat[metadata_inspector._body_key(body)] = source_body
             if source_key in source_seen:
                 continue
             # Avoid double-writing if the original was also in the selection.
@@ -5146,7 +5616,7 @@ class PanelAttributesController:
                 )
 
         if ok:
-            flipped_source_panel_ids = set()
+            flipped_source_keys = set()
             for body in bodies:
                 body_name = str(getattr(body, "name", "") or "")
                 if body_name and body_name in skipped_names:
@@ -5159,27 +5629,31 @@ class PanelAttributesController:
                 if is_lay_flat:
                     _geometry_flip_lay_flat(body)
                     continue
-                panel_id = ""
-                try:
-                    panel_id = str(
-                        panel_body_resolver.read_body_panel_id(body) or ""
-                    ).strip()
-                except Exception:
-                    panel_id = ""
-                if panel_id:
-                    flipped_source_panel_ids.add(panel_id)
+                flipped_source_keys.add(metadata_inspector._body_key(body))
 
             # Original-model selection: also role-flip + geometry-flip matching
             # LAY_FLAT copies so Export Ready faces_up stays consistent.
-            if flipped_source_panel_ids:
+            if flipped_source_keys:
                 linked_lay_flat = []
                 for lay_flat_body in nesting_lay_flat_face_up.collect_lay_flat_bodies(root):
-                    source_id = milling_surface_propagation.read_source_panel_id(
-                        lay_flat_body
+                    resolved, _fields, _resolution = (
+                        panel_body_resolver.resolve_source_bodies_for_lay_flat(
+                            root,
+                            lay_flat_body,
+                            index=None,
+                            allow_panel_id_fallback=False,
+                        )
                     )
-                    if source_id not in flipped_source_panel_ids:
+                    if len(resolved) != 1:
+                        continue
+                    linked_source = resolved[0]
+                    if (
+                        metadata_inspector._body_key(linked_source)
+                        not in flipped_source_keys
+                    ):
                         continue
                     key = metadata_inspector._body_key(lay_flat_body)
+                    source_for_lay_flat[key] = linked_source
                     if key in analyze_seen or key in seen:
                         # Already geometry-flipped as a direct selection.
                         if key in seen:
@@ -5207,15 +5681,24 @@ class PanelAttributesController:
         # MoveFeature left a sparse Lay Flat metadata shell.
         classification_restored = []
         for lay_flat_body in analyze_targets:
-            source_panel_id = milling_surface_propagation.read_source_panel_id(
-                lay_flat_body
-            )
-            if not source_panel_id:
-                continue
-            source_body = find_original_body_by_panel_id(
-                root, source_panel_id, index=source_index
-            )
+            lay_flat_key = metadata_inspector._body_key(lay_flat_body)
+            source_body = source_for_lay_flat.get(lay_flat_key)
             if source_body is None:
+                resolved, _fields, resolution = (
+                    panel_body_resolver.resolve_source_bodies_for_lay_flat(
+                        root,
+                        lay_flat_body,
+                        index=None,
+                        allow_panel_id_fallback=False,
+                    )
+                )
+                source_body = resolved[0] if len(resolved) == 1 else None
+            if source_body is None:
+                warnings.append(
+                    "{}: exact source lineage unavailable for classification restore".format(
+                        str(getattr(lay_flat_body, "name", "") or "body")
+                    )
+                )
                 continue
             restore = nesting_lay_flat_fusion.sync_lay_flat_classification_from_source(
                 lay_flat_body, source_body

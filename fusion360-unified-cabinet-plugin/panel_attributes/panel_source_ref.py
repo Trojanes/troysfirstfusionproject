@@ -68,15 +68,24 @@ def normalize(value):
         or value.get("sourceComponentName")
         or value.get("componentName")
     )
+    assembly_name = _text(
+        source.get("assemblyName")
+        or source.get("sourceAssemblyName")
+        or value.get("sourceAssemblyName")
+        or value.get("assemblyName")
+    )
     if not token and not (body_name and occurrence_path is not None):
         return None
-    return {
+    normalized = {
         "entityToken": token,
         "occurrencePath": occurrence_path,
         "bodyName": body_name,
         "componentName": component_name,
         "panelId": panel_id,
     }
+    if assembly_name:
+        normalized["assemblyName"] = assembly_name
+    return normalized
 
 
 def from_scan_record(record):
@@ -103,6 +112,7 @@ def to_legacy_fields(value):
         "sourceOccurrencePath": list(ref["occurrencePath"] or []),
         "sourceBodyName": ref["bodyName"],
         "sourceComponentName": ref["componentName"],
+        "sourceAssemblyName": ref.get("assemblyName", ""),
         "sourcePanelId": ref["panelId"],
     }
 
@@ -183,6 +193,9 @@ def from_lay_flat_body(body):
                 "sourceBodyName": _attr(entity, MARKER_GROUP, "sourceBodyName"),
                 "sourceComponentName": _attr(
                     entity, MARKER_GROUP, "sourceComponentName"
+                ),
+                "sourceAssemblyName": _attr(
+                    entity, MARKER_GROUP, "sourceAssemblyName"
                 ),
                 "sourcePanelId": _attr(entity, MARKER_GROUP, "sourcePanelId"),
             }

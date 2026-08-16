@@ -13,6 +13,32 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+try:
+    from nesting.workpiece_names import (
+        display_workpiece_name,
+        is_generic_body_name,
+        is_layout_container_label,
+        join_group_part,
+    )
+except Exception:
+    from workpiece_names import (
+        display_workpiece_name,
+        is_generic_body_name,
+        is_layout_container_label,
+        join_group_part,
+    )
+
+try:
+    from nesting.capsule_outline import (
+        capsule_outline_from_centerline,
+        capsule_outline_from_points_aabb,
+    )
+except Exception:
+    from capsule_outline import (
+        capsule_outline_from_centerline,
+        capsule_outline_from_points_aabb,
+    )
+
 
 FORMAT = "cabinetnc.manufacturing-snapshot"
 SCHEMA_VERSION = "1.0.0"
@@ -46,6 +72,8 @@ def build_snapshot(records, job_id, source=None):
                 "displayName": material.get("displayName"),
                 "thicknessMm": material["thicknessMm"],
                 "decorId": material.get("decorId"),
+                "colorName": material.get("colorName"),
+                "surfaceMode": material.get("surfaceMode"),
             },
         )
 
@@ -266,6 +294,9 @@ def _build_workpiece(record, index, used_ids=None):
             if not item["through"]:
                 blind_faces.add(item["sourceFace"])
 
+    features = _dedupe_through_features(features)
+    _enrich_feature_intents(features, metadata, record)
+
     invalid_blind_faces = {
         face for face in blind_faces if str(face or "").upper() not in ("A", "B")
     }
@@ -290,6 +321,15 @@ def _build_workpiece(record, index, used_ids=None):
                 panel_id,
             )
         )
+    if "B" in known_blind_faces:
+        errors.append(
+            _diagnostic(
+                "error",
+                "feature_face_not_machining",
+                "Blind feature opens on B; canonical Analyze output requires A.",
+                panel_id,
+            )
+        )
 
     if errors:
         return None, errors, warnings
@@ -308,18 +348,48 @@ def _build_workpiece(record, index, used_ids=None):
         or ""
     )
     display_name = _workpiece_display_name(record, panel_id)
+    identity_meta, source_ref_meta = _source_identity(record)
     provenance = {
         "geometrySource": str(outline_record.get("source") or "analyzedBody"),
         "metadataSource": str(record.get("metadataSource") or ""),
     }
-    if base_panel_id and base_panel_id != panel_id:
+    source_panel_id = str(
+        identity_meta.get("sourcePanelId")
+        or source_ref_meta.get("panelId")
+        or record.get("sourcePanelId")
+        or ""
+    ).strip()
+    if source_panel_id:
+        provenance["sourcePanelId"] = source_panel_id
+    elif base_panel_id and base_panel_id != panel_id:
         provenance["sourcePanelId"] = base_panel_id
-    assembly_name = str(record.get("assemblyName") or "").strip()
-    component_name = str(record.get("componentName") or "").strip()
-    if assembly_name:
+    assembly_name = str(
+        identity_meta.get("sourceAssemblyName")
+        or source_ref_meta.get("assemblyName")
+        or record.get("sourceAssemblyName")
+        or record.get("assemblyName")
+        or ""
+    ).strip()
+    component_name = str(
+        identity_meta.get("sourceComponentName")
+        or source_ref_meta.get("componentName")
+        or record.get("sourceComponentName")
+        or record.get("componentName")
+        or ""
+    ).strip()
+    body_name = str(
+        identity_meta.get("sourceBodyName")
+        or source_ref_meta.get("bodyName")
+        or record.get("sourceBodyName")
+        or record.get("bodyName")
+        or ""
+    ).strip()
+    if assembly_name and not _is_lay_flat_label(assembly_name):
         provenance["assemblyName"] = assembly_name
-    if component_name:
+    if component_name and not _is_lay_flat_label(component_name):
         provenance["componentName"] = component_name
+    if body_name and not _is_lay_flat_label(body_name):
+        provenance["bodyName"] = body_name
 
     workpiece = {
         "workpieceId": workpiece_id,
@@ -331,16 +401,13 @@ def _build_workpiece(record, index, used_ids=None):
             "moduleId": str(identity.get("module") or record.get("module") or ""),
             "role": role,
         },
-        "material": {
-            "materialId": material_id,
-            "thicknessMm": round(thickness, 4),
-            "substrateId": str(
-                (metadata.get("defaultAttributes") or {}).get("materialClass")
-                or board_type
-            ),
-            "decorId": color,
-            "displayName": "{} {}mm".format(color, _format_number(thickness)),
-        },
+        "material": _build_material_payload(
+            material_id=material_id,
+            thickness=thickness,
+            board_type=board_type,
+            color=color,
+            metadata=metadata,
+        ),
         "geometry": {
             "quality": "tessellated",
             "toleranceMm": 0.1,
@@ -359,17 +426,33 @@ def _build_workpiece(record, index, used_ids=None):
     return workpiece, errors, warnings
 
 
+def _is_lay_flat_label(value):
+    """Compatibility wrapper for callers/tests using the old private helper."""
+    return is_layout_container_label(value)
+
+
+def _source_identity(record):
+    metadata = (record or {}).get("metadata") if isinstance((record or {}).get("metadata"), dict) else {}
+    identity = metadata.get("identity") if isinstance(metadata.get("identity"), dict) else {}
+    source_ref = identity.get("sourceRef") if isinstance(identity.get("sourceRef"), dict) else {}
+    if not source_ref and isinstance((record or {}).get("sourceRef"), dict):
+        source_ref = record.get("sourceRef") or {}
+    return identity, source_ref
+
+
+def _is_generic_body_name(value):
+    """Compatibility wrapper for callers/tests using the old private helper."""
+    return is_generic_body_name(value)
+
+
+def _join_group_part(group, part):
+    """Compatibility wrapper for the canonical naming contract."""
+    return join_group_part(group, part)
+
+
 def _workpiece_display_name(record, panel_id):
-    assembly = str((record or {}).get("assemblyName") or "").strip()
-    component = str((record or {}).get("componentName") or "").strip()
-    body = str((record or {}).get("bodyName") or "").strip()
-    if assembly and component:
-        return "{} - {}".format(assembly, component)
-    if component:
-        return component
-    if assembly and body:
-        return "{} - {}".format(assembly, body)
-    return body or str(panel_id or "panel")
+    """Resolve `.cnjob name` through the same contract as Lay Flat."""
+    return display_workpiece_name(record, panel_id)
 
 
 def _unique_workpiece_id(base_panel_id, record, index, used_ids):
@@ -539,27 +622,6 @@ def _build_faces(record, metadata):
     }
 
 
-def _normalize_blind_open_face(open_is, depth_mm, thickness_mm, feature=None):
-    """Remap false B opens when the floor sits near the colour skin."""
-    open_is = str(open_is or "").strip().upper()
-    depth = _number(depth_mm)
-    thickness = _number(thickness_mm)
-    feature = feature if isinstance(feature, dict) else {}
-    if open_is != "B" or thickness <= 0:
-        return open_is, depth
-    floor_z = feature.get("floorOffsetMm")
-    try:
-        if floor_z is not None:
-            # Without absolute A/B offsets, a floor near either skin is enough
-            # when paired with shallow recorded B depth (see below).
-            pass
-    except Exception:
-        pass
-    if 0 < depth < min(6.0, thickness * 0.4):
-        return "A", round(max(depth, thickness - depth), 3)
-    return open_is, depth
-
-
 def _convert_feature(feature, index, default_face, token_face, thickness_mm=0.0):
     errors = []
     feature_id = str(feature.get("featureId") or "F{}".format(index + 1))
@@ -576,10 +638,6 @@ def _convert_feature(feature, index, default_face, token_face, thickness_mm=0.0)
     token = str(feature.get("openSurfaceToken") or "")
     open_is = str(feature.get("openSurfaceIs") or "").strip().upper()
     depth = _number(feature.get("depthMm"))
-    if not through:
-        open_is, depth = _normalize_blind_open_face(
-            open_is, depth, thickness_mm, feature
-        )
     if through:
         source_face = "THROUGH"
     elif open_is in ("A", "B"):
@@ -594,8 +652,15 @@ def _convert_feature(feature, index, default_face, token_face, thickness_mm=0.0)
             ("feature_depth", "{} requires depthMm > 0.".format(feature_id))
         )
     intent = {
-        "purpose": str(feature.get("purpose") or feature.get("operationType") or ""),
+        "purpose": str(
+            feature.get("purpose")
+            or feature.get("operationType")
+            or feature.get("hardwareType")
+            or ""
+        ),
         "operationType": str(feature.get("operationType") or ""),
+        "hardwareType": str(feature.get("hardwareType") or ""),
+        "hostRole": str(feature.get("hostRole") or ""),
         "sourceRelationshipId": str(feature.get("sourceRelationshipId") or ""),
     }
 
@@ -684,8 +749,40 @@ def _convert_feature(feature, index, default_face, token_face, thickness_mm=0.0)
     elif kind == "groove":
         centerline, width = _groove_centerline(points)
         width = _number(feature.get("widthMm")) or width
-        if len(centerline) >= 2 and width > 0:
-            geometry = {"centerline": centerline, "widthMm": round(width, 4)}
+        # Through elongated openings (lock cutouts, etc.) are cutouts, not grooves.
+        if through:
+            if len(points) >= 3 and _polygon_area_abs(points) > 0.0001:
+                profile_points = points
+            else:
+                # Missing CAD ring: stadium only for lock tag or CAD hasArc.
+                # Size alone must not invent rounded ends.
+                profile_points = _through_profile_fallback(
+                    centerline, width, intent, feature
+                )
+            profile_points = _maybe_lock_stadium_profile(
+                profile_points, intent, feature
+            )
+            if len(profile_points) >= 3 and _polygon_area_abs(profile_points) > 0.0001:
+                geometry = {"profile": {"closed": True, "points": profile_points}}
+                canonical_kind = "throughProfile"
+            else:
+                return [], [
+                    (
+                        "groove_geometry",
+                        "{} through opening requires a closed profile.".format(
+                            feature_id
+                        ),
+                    )
+                ]
+        elif len(centerline) >= 2 and width > 0:
+            # Keep the CAD opening polygon so shop UI can draw the full outline
+            # instead of only a centreline stroke.
+            geometry = {
+                "centerline": centerline,
+                "widthMm": round(width, 4),
+            }
+            if len(points) >= 3 and _polygon_area_abs(points) > 0.0001:
+                geometry["profile"] = {"closed": True, "points": points}
             canonical_kind = "groove"
         elif len(points) >= 3 and _polygon_area_abs(points) > 0.0001:
             # Rounded / non-quad channels still ship as closed pocket profiles.
@@ -703,20 +800,24 @@ def _convert_feature(feature, index, default_face, token_face, thickness_mm=0.0)
     else:
         if len(points) < 3:
             return [], [("profile_geometry", "{} requires a closed profile.".format(feature_id))]
-        geometry = {"profile": {"closed": True, "points": points}}
+        profile_points = (
+            _maybe_lock_stadium_profile(points, intent, feature) if through else points
+        )
+        geometry = {"profile": {"closed": True, "points": profile_points}}
         canonical_kind = "throughProfile" if through else "pocket"
 
-    return [
-        {
-            "featureId": feature_id,
-            "kind": canonical_kind,
-            "sourceFace": source_face,
-            "geometry": geometry,
-            "depthMm": round(depth, 4) if depth > 0 else None,
-            "through": through,
-            "intent": intent,
-        }
-    ], errors
+    payload = {
+        "featureId": feature_id,
+        "kind": canonical_kind,
+        "sourceFace": source_face,
+        "geometry": geometry,
+        "depthMm": round(depth, 4) if depth > 0 else None,
+        "through": through,
+        "intent": intent,
+    }
+    if bool(feature.get("hasArc")):
+        payload["hasArc"] = True
+    return [payload], errors
 
 
 def _groove_centerline(points):
@@ -746,6 +847,29 @@ def _groove_centerline_from_quad(points):
         start = _midpoint(points[0], points[1])
         finish = _midpoint(points[2], points[3])
         width = (lengths[0] + lengths[2]) / 2.0
+    if width <= 0:
+        return [], 0.0
+    # Point order can bow-tie a quad and swap long/short axes — prefer the
+    # longer of the two opposite-midpoint pairings.
+    alt_start = _midpoint(points[0], points[1]) if lengths[0] >= lengths[1] else _midpoint(points[3], points[0])
+    alt_finish = _midpoint(points[2], points[3]) if lengths[0] >= lengths[1] else _midpoint(points[1], points[2])
+    alt_width = (lengths[0] + lengths[2]) / 2.0 if lengths[0] >= lengths[1] else (lengths[1] + lengths[3]) / 2.0
+    if _distance(start, finish) + 1e-9 < _distance(alt_start, alt_finish):
+        start, finish, width = alt_start, alt_finish, alt_width
+    if width <= 0 or _distance(start, finish) < width:
+        # Final guard: AABB long axis.
+        xs = [_number(p[0]) for p in points]
+        ys = [_number(p[1]) for p in points]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        if (max_x - min_x) >= (max_y - min_y):
+            start = [min_x, (min_y + max_y) * 0.5]
+            finish = [max_x, (min_y + max_y) * 0.5]
+            width = max_y - min_y
+        else:
+            start = [(min_x + max_x) * 0.5, min_y]
+            finish = [(min_x + max_x) * 0.5, max_y]
+            width = max_x - min_x
     if width <= 0:
         return [], 0.0
     return [_rounded_point(start), _rounded_point(finish)], width
@@ -894,6 +1018,227 @@ def _polygon_area_abs(points):
         area += _number(point[0]) * _number(following[1])
         area -= _number(following[0]) * _number(point[1])
     return abs(area) * 0.5
+
+
+def _build_material_payload(material_id, thickness, board_type, color, metadata):
+    attrs = metadata.get("defaultAttributes") if isinstance(metadata, dict) else None
+    if not isinstance(attrs, dict):
+        attrs = {}
+    color_name = str(attrs.get("colorName") or "").strip()
+    surface_mode = str(attrs.get("surfaceMode") or "").strip()
+    payload = {
+        "materialId": material_id,
+        "thicknessMm": round(thickness, 4),
+        "substrateId": str(attrs.get("materialClass") or board_type or ""),
+        "decorId": color,
+        "displayName": "{} {}mm".format(color, _format_number(thickness)),
+    }
+    if color_name:
+        payload["colorName"] = color_name
+    if surface_mode:
+        payload["surfaceMode"] = surface_mode
+    return payload
+
+
+def _strip_outline_from_centerline(centerline, width):
+    """Closed rectangle around a 2-point (or longer) groove centreline."""
+    ring = [list(point[:2]) for point in (centerline or []) if len(point) >= 2]
+    if len(ring) < 2 or _number(width) <= 1e-9:
+        return []
+    start, finish = ring[0], ring[-1]
+    dx = _number(finish[0]) - _number(start[0])
+    dy = _number(finish[1]) - _number(start[1])
+    length = math.hypot(dx, dy)
+    if length <= 1e-9:
+        return []
+    nx, ny = -dy / length, dx / length
+    half = _number(width) * 0.5
+    return [
+        _rounded_point([_number(start[0]) + nx * half, _number(start[1]) + ny * half]),
+        _rounded_point([_number(finish[0]) + nx * half, _number(finish[1]) + ny * half]),
+        _rounded_point([_number(finish[0]) - nx * half, _number(finish[1]) - ny * half]),
+        _rounded_point([_number(start[0]) - nx * half, _number(start[1]) - ny * half]),
+    ]
+
+
+def _intent_is_lock_cutout(intent):
+    """True only when metadata explicitly marks a door-lock cutout."""
+    if not isinstance(intent, dict):
+        return False
+    blob = " ".join(
+        str(intent.get(key) or "")
+        for key in ("purpose", "operationType", "hardwareType", "hostRole")
+    ).lower()
+    return "lock" in blob
+
+
+def _feature_has_arc(feature):
+    """True when extract saw Arc3D/Circle3D edges on the opening loop."""
+    return isinstance(feature, dict) and bool(feature.get("hasArc"))
+
+
+def _should_rebuild_stadium(intent, feature, points=None):
+    """Stadium rebuild is opt-in by lock tag OR CAD arc edges — never by size.
+
+    Hand-drawn lock slots with Arc3D ends set hasArc even when stroke sampling
+    collapses to the four tangency corners. True sharp rectangles have no arcs.
+    """
+    return _intent_is_lock_cutout(intent) or _feature_has_arc(feature)
+
+
+def _through_profile_fallback(centerline, width, intent, feature=None):
+    if _should_rebuild_stadium(intent, feature, None):
+        stadium = capsule_outline_from_centerline(centerline, width)
+        if len(stadium) >= 3:
+            return stadium
+    return _strip_outline_from_centerline(centerline, width)
+
+
+def _maybe_lock_stadium_profile(points, intent, feature=None):
+    """Upgrade a sharp quad to stadium for lock tags or CAD-arc openings.
+
+    Never use AABB size alone — a genuine sharp through hole must pass through
+    unchanged when it has no arcs and no lock intent.
+    """
+    ring = [list(point[:2]) for point in (points or []) if len(point) >= 2]
+    if len(ring) < 3:
+        return []
+    rounded = [_rounded_point(pt) for pt in ring]
+    if not _should_rebuild_stadium(intent, feature, ring):
+        return rounded
+    simplified = _simplify_collinear(ring, max_deviation_mm=0.2)
+    if len(simplified) > 4:
+        return rounded
+    stadium = capsule_outline_from_points_aabb(ring)
+    if len(stadium) < 3:
+        return rounded
+    return [_rounded_point(pt) for pt in stadium]
+
+
+def _feature_profile_points(feature):
+    geometry = feature.get("geometry") if isinstance(feature, dict) else None
+    if not isinstance(geometry, dict):
+        return []
+    profile = geometry.get("profile")
+    if isinstance(profile, dict):
+        return [
+            list(point[:2])
+            for point in (profile.get("points") or [])
+            if isinstance(point, (list, tuple)) and len(point) >= 2
+        ]
+    centerline = geometry.get("centerline") or []
+    width = _number(geometry.get("widthMm"))
+    return _strip_outline_from_centerline(centerline, width)
+
+
+def _feature_geometry_centroid(feature):
+    points = _feature_profile_points(feature)
+    if len(points) < 1:
+        geometry = feature.get("geometry") if isinstance(feature, dict) else None
+        if isinstance(geometry, dict) and isinstance(geometry.get("center"), (list, tuple)):
+            center = geometry["center"]
+            if len(center) >= 2:
+                return (_number(center[0]), _number(center[1]))
+        return None
+    xs = [_number(point[0]) for point in points]
+    ys = [_number(point[1]) for point in points]
+    return (sum(xs) / len(xs), sum(ys) / len(ys))
+
+
+def _dedupe_through_features(features):
+    """Drop the same through opening captured twice (A/B face loops)."""
+    kept = []
+    for item in features or []:
+        if not item.get("through"):
+            kept.append(item)
+            continue
+        centroid = _feature_geometry_centroid(item)
+        area = _polygon_area_abs(_feature_profile_points(item))
+        if centroid is None:
+            kept.append(item)
+            continue
+        duplicate = False
+        for other in kept:
+            if not other.get("through"):
+                continue
+            other_centroid = _feature_geometry_centroid(other)
+            if other_centroid is None:
+                continue
+            other_area = _polygon_area_abs(_feature_profile_points(other))
+            if (
+                abs(centroid[0] - other_centroid[0]) <= 0.5
+                and abs(centroid[1] - other_centroid[1]) <= 0.5
+                and abs(area - other_area) <= max(0.5, area * 0.05)
+            ):
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(item)
+    return kept
+
+
+def _collect_declared_cuts(metadata, record):
+    buckets = []
+    for source in (metadata, record):
+        if not isinstance(source, dict):
+            continue
+        declared = source.get("declaredCuts")
+        if isinstance(declared, list):
+            buckets.extend(item for item in declared if isinstance(item, dict))
+        for key in ("halfGrooveVectors", "cutouts"):
+            raw = source.get(key)
+            if isinstance(raw, list):
+                buckets.extend(item for item in raw if isinstance(item, dict))
+        body = source.get("body") if isinstance(source.get("body"), dict) else {}
+        if isinstance(body.get("cutouts"), list):
+            buckets.extend(item for item in body.get("cutouts") if isinstance(item, dict))
+    return buckets
+
+
+def _enrich_feature_intents(features, metadata, record):
+    """Stamp shop purpose from declared cuts (e.g. LED) without changing kind."""
+    declared = _collect_declared_cuts(metadata, record)
+    led_depths = set()
+    has_led = False
+    for cut in declared:
+        source_id = str(cut.get("sourceId") or cut.get("id") or "").lower()
+        purpose = str(cut.get("purpose") or cut.get("operationType") or "").lower()
+        if "led" in source_id or "led" in purpose:
+            has_led = True
+            depth = _number(cut.get("grooveDepth"))
+            if depth > 0:
+                led_depths.add(round(depth, 3))
+    if has_led:
+        for item in features or []:
+            if item.get("through"):
+                continue
+            if str(item.get("kind") or "") not in ("pocket", "groove"):
+                continue
+            intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
+            if str(intent.get("purpose") or "").strip():
+                continue
+            depth = round(_number(item.get("depthMm")), 3)
+            if led_depths and not any(abs(depth - d) <= 0.2 for d in led_depths):
+                continue
+            intent = dict(intent)
+            intent["purpose"] = "led_groove"
+            if not str(intent.get("operationType") or "").strip():
+                intent["operationType"] = "led_groove"
+            item["intent"] = intent
+
+    # Promote hardwareType=lock_cutout (and similar) into intent.purpose so
+    # downstream stadium rebuild is opt-in by tag, never by AABB size.
+    for item in features or []:
+        intent = item.get("intent") if isinstance(item.get("intent"), dict) else {}
+        if str(intent.get("purpose") or "").strip():
+            continue
+        hardware = str(intent.get("hardwareType") or "").lower()
+        host_role = str(intent.get("hostRole") or "").lower()
+        if "lock" not in hardware and "lock" not in host_role:
+            continue
+        intent = dict(intent)
+        intent["purpose"] = hardware or host_role or "lock_cutout"
+        item["intent"] = intent
 
 
 def _classification_value(classification, key):

@@ -154,7 +154,7 @@ def _slim_metadata_for_lay_flat(
         allow_parts_in_part=False,
         reflected_source=bool((outline or {}).get("reflectedSource")),
     )
-    return {
+    slim = {
         "schemaVersion": src.get("schemaVersion", 1),
         "identity": identity,
         "classification": src.get("classification"),
@@ -169,6 +169,11 @@ def _slim_metadata_for_lay_flat(
         CACHE_KEY: cache,
         "lifecycle": {"state": "lay_flat"},
     }
+    # Keep declared cut intents (e.g. LED half grooves) for manufacturing export.
+    declared = src.get("declaredCuts")
+    if isinstance(declared, list) and declared:
+        slim["declaredCuts"] = declared
+    return slim
 
 
 def _stamp_lay_flat_body(body, placement, run_id, source_metadata, outline, dimensions):
@@ -189,6 +194,9 @@ def _stamp_lay_flat_body(body, placement, run_id, source_metadata, outline, dime
             "componentName": placement.get("sourceComponentName")
             or placement.get("componentName")
             or "",
+            "assemblyName": placement.get("sourceAssemblyName")
+            or placement.get("assemblyName")
+            or "",
             "panelId": source_panel_id,
         }
     source_token = str(source_ref.get("entityToken") or "").strip()
@@ -207,6 +215,11 @@ def _stamp_lay_flat_body(body, placement, run_id, source_metadata, outline, dime
         "occurrencePath": [int(value) for value in (source_path or [])],
         "bodyName": source_body_name,
         "componentName": str(source_ref.get("componentName") or "").strip(),
+        "assemblyName": str(
+            source_ref.get("assemblyName")
+            or placement.get("assemblyName")
+            or ""
+        ).strip(),
         "panelId": str(source_ref.get("panelId") or source_panel_id).strip(),
     }
     _set_attr(
@@ -219,6 +232,13 @@ def _stamp_lay_flat_body(body, placement, run_id, source_metadata, outline, dime
         _set_attr(body, OUTPUT_MARKER_GROUP, "sourceEntityToken", source_token)
     if source_body_name:
         _set_attr(body, OUTPUT_MARKER_GROUP, "sourceBodyName", source_body_name)
+    if source_ref.get("assemblyName"):
+        _set_attr(
+            body,
+            OUTPUT_MARKER_GROUP,
+            "sourceAssemblyName",
+            source_ref["assemblyName"],
+        )
     if isinstance(source_path, (list, tuple)):
         try:
             _set_attr(
@@ -242,6 +262,8 @@ def _stamp_lay_flat_body(body, placement, run_id, source_metadata, outline, dime
     )
     identity = meta.get("identity") if isinstance(meta.get("identity"), dict) else {}
     identity["sourceRef"] = source_ref
+    if source_ref.get("assemblyName"):
+        identity["sourceAssemblyName"] = source_ref["assemblyName"]
     if source_token:
         identity["sourceEntityToken"] = source_token
     if source_body_name:

@@ -42,6 +42,112 @@ class NestingWorkpieceNameTests(unittest.TestCase):
         })
         self.assertEqual(name, "A_B_C-D_E")
 
+    def test_kitchen_blob_assembly_uses_body_part(self):
+        name = names.nesting_workpiece_name({
+            "assemblyName": "KITCHEN_KITCHEN_FLAT_ASSEMBLY_2026-07-07T12:34:56.789",
+            "componentName": "KITCHEN_KITCHEN_FLAT_ASSEMBLY_2026-07-07T12:34:56.789",
+            "bodyName": "KITCHEN_vPanel_V2",
+        })
+        self.assertEqual(name, "Kitchen-V2")
+
+    def test_kitchen_blob_front_panel_keeps_id(self):
+        name = names.nesting_workpiece_name({
+            "assemblyName": "KITCHEN_KITCHEN_FLAT_ASSEMBLY_2026-07-07T12:34:56.789",
+            "componentName": "KITCHEN_KITCHEN_FLAT_ASSEMBLY_2026-07-07T12:34:56.789",
+            "bodyName": "KITCHEN_frontPanel_k-zone-left-door",
+        })
+        self.assertEqual(name, "Kitchen-k-zone-left-door")
+
+    def test_kitchen_blob_names_stay_unique(self):
+        used = set()
+        a = names.nesting_workpiece_name({
+            "assemblyName": "KITCHEN_FLAT_ASSEMBLY_2026-07-07T01:02:03",
+            "componentName": "KITCHEN_FLAT_ASSEMBLY_2026-07-07T01:02:03",
+            "bodyName": "KITCHEN_hPanel_H1",
+        }, used)
+        b = names.nesting_workpiece_name({
+            "assemblyName": "KITCHEN_FLAT_ASSEMBLY_2026-07-07T01:02:03",
+            "componentName": "KITCHEN_FLAT_ASSEMBLY_2026-07-07T01:02:03",
+            "bodyName": "KITCHEN_hPanel_H2",
+        }, used)
+        self.assertEqual(a, "Kitchen-H1")
+        self.assertEqual(b, "Kitchen-H2")
+
+    def test_is_blob_label(self):
+        self.assertTrue(names.is_blob_label(
+            "KITCHEN_KITCHEN_FLAT_ASSEMBLY_2026-07-07T12:34:56"
+        ))
+        self.assertTrue(names.is_blob_label("1786501234567"))
+        self.assertFalse(names.is_blob_label("Kitchen"))
+        self.assertFalse(names.is_blob_label("OHC_1"))
+
+    def test_generator_assembly_name_keeps_explicit_and_rejects_run_blob(self):
+        self.assertEqual(
+            names.resolve_assembly_name(
+                "Bunk_Tall_Right_1",
+                run_label="GT_2026-08-12T01-02-03",
+                default_name="GT",
+                include_human_run_label=True,
+            ),
+            "Bunk_Tall_Right_1",
+        )
+        self.assertEqual(
+            names.resolve_assembly_name(
+                "",
+                run_label="KITCHEN_FLAT_ASSEMBLY_2026-08-12T01-02-03",
+                default_name="Kitchen",
+                include_human_run_label=True,
+            ),
+            "Kitchen",
+        )
+        self.assertEqual(
+            names.resolve_assembly_name(
+                "",
+                run_label="Guest",
+                default_name="Kitchen",
+                include_human_run_label=True,
+            ),
+            "Kitchen_Guest",
+        )
+
+    def test_lay_flat_and_export_resolvers_are_identical(self):
+        placement = {
+            "panelId": "overhead.BP@layflat-1-24",
+            "assemblyName": "OHC_1",
+            "componentName": "OH_BP",
+            "bodyName": "OH_BP",
+        }
+        browser_name = names.nesting_workpiece_name(placement)
+        export_name = names.display_workpiece_name(
+            {
+                "bodyName": browser_name,
+                "assemblyName": "LAY_FLAT:1",
+                "componentName": "LAY_FLAT",
+                "metadata": {
+                    "identity": {
+                        "sourceRef": {
+                            "assemblyName": "OHC_1",
+                            "componentName": "OH_BP",
+                            "bodyName": "OH_BP",
+                            "panelId": "overhead.BP",
+                        }
+                    }
+                },
+            },
+            placement["panelId"],
+        )
+        self.assertEqual(browser_name, "OHC_1-OH_BP")
+        self.assertEqual(export_name, browser_name)
+
+    def test_identity_suffix_is_not_part_of_display_name(self):
+        self.assertEqual(
+            names.resolve_shop_label(
+                body_name="Body1",
+                panel_id="manual.Body1@layflat-0-2",
+            ),
+            "manual.Body1",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

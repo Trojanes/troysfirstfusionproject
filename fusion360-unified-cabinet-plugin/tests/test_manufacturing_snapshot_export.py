@@ -168,7 +168,7 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
             any(item["code"] == "double_side_unsupported" for item in result["errors"])
         )
 
-    def test_normalizes_blind_B_features_to_snapshot_A(self):
+    def test_rejects_blind_B_token_feature(self):
         features = [
             {
                 "featureId": "H1",
@@ -182,13 +182,13 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
         ]
         result = build_snapshot([_record(features=features)], "JOB-1")
 
-        self.assertTrue(result["ok"], result["errors"])
-        workpiece = result["snapshot"]["workpieces"][0]
-        self.assertEqual(workpiece["manufacturing"]["machiningFace"], "A")
-        self.assertEqual(workpiece["features"][0]["sourceFace"], "A")
-        # TOKEN-B was non-milling; after remap it becomes Snapshot A and is upgraded.
-        face_a = next(f for f in workpiece["faces"] if f["faceId"] == "A")
-        self.assertEqual(face_a["machiningPermission"], "PRIMARY")
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                item["code"] == "feature_face_not_machining"
+                for item in result["errors"]
+            )
+        )
 
     def test_rejects_missing_and_over_thickness_blind_depth(self):
         missing = [
@@ -287,7 +287,7 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
                 self.assertGreaterEqual(len(feature["geometry"]["centerline"]), 2)
                 self.assertGreater(feature["geometry"]["widthMm"], 0)
 
-    def test_shallow_b_open_remaps_to_a_on_export(self):
+    def test_shallow_b_open_is_rejected_on_export(self):
         result = build_snapshot(
             [
                 _record(
@@ -305,9 +305,12 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
             ],
             "JOB-1",
         )
-        self.assertTrue(result["ok"], result["errors"])
-        self.assertEqual(
-            result["snapshot"]["workpieces"][0]["features"][0]["sourceFace"], "A"
+        self.assertFalse(result["ok"])
+        self.assertTrue(
+            any(
+                item["code"] == "feature_face_not_machining"
+                for item in result["errors"]
+            )
         )
 
     def test_rejects_unresolved_either_face(self):
@@ -411,11 +414,210 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
         self.assertEqual(ids[1], "manual.Body1@0-2")
         self.assertEqual(
             result["snapshot"]["workpieces"][1]["name"],
-            "Bunk - SideB",
+            "Bunk-SideB",
         )
         self.assertTrue(
             any(item["code"] == "panel_id_uniquified" for item in result["warnings"])
         )
+
+    def test_lay_flat_uses_fusion_browser_body_name(self):
+        record = _record()
+        record["panelId"] = "overhead.BP@layflat-1-24"
+        record["assemblyName"] = "LAY_FLAT:1"
+        record["componentName"] = "LAY_FLAT"
+        # Named like Fusion browser after Create Lay Flat.
+        record["bodyName"] = "OHC_1-OH_BP"
+        record["metadata"]["identity"] = {
+            "panelId": "overhead.BP@layflat-1-24",
+            "sourcePanelId": "overhead.BP",
+            "sourceBodyName": "BP",
+            "sourceRef": {
+                "panelId": "overhead.BP",
+                "bodyName": "BP",
+                "componentName": "OH_BP",
+                "assemblyName": "OHC_1",
+            },
+        }
+
+        result = build_snapshot([record], "JOB-LAYFLAT-NAME")
+
+        self.assertTrue(result["ok"], result["errors"])
+        workpiece = result["snapshot"]["workpieces"][0]
+        self.assertEqual(workpiece["name"], "OHC_1-OH_BP")
+        self.assertNotIn("LAY_FLAT", workpiece["name"].upper())
+        self.assertEqual(workpiece["provenance"].get("sourcePanelId"), "overhead.BP")
+
+    def test_lay_flat_falls_back_to_assembly_component_join(self):
+        record = _record()
+        record["panelId"] = "manual.Body1@layflat-0-0"
+        record["assemblyName"] = "LAY_FLAT:1"
+        record["componentName"] = "LAY_FLAT"
+        record["bodyName"] = "Body1"
+        record["metadata"]["identity"] = {
+            "panelId": "manual.Body1@layflat-0-0",
+            "sourcePanelId": "manual.Body1",
+            "sourceRef": {
+                "panelId": "manual.Body1",
+                "bodyName": "Body1",
+                "componentName": "GT_V1",
+                "assemblyName": "Bunk_Tall_Right_1",
+            },
+        }
+
+        result = build_snapshot([record], "JOB-LAYFLAT-FALLBACK")
+
+        self.assertTrue(result["ok"], result["errors"])
+        self.assertEqual(
+            result["snapshot"]["workpieces"][0]["name"],
+            "Bunk_Tall_Right_1-GT_V1",
+        )
+
+    def test_through_groove_exports_as_through_profile(self):
+        lock = {
+            "featureId": "LOCK-1",
+            "kind": "groove",
+            "cutType": "FULL",
+            "through": True,
+            "depthMm": 16,
+            "pointsLocal": [
+                [0, 2],
+                [1, 0.5],
+                [3, 0],
+                [52, 0],
+                [54, 0.5],
+                [55, 2],
+                [55, 13.5],
+                [54, 15],
+                [52, 15.5],
+                [3, 15.5],
+                [1, 15],
+                [0, 13.5],
+            ],
+        }
+        result = build_snapshot([_record(features=[lock])], "JOB-LOCK")
+        self.assertTrue(result["ok"], result["errors"])
+        feature = result["snapshot"]["workpieces"][0]["features"][0]
+        self.assertEqual(feature["kind"], "throughProfile")
+        self.assertTrue(feature["through"])
+        self.assertEqual(feature["sourceFace"], "THROUGH")
+        self.assertGreaterEqual(len(feature["geometry"]["profile"]["points"]), 3)
+
+    def test_sharp_55x155_through_hole_stays_sharp_without_lock_intent(self):
+        """A genuine sharp through hole must not be rounded by size alone."""
+        hole = {
+            "featureId": "SHARP-SLOT",
+            "kind": "groove",
+            "cutType": "FULL",
+            "through": True,
+            "depthMm": 16,
+            "pointsLocal": [[0, 0], [55, 0], [55, 15.5], [0, 15.5]],
+        }
+        result = build_snapshot([_record(features=[hole])], "JOB-SHARP")
+        self.assertTrue(result["ok"], result["errors"])
+        feature = result["snapshot"]["workpieces"][0]["features"][0]
+        points = feature["geometry"]["profile"]["points"]
+        self.assertEqual(feature["kind"], "throughProfile")
+        self.assertEqual(len(points), 4)
+
+    def test_hand_drawn_arc_slot_exports_as_stadium_without_tag(self):
+        """Hand-drawn stadium: Arc3D ends set hasArc even if points collapse."""
+        lock = {
+            "featureId": "HAND-LOCK",
+            "kind": "pocket",
+            "cutType": "FULL",
+            "through": True,
+            "depthMm": 16,
+            "hasArc": True,
+            "pointsLocal": [[0, 0], [55, 0], [55, 15.5], [0, 15.5]],
+        }
+        result = build_snapshot([_record(features=[lock])], "JOB-HAND-LOCK")
+        self.assertTrue(result["ok"], result["errors"])
+        feature = result["snapshot"]["workpieces"][0]["features"][0]
+        points = feature["geometry"]["profile"]["points"]
+        self.assertEqual(feature["kind"], "throughProfile")
+        self.assertTrue(feature.get("hasArc"))
+        self.assertGreater(len(points), 8)
+
+    def test_tagged_lock_rectangle_exports_as_stadium(self):
+        lock = {
+            "featureId": "LOCK-RECT",
+            "kind": "pocket",
+            "cutType": "FULL",
+            "through": True,
+            "depthMm": 16,
+            "hardwareType": "lock_cutout",
+            "pointsLocal": [[10, 20], [65, 20], [65, 35.5], [10, 35.5]],
+        }
+        result = build_snapshot([_record(features=[lock])], "JOB-LOCK-POCKET")
+        self.assertTrue(result["ok"], result["errors"])
+        feature = result["snapshot"]["workpieces"][0]["features"][0]
+        points = feature["geometry"]["profile"]["points"]
+        self.assertEqual(feature["kind"], "throughProfile")
+        self.assertGreater(len(points), 8)
+        self.assertIn("lock", str(feature.get("intent", {})).lower())
+
+    def test_duplicate_through_openings_are_deduped(self):
+        ring = [[10, 10], [65, 10], [65, 25.5], [10, 25.5]]
+        features = [
+            {
+                "featureId": "FEAT-01",
+                "kind": "groove",
+                "cutType": "FULL",
+                "depthMm": 16,
+                "pointsLocal": ring,
+            },
+            {
+                "featureId": "FEAT-02",
+                "kind": "groove",
+                "cutType": "FULL",
+                "depthMm": 16,
+                "pointsLocal": list(reversed(ring)),
+            },
+        ]
+        result = build_snapshot([_record(features=features)], "JOB-DEDUP")
+        self.assertTrue(result["ok"], result["errors"])
+        exported = result["snapshot"]["workpieces"][0]["features"]
+        self.assertEqual(len(exported), 1)
+        self.assertEqual(exported[0]["kind"], "throughProfile")
+
+    def test_declared_led_cuts_stamp_pocket_purpose(self):
+        pocket = {
+            "featureId": "FEAT-01",
+            "kind": "pocket",
+            "cutType": "HALF",
+            "depthMm": 6.5,
+            "openSurfaceIs": "A",
+            "pointsLocal": [
+                [0, 18],
+                [1800, 18],
+                [1800, 32.5],
+                [1760, 32.5],
+                [1760, 100],
+                [1745, 100],
+                [1745, 32.5],
+                [90, 32.5],
+                [90, 100],
+                [75, 100],
+                [75, 32.5],
+                [0, 32.5],
+            ],
+        }
+        record = _record(features=[pocket])
+        record["metadata"]["declaredCuts"] = [
+            {
+                "sourceId": "B3_led_groove",
+                "kind": "slot",
+                "slotType": "half",
+                "grooveDepth": 6.5,
+                "purpose": "led_groove",
+            }
+        ]
+        result = build_snapshot([record], "JOB-LED")
+        self.assertTrue(result["ok"], result["errors"])
+        feature = result["snapshot"]["workpieces"][0]["features"][0]
+        self.assertEqual(feature["kind"], "pocket")
+        self.assertFalse(feature["through"])
+        self.assertEqual(feature["intent"]["purpose"], "led_groove")
 
 
 if __name__ == "__main__":

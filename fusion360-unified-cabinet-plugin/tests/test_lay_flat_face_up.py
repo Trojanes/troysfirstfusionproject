@@ -1,12 +1,14 @@
 import os
 import sys
 import unittest
+from unittest import mock
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "nesting"))
 
 from lay_flat_face_up import evaluate_face_up_normals  # noqa: E402
+import lay_flat_face_up as face_up_mod  # noqa: E402
 
 
 class LayFlatFaceUpTests(unittest.TestCase):
@@ -54,6 +56,70 @@ class LayFlatFaceUpTests(unittest.TestCase):
         result = evaluate_face_up_normals(None, [0, 0, -1])
         self.assertFalse(result["ok"])
         self.assertIn("missing_normals", result["reasons"])
+
+    def test_bottom_half_recommends_transactional_fix(self):
+        top = object()
+        bottom = object()
+        with mock.patch.object(
+            face_up_mod, "_fast_broad_faces", return_value=(top, bottom)
+        ), mock.patch.object(
+            face_up_mod,
+            "face_world_plane",
+            side_effect=[
+                ([0, 0, 1], [0, 0, 1]),
+                ([0, 0, -1], [0, 0, 0]),
+            ],
+        ), mock.patch.object(
+            face_up_mod,
+            "_assign_milling_and_colour",
+            return_value=(top, bottom, [0, 0, 1], [0, 0, -1], "role"),
+        ), mock.patch.object(
+            face_up_mod,
+            "inspect_half_openings",
+            return_value={
+                "ok": True,
+                "status": "bottomHalf",
+                "topHalfCount": 0,
+                "bottomHalfCount": 1,
+                "unknownHalfCount": 0,
+            },
+        ):
+            result = face_up_mod.evaluate_body_faces_up(object())
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["autoFixRecommended"])
+        self.assertIn("feature_face_not_machining", result["reasons"])
+
+    def test_double_side_is_blocked_not_auto_fixed(self):
+        top = object()
+        bottom = object()
+        with mock.patch.object(
+            face_up_mod, "_fast_broad_faces", return_value=(top, bottom)
+        ), mock.patch.object(
+            face_up_mod,
+            "face_world_plane",
+            side_effect=[
+                ([0, 0, 1], [0, 0, 1]),
+                ([0, 0, -1], [0, 0, 0]),
+            ],
+        ), mock.patch.object(
+            face_up_mod,
+            "_assign_milling_and_colour",
+            return_value=(top, bottom, [0, 0, 1], [0, 0, -1], "role"),
+        ), mock.patch.object(
+            face_up_mod,
+            "inspect_half_openings",
+            return_value={
+                "ok": True,
+                "status": "doubleSide",
+                "topHalfCount": 1,
+                "bottomHalfCount": 1,
+                "unknownHalfCount": 0,
+            },
+        ):
+            result = face_up_mod.evaluate_body_faces_up(object())
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["autoFixRecommended"])
+        self.assertIn("double_side_unsupported", result["reasons"])
 
 
 if __name__ == "__main__":

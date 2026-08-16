@@ -26,6 +26,8 @@ def _ready_metadata(**overrides):
             "geometrySignature": "sig-1",
             "widthMm": 600.0,
             "depthMm": 400.0,
+            "halfOpeningStatus": "none",
+            "bottomHalfCount": 0,
             "outline": {
                 "source": "flatBody",
                 "points": [[0, 0], [600, 0], [600, 400], [0, 400]],
@@ -233,7 +235,7 @@ class LayFlatExportReadyTests(unittest.TestCase):
         self.assertFalse(result["ready"])
         self.assertIn("feature_face_not_machining", result["reasons"])
 
-    def test_shallow_b_face_remaps_to_machining_a(self):
+    def test_shallow_b_face_is_still_blocked(self):
         meta = _ready_metadata(
             features=[
                 {
@@ -247,7 +249,8 @@ class LayFlatExportReadyTests(unittest.TestCase):
             ]
         )
         result = evaluate_metadata(meta, geometry_signature="sig-1")
-        self.assertTrue(result["ready"], result["reasons"])
+        self.assertFalse(result["ready"])
+        self.assertIn("feature_face_not_machining", result["reasons"])
 
     def test_noisy_tessellated_groove_is_ready(self):
         meta = _ready_metadata(

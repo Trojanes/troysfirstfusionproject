@@ -1,4 +1,8 @@
-"""Cheap post–Lay Flat face-up check: MILLING ≈ +Z, NON_MILLING ≈ −Z."""
+"""Post-Lay Flat manufacturing check.
+
+MILLING must face +Z and HALF features may open on +Z only.  This module is
+read-only; controller orchestration owns exact-source write-back and repair.
+"""
 
 from __future__ import annotations
 
@@ -62,6 +66,24 @@ except Exception:
         import work_zones
     except Exception:
         work_zones = None
+
+try:
+    from nesting.lay_flat_orientation import (
+        HALF_BOTTOM,
+        HALF_DOUBLE,
+        inspect_half_openings,
+    )
+except Exception:
+    try:
+        from lay_flat_orientation import (  # type: ignore
+            HALF_BOTTOM,
+            HALF_DOUBLE,
+            inspect_half_openings,
+        )
+    except Exception:
+        HALF_BOTTOM = "bottomHalf"
+        HALF_DOUBLE = "doubleSide"
+        inspect_half_openings = None
 
 
 def evaluate_face_up_normals(
@@ -180,8 +202,8 @@ def _assign_milling_and_colour(face_a, face_b, normal_a, normal_b):
     return face_b, face_a, normal_b, normal_a, "normal"
 
 
-def evaluate_body_faces_up(body, min_dot=None):
-    """Inspect one Lay Flat body. Returns a serializable result dict."""
+def evaluate_body_role_normals(body, min_dot=None):
+    """Inspect MILLING/colour role normals without extracting features."""
     threshold = float(min_dot if min_dot is not None else SAME_ORIENTATION_DOT or MIN_DOT)
     name = _body_name(body)
     if body is None:
@@ -228,6 +250,42 @@ def evaluate_body_faces_up(body, min_dot=None):
             "colourFace": colour_face,
         }
     )
+    return check
+
+
+def evaluate_body_faces_up(body, min_dot=None):
+    """Inspect role normals and HALF openings on one Lay Flat body."""
+    check = evaluate_body_role_normals(body, min_dot=min_dot)
+    if check.get("millingFace") is None or check.get("colourFace") is None:
+        return check
+    if callable(inspect_half_openings):
+        half = inspect_half_openings(body) or {}
+    else:
+        half = {
+            "ok": False,
+            "status": "unresolved",
+            "reason": "half_inspector_unavailable",
+        }
+    half_status = str(half.get("status") or "unresolved")
+    reasons = list(check.get("reasons") or [])
+    if not half.get("ok"):
+        reasons.append(half.get("reason") or "half_feature_scan_failed")
+    elif half_status == HALF_DOUBLE:
+        reasons.append("double_side_unsupported")
+    elif half_status == HALF_BOTTOM:
+        reasons.append("feature_face_not_machining")
+    # Geometry evidence is authoritative.  A bottom-only HALF can be repaired
+    # transactionally by swapping roles and flipping this disposable copy.
+    check["ok"] = bool(check.get("ok")) and not reasons
+    check["reasons"] = list(dict.fromkeys(reasons))
+    check["halfStatus"] = half_status
+    check["topHalfCount"] = int(half.get("topHalfCount") or 0)
+    check["bottomHalfCount"] = int(half.get("bottomHalfCount") or 0)
+    check["unknownHalfCount"] = int(half.get("unknownHalfCount") or 0)
+    check["autoFixRecommended"] = bool(
+        half.get("ok") and half_status == HALF_BOTTOM
+    )
+    check["halfInspection"] = half
     return check
 
 
@@ -366,10 +424,17 @@ def check_bodies(bodies, min_dot=None):
             "reasons": list(result.get("reasons") or []),
             "assignment": result.get("assignment") or "",
             "cuttingFace": result.get("cuttingFace") or "",
+            "halfStatus": result.get("halfStatus") or "",
+            "topHalfCount": int(result.get("topHalfCount") or 0),
+            "bottomHalfCount": int(result.get("bottomHalfCount") or 0),
+            "unknownHalfCount": int(result.get("unknownHalfCount") or 0),
+            "autoFixRecommended": bool(result.get("autoFixRecommended")),
         }
         # Keep face refs only in-process for optional selection.
+        slim["_body"] = body
         slim["_millingFace"] = result.get("millingFace")
         slim["_colourFace"] = result.get("colourFace")
+        slim["_halfInspection"] = result.get("halfInspection") or {}
         checked.append(slim)
         if slim["ok"]:
             passed.append(slim)
@@ -382,5 +447,13 @@ def check_bodies(bodies, min_dot=None):
         "failedCount": len(failed),
         "passed": passed,
         "failed": failed,
+        "autoFixCount": sum(
+            1 for item in failed if item.get("autoFixRecommended")
+        ),
+        "doubleSideCount": sum(
+            1
+            for item in failed
+            if "double_side_unsupported" in (item.get("reasons") or [])
+        ),
         "minDot": float(min_dot if min_dot is not None else SAME_ORIENTATION_DOT or MIN_DOT),
     }

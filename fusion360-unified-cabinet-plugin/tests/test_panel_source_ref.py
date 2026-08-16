@@ -39,6 +39,7 @@ class PanelSourceRefTests(unittest.TestCase):
             "occurrencePath": [1, 3],
             "bodyName": "Body1",
             "componentName": "Fridge",
+            "assemblyName": "Kitchen",
             "panelId": "manual.Body1",
         }
         native = Entity(
@@ -59,10 +60,16 @@ class PanelSourceRefTests(unittest.TestCase):
                 "occurrencePath": [2, 5],
                 "bodyName": "OH_D1",
                 "componentName": "OHC",
+                "assemblyName": "OHC_1",
                 "panelId": "overhead.D1",
             }
         )
         self.assertEqual(panel_source_ref.key(ref), "path:2/5|OH_D1")
+        self.assertEqual(ref["assemblyName"], "OHC_1")
+        self.assertEqual(
+            panel_source_ref.to_legacy_fields(ref)["sourceAssemblyName"],
+            "OHC_1",
+        )
 
     def test_panel_id_alone_is_not_a_source_ref(self):
         self.assertIsNone(

@@ -994,7 +994,7 @@ def build_panel_metadata(
         default_attributes["colorName"] = color_name
         default_attributes["surfaceMode"] = CARCASS_SURFACE_MODE
 
-    return {
+    metadata = {
         "schemaVersion": 1,
         "identity": {
             "panelId": panel_id,
@@ -1014,6 +1014,54 @@ def build_panel_metadata(
             "reviewRequired": False,
         },
     }
+    declared_cuts = declared_cuts_from_board(board)
+    if declared_cuts:
+        metadata["declaredCuts"] = declared_cuts
+    return metadata
+
+
+def declared_cuts_from_board(board):
+    """Slim cut declarations for later feature-intent stamping (LED, half grooves)."""
+    if not isinstance(board, dict):
+        return []
+    cuts = []
+    seen = set()
+    body = board.get("body") if isinstance(board.get("body"), dict) else {}
+    sources = (
+        list(board.get("halfGrooveVectors") or [])
+        + list(board.get("cutouts") or [])
+        + list(body.get("cutouts") or [])
+    )
+    for cut in sources:
+        if not isinstance(cut, dict):
+            continue
+        source_id = str(cut.get("sourceId") or cut.get("id") or "").strip()
+        kind = str(cut.get("kind") or "").strip()
+        slot_type = str(cut.get("slotType") or cut.get("resolvedSlotType") or "").strip()
+        purpose = str(cut.get("purpose") or cut.get("operationType") or "").strip()
+        sid_lower = source_id.lower()
+        if not purpose and "led" in sid_lower:
+            purpose = "led_groove"
+        key = (source_id, kind, slot_type, purpose, str(cut.get("grooveDepth") or ""))
+        if key in seen:
+            continue
+        if not source_id and not kind and not purpose:
+            continue
+        seen.add(key)
+        row = {
+            "sourceId": source_id,
+            "kind": kind,
+            "slotType": slot_type,
+            "purpose": purpose,
+        }
+        depth = cut.get("grooveDepth")
+        if depth is not None:
+            try:
+                row["grooveDepth"] = round(float(depth), 3)
+            except Exception:
+                pass
+        cuts.append(row)
+    return cuts
 
 
 def _set_entity_attribute(entity, group, name, value):

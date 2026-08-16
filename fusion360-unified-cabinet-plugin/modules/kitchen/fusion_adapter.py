@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import sys
 import time
 
 import adsk.core
@@ -8,6 +9,16 @@ import adsk.fusion
 
 from geometry_ops import avoid_existing_at_origin
 from assembly_cut_face import assembly_cut_face
+
+try:
+    from nesting.workpiece_names import is_blob_label, resolve_assembly_name
+except Exception:
+    _nesting_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "nesting")
+    )
+    if _nesting_dir not in sys.path:
+        sys.path.insert(0, _nesting_dir)
+    from workpiece_names import is_blob_label, resolve_assembly_name
 
 try:
     from generator_default_attributes import (
@@ -479,11 +490,23 @@ def _write_placement_debug(payload):
         pass
 
 
+def _is_blob_assembly_label(value):
+    """Compatibility wrapper for the shared naming contract."""
+    return is_blob_label(value)
+
+
+def _resolve_kitchen_assembly_name(run_label, component_name=None):
+    """Compatibility wrapper for the shared naming contract."""
+    return resolve_assembly_name(
+        component_name,
+        run_label=run_label,
+        default_name="Kitchen",
+        include_human_run_label=True,
+    )
+
+
 def _new_assembly_component(root_comp, run_label, component_name=None, origin_x_mm=0.0, origin_y_mm=0.0, origin_z_mm=0.0):
-    if component_name:
-        component_name = sanitize_token(component_name, fallback="assembly", limit=80)
-    else:
-        component_name = "KITCHEN_{}".format(sanitize_token(run_label or int(time.time() * 1000), fallback="assembly", limit=60))
+    component_name = _resolve_kitchen_assembly_name(run_label, component_name)
     try:
         transform = adsk.core.Matrix3D.create()
         transform.translation = adsk.core.Vector3D.create(
@@ -578,7 +601,9 @@ def _delete_kitchen_artifacts_in_component(component, deleted, seen_components, 
         for index in range(component.bRepBodies.count - 1, -1, -1):
             body = component.bRepBodies.item(index)
             name = str(getattr(body, "name", "") or "")
-            if name.startswith("KITCHEN_") and (run_prefix is None or name.startswith(run_prefix)):
+            if name.startswith("KITCHEN_") and (
+                run_prefix is None or name.startswith(run_prefix)
+            ):
                 body.deleteMe()
                 deleted["bodies"] += 1
     except Exception:
@@ -587,7 +612,9 @@ def _delete_kitchen_artifacts_in_component(component, deleted, seen_components, 
         for index in range(component.sketches.count - 1, -1, -1):
             sketch = component.sketches.item(index)
             name = str(getattr(sketch, "name", "") or "")
-            if name.startswith("KITCHEN_") and (run_prefix is None or name.startswith(run_prefix)):
+            if name.startswith("KITCHEN_") and (
+                run_prefix is None or name.startswith(run_prefix)
+            ):
                 sketch.deleteMe()
                 deleted["sketches"] += 1
     except Exception:
@@ -601,8 +628,12 @@ def _delete_kitchen_artifacts_in_component(component, deleted, seen_components, 
             if child_component:
                 _delete_kitchen_artifacts_in_component(child_component, deleted, seen_components, run_prefix=run_prefix)
             if (
-                (name.startswith("KITCHEN_") or component_name.startswith("KITCHEN_")) and
-                (run_prefix is None or name.startswith(run_prefix) or component_name.startswith(run_prefix))
+                (name.startswith("KITCHEN_") or component_name.startswith("KITCHEN_"))
+                and (
+                    run_prefix is None
+                    or name.startswith(run_prefix)
+                    or component_name.startswith(run_prefix)
+                )
             ):
                 occurrence.deleteMe()
                 deleted["occurrences"] += 1
@@ -617,7 +648,9 @@ def _delete_previous_kitchen_artifacts(root_comp, run_prefix=None):
         for index in range(root_comp.bRepBodies.count - 1, -1, -1):
             body = root_comp.bRepBodies.item(index)
             name = str(getattr(body, "name", "") or "")
-            if name.startswith("KITCHEN_") and (run_prefix is None or name.startswith(run_prefix)):
+            if name.startswith("KITCHEN_") and (
+                run_prefix is None or name.startswith(run_prefix)
+            ):
                 body.deleteMe()
                 deleted["bodies"] += 1
     except Exception:
@@ -626,7 +659,9 @@ def _delete_previous_kitchen_artifacts(root_comp, run_prefix=None):
         for index in range(root_comp.sketches.count - 1, -1, -1):
             sketch = root_comp.sketches.item(index)
             name = str(getattr(sketch, "name", "") or "")
-            if name.startswith("KITCHEN_") and (run_prefix is None or name.startswith(run_prefix)):
+            if name.startswith("KITCHEN_") and (
+                run_prefix is None or name.startswith(run_prefix)
+            ):
                 sketch.deleteMe()
                 deleted["sketches"] += 1
     except Exception:
@@ -1380,8 +1415,13 @@ def create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=N
         }
 
     resolved_run_label = str(run_label or int(time.time() * 1000))
-    run_component_prefix = "KITCHEN_{}".format(sanitize_token(resolved_run_label, fallback="assembly", limit=60))
-    deleted_previous = _delete_previous_kitchen_artifacts(root, run_prefix=run_component_prefix if add_as_new else None)
+    run_component_prefix = "KITCHEN_{}".format(
+        sanitize_token(resolved_run_label, fallback="assembly", limit=60)
+    )
+    deleted_previous = _delete_previous_kitchen_artifacts(
+        root,
+        run_prefix=run_component_prefix if add_as_new else None,
+    )
     origin_x_mm, origin_y_mm, origin_active = _auto_origin(root, origin_x_mm, origin_y_mm)
     entries = _panel_entries(result)
     avoidance_info = {"shifted": False, "slots": 0}

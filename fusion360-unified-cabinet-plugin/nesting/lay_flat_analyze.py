@@ -1,8 +1,7 @@
-"""Re-extract manufacturing outline + features on Lay Flat bodies.
+"""Pure manufacturing extraction for already-oriented LAY_FLAT bodies.
 
-Before extract, orient the true outline face to −Z (geometry only — tags are
-preserved via attribute snapshot/restore) so edge-open grooves face the camera
-for visual inspection.
+Analyze never changes roles or geometry.  Check Faces Up owns repair; this
+stage re-validates MILLING +Z / HALF top-only, then persists outline/features.
 """
 
 from __future__ import annotations
@@ -53,12 +52,19 @@ except Exception:
         face_world_plane = None
 
 try:
-    from nesting.lay_flat_face_up import _assign_milling_and_colour
+    from nesting.lay_flat_face_up import (
+        _assign_milling_and_colour,
+        evaluate_body_faces_up,
+    )
 except Exception:
     try:
-        from lay_flat_face_up import _assign_milling_and_colour  # type: ignore
+        from lay_flat_face_up import (  # type: ignore
+            _assign_milling_and_colour,
+            evaluate_body_faces_up,
+        )
     except Exception:
         _assign_milling_and_colour = None
+        evaluate_body_faces_up = None
 
 try:
     from metadata.panel_geometry import (
@@ -91,86 +97,289 @@ try:
     from nesting.brep_loops import (
         extract_flattened_rings_mm,
         _floor_feature_rings_mm,
-        _face_normal_z,
-        select_true_outer_face,
     )
 except Exception:
     try:
         from brep_loops import (  # type: ignore
             extract_flattened_rings_mm,
             _floor_feature_rings_mm,
-            _face_normal_z,
-            select_true_outer_face,
         )
     except Exception:
         extract_flattened_rings_mm = None
         _floor_feature_rings_mm = None
-        _face_normal_z = None
-        select_true_outer_face = None
-
-try:
-    from nesting.lay_flat_fusion import flip_lay_flat_body_thickness
-except Exception:
-    try:
-        from lay_flat_fusion import flip_lay_flat_body_thickness  # type: ignore
-    except Exception:
-        flip_lay_flat_body_thickness = None
 
 PANEL_GROUP = "UnifiedCabinet.Panel"
 ANALYZED_STATE = "lay_flat_analyzed"
-_OUTLINE_DOWN_DOT = -0.7
+
+# Visual-only marker on the MILLING skin after Analyze. One design appearance
+# is created/reused per batch; each body may paint several coplanar faces.
+MILLING_TINT_APPEARANCE = "UC LayFlat Milling Tint"
+MILLING_TINT_RGB = (255, 120, 0)  # orange — distinct from white/metallic boards
+# Paint every planar face whose outward normal matches the milling broad face.
+# Dados / edge-to-edge slots split the +Z skin into many BRep faces; tinting
+# only the single largest face leaves the rest looking gray.
+MILLING_TINT_ALIGN_DOT = 0.95
 
 
-def outline_extraction_face_is_down(body, min_dot=None):
-    """True when the true outer/outline face already points toward −Z."""
-    threshold = float(min_dot if min_dot is not None else _OUTLINE_DOWN_DOT)
-    if body is None or not callable(select_true_outer_face) or not callable(_face_normal_z):
+def _design_from_body(body):
+    try:
+        component = getattr(body, "parentComponent", None)
+        design = getattr(component, "parentDesign", None) if component else None
+        if design is not None:
+            return design
+    except Exception:
+        pass
+    try:
+        import adsk.core  # noqa: F401
+        import adsk.fusion
+
+        app = adsk.core.Application.get()
+        return adsk.fusion.Design.cast(app.activeProduct) if app else None
+    except Exception:
+        return None
+
+
+def _find_appearance_library(app):
+    try:
+        libraries = app.materialLibraries
+    except Exception:
+        return None
+    try:
+        lib = libraries.itemByName("Fusion 360 Appearance Library")
+        if lib is not None and getattr(lib, "appearances", None) and lib.appearances.count:
+            return lib
+    except Exception:
+        pass
+    try:
+        for index in range(libraries.count):
+            library = libraries.item(index)
+            appearances = getattr(library, "appearances", None)
+            if appearances and appearances.count:
+                return library
+    except Exception:
+        pass
+    return None
+
+
+def _pick_base_appearance(library):
+    appearances = library.appearances
+    for name in (
+        "Paint - Enamel Glossy (Orange)",
+        "Paint - Enamel Glossy (Red)",
+        "Plastic - Matte (Red)",
+        "Paint - Enamel Glossy (Generic)",
+        "Plastic - Matte (Generic)",
+    ):
+        try:
+            appearance = appearances.itemByName(name)
+            if appearance is not None:
+                return appearance
+        except Exception:
+            continue
+    try:
+        return appearances.item(0)
+    except Exception:
+        return None
+
+
+def _set_appearance_rgb(appearance, rgb):
+    try:
+        import adsk.core
+    except Exception:
+        return False
+    color = adsk.core.Color.create(int(rgb[0]), int(rgb[1]), int(rgb[2]), 255)
+    try:
+        properties = appearance.appearanceProperties
+    except Exception:
+        return False
+    set_any = False
+    for prop_id in ("opaque_albedo", "surface_albedo", "generic_diffuse", "metal_f0"):
+        try:
+            prop = properties.itemById(prop_id)
+        except Exception:
+            prop = None
+        if prop is None:
+            continue
+        try:
+            prop.value = color
+            set_any = True
+        except Exception:
+            pass
+    if set_any:
         return True
     try:
-        face = select_true_outer_face(body)
+        for index in range(properties.count):
+            prop = properties.item(index)
+            try:
+                prop.value = color
+                set_any = True
+                break
+            except Exception:
+                continue
     except Exception:
-        face = None
+        pass
+    return set_any
+
+
+def ensure_milling_tint_appearance(design, tint_ctx=None):
+    """Return the shared milling-tint appearance (create once per design/batch)."""
+    ctx = tint_ctx if isinstance(tint_ctx, dict) else None
+    if ctx is not None and ctx.get("appearance") is not None:
+        return ctx.get("appearance")
+    if design is None:
+        return None
+    try:
+        import adsk.core
+
+        app = adsk.core.Application.get()
+        appearances = design.appearances
+        appearance = None
+        try:
+            appearance = appearances.itemByName(MILLING_TINT_APPEARANCE)
+        except Exception:
+            appearance = None
+        if appearance is None:
+            library = _find_appearance_library(app)
+            if library is None:
+                return None
+            base = _pick_base_appearance(library)
+            if base is None:
+                return None
+            appearance = appearances.addByCopy(base, MILLING_TINT_APPEARANCE)
+        # Always refresh RGB — reused library copies can keep a gray base.
+        _set_appearance_rgb(appearance, MILLING_TINT_RGB)
+        if ctx is not None:
+            ctx["appearance"] = appearance
+        return appearance
+    except Exception:
+        return None
+
+
+def tint_milling_face(face, body=None, tint_ctx=None):
+    """Paint one milling face. Appearance is resolved once via ``tint_ctx``."""
     if face is None:
-        return True
+        return False
+    ctx = tint_ctx if isinstance(tint_ctx, dict) else {}
+    appearance = ctx.get("appearance")
+    if appearance is None:
+        design = _design_from_body(body) if body is not None else None
+        if design is None:
+            try:
+                component = getattr(face, "body", None)
+                design = _design_from_body(component)
+            except Exception:
+                design = None
+        appearance = ensure_milling_tint_appearance(design, ctx)
+    if appearance is None:
+        ctx["failed"] = int(ctx.get("failed") or 0) + 1
+        return False
     try:
-        normal_z = _face_normal_z(face)
-    except Exception:
-        normal_z = None
-    if normal_z is None:
+        face.appearance = appearance
+        ctx["applied"] = int(ctx.get("applied") or 0) + 1
         return True
-    return float(normal_z) <= float(threshold)
+    except Exception:
+        ctx["failed"] = int(ctx.get("failed") or 0) + 1
+        return False
 
 
-def orient_outline_face_down(body):
-    """Flip LAY_FLAT geometry so the outline face is −Z without changing tags.
+def _iter_body_faces(body):
+    try:
+        from metadata.panel_face_initializer import iter_body_faces
+    except Exception:
+        try:
+            from panel_face_initializer import iter_body_faces  # type: ignore
+        except Exception:
+            iter_body_faces = None
+    if callable(iter_body_faces):
+        try:
+            return list(iter_body_faces(body) or [])
+        except Exception:
+            pass
+    faces = []
+    try:
+        collection = getattr(body, "faces", None)
+        count = int(getattr(collection, "count", 0) or 0)
+        for index in range(count):
+            try:
+                faces.append(collection.item(index))
+            except Exception:
+                continue
+    except Exception:
+        return []
+    return faces
 
-    Uses the existing 180° X flip + attribute restore. No-op when already down.
-    """
-    if body is None:
-        return {"ok": False, "flipped": False, "reason": "missing_body"}
-    if outline_extraction_face_is_down(body):
-        return {"ok": True, "flipped": False, "reason": "already_down"}
-    if not callable(flip_lay_flat_body_thickness):
-        return {
-            "ok": False,
-            "flipped": False,
-            "reason": "flip_helper_unavailable",
-        }
-    result = flip_lay_flat_body_thickness(body) or {}
-    if not result.get("ok"):
-        return {
-            "ok": False,
-            "flipped": False,
-            "reason": result.get("reason") or "geometry_flip_failed",
-            "bodyName": result.get("bodyName") or "",
-        }
-    return {
-        "ok": True,
-        "flipped": True,
-        "reason": "flipped",
-        "bodyName": result.get("bodyName") or "",
-        "attributesRestored": int(result.get("attributesRestored") or 0),
-    }
+
+def _dot3(left, right):
+    return (
+        float(left[0]) * float(right[0])
+        + float(left[1]) * float(right[1])
+        + float(left[2]) * float(right[2])
+    )
+
+
+def milling_side_faces(body, milling_face, min_dot=None):
+    """Return milling broad face plus coplanar/+Z-aligned siblings on that skin."""
+    faces = []
+    seen = set()
+
+    def _add(face):
+        if face is None:
+            return
+        key = id(face)
+        if key in seen:
+            return
+        seen.add(key)
+        faces.append(face)
+
+    _add(milling_face)
+    if body is None or not callable(face_world_plane):
+        return faces
+    threshold = float(
+        min_dot if min_dot is not None else MILLING_TINT_ALIGN_DOT
+    )
+    ref_normal = None
+    try:
+        ref_normal, _ = face_world_plane(milling_face)
+    except Exception:
+        ref_normal = None
+    if not ref_normal:
+        ref_normal = (0.0, 0.0, 1.0)
+    for face in _iter_body_faces(body):
+        if face is None or face is milling_face:
+            continue
+        try:
+            normal, _ = face_world_plane(face)
+        except Exception:
+            normal = None
+        if not normal:
+            continue
+        if _dot3(normal, ref_normal) < threshold:
+            continue
+        _add(face)
+    return faces
+
+
+def tint_milling_side(body, milling_face, tint_ctx=None):
+    """Paint the whole machining skin (broad face + coplanar fragments)."""
+    ctx = tint_ctx if isinstance(tint_ctx, dict) else {}
+    painted = 0
+    for face in milling_side_faces(body, milling_face):
+        if tint_milling_face(face, body, ctx):
+            painted += 1
+    if painted > 0:
+        ctx["bodies"] = int(ctx.get("bodies") or 0) + 1
+    return painted > 0
+
+
+def clear_face_appearance_override(face):
+    """Return a non-milling face to its inherited body/component appearance."""
+    if face is None:
+        return False
+    try:
+        face.appearance = None
+        return True
+    except Exception:
+        return False
 
 
 def _metadata_richness(metadata):
@@ -284,7 +493,16 @@ def _origin_shift_mm(body, outline_points=None):
     return -float(dims.get("minX") or 0.0), -float(dims.get("minY") or 0.0)
 
 
-def _extract_features_for_body(body, milling_face, colour_face, dx, dy):
+def _extract_features_for_body(
+    body,
+    milling_face,
+    colour_face,
+    dx,
+    dy,
+    raw_features=None,
+    offset_a=None,
+    offset_b=None,
+):
     if (
         not callable(extract_features)
         or not callable(_public_feature)
@@ -297,23 +515,30 @@ def _extract_features_for_body(body, milling_face, colour_face, dx, dy):
         # LAY_FLAT is already manufacturing-up, so world XY is the canonical
         # panel frame and world Z is thickness. This must match brep_loops.
         thickness_axis = 2
-        offset_a = _face_centroid_local_mm(
-            milling_face, body, coordinate_mode="world"
-        )[thickness_axis]
-        offset_b = _face_centroid_local_mm(
-            colour_face, body, coordinate_mode="world"
-        )[thickness_axis]
+        if offset_a is None:
+            offset_a = _face_centroid_local_mm(
+                milling_face, body, coordinate_mode="world"
+            )[thickness_axis]
+        if offset_b is None:
+            offset_b = _face_centroid_local_mm(
+                colour_face, body, coordinate_mode="world"
+            )[thickness_axis]
         thickness_mm = abs(float(offset_a) - float(offset_b))
-        raw = extract_features(
-            body,
-            milling_face,
-            colour_face,
-            thickness_axis,
-            offset_a,
-            offset_b,
-            thickness_mm,
-            coordinate_mode="world",
-        ) or []
+        raw = (
+            list(raw_features)
+            if raw_features is not None
+            else extract_features(
+                body,
+                milling_face,
+                colour_face,
+                thickness_axis,
+                offset_a,
+                offset_b,
+                thickness_mm,
+                coordinate_mode="world",
+            )
+            or []
+        )
     except Exception as ex:
         return [], "feature_extract_failed:{}".format(ex)
 
@@ -337,33 +562,19 @@ def _extract_features_for_body(body, milling_face, colour_face, dx, dy):
                 public["diameterMm"] = round(float(public["radiusMm"]) * 2.0, 3)
             except Exception:
                 pass
-        # surface_a was milling → A is machining face after Lay Flat.
+        # surface_a was milling (+Z) → A is the only supported blind opening.
         which = str(public.get("openSurfaceIs") or feature.get("openSurfaceIs") or "").upper()
         cut_type = str(public.get("cutType") or "").upper()
         if cut_type != "FULL":
             if which not in ("A", "B"):
                 return [], "feature_face_unresolved"
-            # Topology sometimes tags top-face dados/cups as B when walls also
-            # touch the colour skin. Floor nearer colour ⇒ opens to milling A.
-            if which == "B":
+            if feature.get("floorOffsetMm") is not None:
                 try:
-                    floor_z = float(feature.get("floorOffsetMm"))
-                    dist_a = abs(floor_z - float(offset_a))
-                    dist_b = abs(floor_z - float(offset_b))
+                    public["floorOffsetMm"] = round(
+                        float(feature.get("floorOffsetMm")), 3
+                    )
                 except Exception:
-                    floor_z = None
-                    dist_a = dist_b = 0.0
-                if floor_z is not None and dist_b + 0.5 < dist_a:
-                    which = "A"
-                    public["depthMm"] = round(dist_a, 3)
-                    public["openRemap"] = "floor_near_colour_to_milling"
-                if feature.get("floorOffsetMm") is not None:
-                    try:
-                        public["floorOffsetMm"] = round(
-                            float(feature.get("floorOffsetMm")), 3
-                        )
-                    except Exception:
-                        pass
+                    pass
             public["openSurfaceIs"] = which
         if not public.get("featureId"):
             public["featureId"] = "FEAT-{:02d}".format(index + 1)
@@ -404,6 +615,22 @@ def feature_evidence_complete(features, expected_count):
     return expected >= 0 and len(features or []) >= expected
 
 
+def features_are_canonical_single_side(features):
+    """True when every blind feature has canonical machining opening A."""
+    if not isinstance(features, list):
+        return False
+    for feature in features:
+        if not isinstance(feature, dict):
+            return False
+        cut_type = str(feature.get("cutType") or "").strip().upper()
+        through = cut_type == "FULL" or bool(feature.get("through"))
+        if through:
+            continue
+        if str(feature.get("openSurfaceIs") or "").strip().upper() != "A":
+            return False
+    return True
+
+
 def cache_is_fresh(metadata, geometry_signature):
     meta = metadata if isinstance(metadata, dict) else {}
     lifecycle = meta.get("lifecycle") if isinstance(meta.get("lifecycle"), dict) else {}
@@ -423,19 +650,40 @@ def cache_is_fresh(metadata, geometry_signature):
         return False
     if float(cached.get("depthMm") or 0.0) <= 0.0:
         return False
+    if str(cached.get("halfOpeningStatus") or "") not in ("topHalf", "none"):
+        return False
+    if int(cached.get("bottomHalfCount") or 0) != 0:
+        return False
     features = meta.get("features")
-    return isinstance(features, list)
+    return features_are_canonical_single_side(features)
 
 
-def analyze_lay_flat_body(body, force=False):
-    """Extract outline + features on one Lay Flat body and persist metadata."""
+def analyze_lay_flat_body(body, force=False, tint_ctx=None):
+    """Validate and extract one body without changing roles or geometry."""
     if body is None:
         return {"ok": False, "reason": "missing_body"}
     body_name = str(getattr(body, "name", "") or "")
     metadata = _read_metadata(body)
     signature = body_geometry_signature(body, detail=True)
-    already_down = outline_extraction_face_is_down(body)
-    if not force and cache_is_fresh(metadata, signature) and already_down:
+
+    face_check = (
+        evaluate_body_faces_up(body)
+        if callable(evaluate_body_faces_up)
+        else {"ok": False, "reasons": ["face_up_helpers_unavailable"]}
+    )
+    if not face_check.get("ok"):
+        reasons = list(face_check.get("reasons") or ["manufacturing_orientation_invalid"])
+        return {
+            "ok": False,
+            "bodyName": body_name,
+            "reason": reasons[0],
+            "reasons": reasons,
+            "halfStatus": face_check.get("halfStatus") or "",
+            "topHalfCount": int(face_check.get("topHalfCount") or 0),
+            "bottomHalfCount": int(face_check.get("bottomHalfCount") or 0),
+        }
+
+    if not force and cache_is_fresh(metadata, signature):
         return {
             "ok": True,
             "skipped": True,
@@ -447,31 +695,13 @@ def analyze_lay_flat_body(body, force=False):
                 ((metadata.get(CACHE_KEY) or {}).get("outline") or {}).get("pointCount")
                 or 0
             ),
-            "flippedForView": False,
-            "outlineFaceDown": True,
+            "halfStatus": face_check.get("halfStatus") or "",
+            "millingTintApplied": False,
         }
-
-    # View convention: outline/extraction skin on −Z so notched/groove side
-    # faces the camera. Tags are restored after the MoveFeature flip.
-    orient = orient_outline_face_down(body)
-    if not orient.get("ok"):
-        return {
-            "ok": False,
-            "bodyName": body_name,
-            "reason": "orient_outline_down_failed:{}".format(
-                orient.get("reason") or "unknown"
-            ),
-            "flippedForView": False,
-            "outlineFaceDown": False,
-        }
-    flipped_for_view = bool(orient.get("flipped"))
-    if flipped_for_view:
-        # Geometry changed — refresh signature used for the analyze cache.
-        signature = body_geometry_signature(body, detail=True)
-        metadata = _read_metadata(body)
 
     dims = _bbox_dimensions_mm(body)
-    milling_face, colour_face = _milling_and_colour_faces(body)
+    milling_face = face_check.get("millingFace")
+    colour_face = face_check.get("colourFace")
     if milling_face is None or colour_face is None:
         return {
             "ok": False,
@@ -479,39 +709,56 @@ def analyze_lay_flat_body(body, force=False):
             "reason": "broad_faces_not_found",
         }
 
+    try:
+        from nesting.brep_loops import _rings_from_broad_face
+    except Exception:
+        try:
+            from brep_loops import _rings_from_broad_face  # type: ignore
+        except Exception:
+            _rings_from_broad_face = None
+
+    # The colour / -Z skin is normally complete even when edge-open grooves
+    # notch the machining skin, so it is the canonical outline source.
     raw_outer = []
-    if callable(extract_flattened_rings_mm):
+    outline_face_source = ""
+    if callable(_rings_from_broad_face):
+        try:
+            raw_outer, _ = _rings_from_broad_face(
+                colour_face,
+                body,
+                include_holes=False,
+                through_only=True,
+            )
+        except Exception:
+            raw_outer = []
+        if len(raw_outer or []) >= 3:
+            outline_face_source = "bottomFace"
+    if len(raw_outer or []) < 3 and callable(extract_flattened_rings_mm):
         try:
             raw_outer, _holes = extract_flattened_rings_mm(
                 body, include_holes=False, through_only=True
             )
         except Exception:
             raw_outer = []
-    # Prefer BRep rings from already-resolved colour/milling skins when the
-    # automatic true-outer walk failed (common on a few notched Ensuite parts).
-    if len(raw_outer or []) < 3:
+        if len(raw_outer or []) >= 3:
+            outline_face_source = "trueOuter"
+    if len(raw_outer or []) < 3 and callable(_rings_from_broad_face):
         try:
-            from nesting.brep_loops import _rings_from_broad_face
+            raw_outer, _ = _rings_from_broad_face(
+                milling_face,
+                body,
+                include_holes=False,
+                through_only=True,
+            )
         except Exception:
-            try:
-                from brep_loops import _rings_from_broad_face  # type: ignore
-            except Exception:
-                _rings_from_broad_face = None
-        if callable(_rings_from_broad_face):
-            for face in (colour_face, milling_face):
-                try:
-                    candidate, _ = _rings_from_broad_face(
-                        face, body, include_holes=False, through_only=True
-                    )
-                except Exception:
-                    candidate = []
-                if len(candidate or []) >= 3:
-                    raw_outer = candidate
-                    break
-    # Last BRep path: panel_geometry outer loop (tolerates micro-gaps / skips
-    # unsampleable edges) in the same world-XY frame used for features.
+            raw_outer = []
+        if len(raw_outer or []) >= 3:
+            outline_face_source = "millingFallback"
     if len(raw_outer or []) < 3 and callable(_face_outer_loop_2d):
-        for face in (colour_face, milling_face):
+        for face, label in (
+            (colour_face, "bottomFaceLoop"),
+            (milling_face, "millingFaceLoop"),
+        ):
             try:
                 points, _segments, _has_arc = _face_outer_loop_2d(
                     face, body, thickness_axis=2, coordinate_mode="world"
@@ -520,6 +767,7 @@ def analyze_lay_flat_body(body, force=False):
                 points = []
             if len(points or []) >= 3:
                 raw_outer = points
+                outline_face_source = label
                 break
     if len(raw_outer or []) < 3:
         return {
@@ -529,7 +777,6 @@ def analyze_lay_flat_body(body, force=False):
         }
 
     dx, dy = _origin_shift_mm(body, raw_outer)
-
     outline = build_outline_payload(
         raw_outer,
         "flatBody",
@@ -543,8 +790,6 @@ def analyze_lay_flat_body(body, force=False):
             "reason": "outline_extract_failed",
         }
     if str(outline.get("source") or "") != "flatBody":
-        # build_outline_payload may invent a bbox rectangle when the ring is
-        # degenerate — never accept that for manufacturing Analyze.
         return {
             "ok": False,
             "bodyName": body_name,
@@ -552,10 +797,18 @@ def analyze_lay_flat_body(body, force=False):
                 str(outline.get("source") or "missing")
             ),
         }
+    outline["faceSource"] = outline_face_source
 
-    thickness = float(dims.get("heightMm") or 0.0)
+    half = face_check.get("halfInspection") or {}
     features, feature_error = _extract_features_for_body(
-        body, milling_face, colour_face, dx, dy
+        body,
+        milling_face,
+        colour_face,
+        dx,
+        dy,
+        raw_features=half.get("rawFeatures"),
+        offset_a=half.get("topOffsetMm"),
+        offset_b=half.get("bottomOffsetMm"),
     )
     if feature_error:
         return {
@@ -573,7 +826,12 @@ def analyze_lay_flat_body(body, force=False):
             ),
         }
 
-    identity = dict(metadata.get("identity") or {}) if isinstance(metadata.get("identity"), dict) else {}
+    thickness = float(dims.get("heightMm") or 0.0)
+    identity = (
+        dict(metadata.get("identity") or {})
+        if isinstance(metadata.get("identity"), dict)
+        else {}
+    )
     panel_id = str(identity.get("panelId") or body_name or "panel")
     cache = build_cache_record(
         outline,
@@ -590,6 +848,10 @@ def analyze_lay_flat_body(body, force=False):
     cache["featureCount"] = len(features)
     cache["featureEvidenceCount"] = expected_feature_count
     cache["analyzeSource"] = "layFlatBody"
+    cache["halfOpeningStatus"] = face_check.get("halfStatus") or ""
+    cache["topHalfCount"] = int(face_check.get("topHalfCount") or 0)
+    cache["bottomHalfCount"] = int(face_check.get("bottomHalfCount") or 0)
+    cache["outlineFaceSource"] = outline_face_source
 
     working = dict(metadata)
     try:
@@ -616,9 +878,9 @@ def analyze_lay_flat_body(body, force=False):
         "state": ANALYZED_STATE,
         "analyzedAtMs": cache["analyzedAtMs"],
     }
-    cache["flippedForView"] = flipped_for_view
-    cache["outlineFaceDown"] = True
     _write_metadata(body, working, panel_id)
+    clear_face_appearance_override(colour_face)
+    tinted = tint_milling_side(body, milling_face, tint_ctx)
     return {
         "ok": True,
         "skipped": False,
@@ -627,11 +889,14 @@ def analyze_lay_flat_body(body, force=False):
         "featureCount": len(features),
         "pointCount": int(outline.get("pointCount") or len(outline.get("points") or [])),
         "outlineSource": str(outline.get("source") or ""),
+        "outlineFaceSource": outline_face_source,
         "widthMm": cache.get("widthMm"),
         "depthMm": cache.get("depthMm"),
         "thicknessMm": thickness,
-        "flippedForView": flipped_for_view,
-        "outlineFaceDown": True,
+        "halfStatus": face_check.get("halfStatus") or "",
+        "topHalfCount": int(face_check.get("topHalfCount") or 0),
+        "bottomHalfCount": int(face_check.get("bottomHalfCount") or 0),
+        "millingTintApplied": bool(tinted),
     }
 
 
@@ -639,10 +904,10 @@ def analyze_lay_flat_bodies(bodies, force=False, wait_callback=None):
     analyzed = []
     skipped = []
     failed = []
-    flipped_count = 0
+    tint_ctx = {"appearance": None, "applied": 0, "failed": 0, "bodies": 0}
     for index, body in enumerate(bodies or []):
         try:
-            result = analyze_lay_flat_body(body, force=force)
+            result = analyze_lay_flat_body(body, force=force, tint_ctx=tint_ctx)
         except Exception as ex:
             failed.append(
                 {
@@ -651,13 +916,15 @@ def analyze_lay_flat_bodies(bodies, force=False, wait_callback=None):
                 }
             )
             continue
-        if result.get("flippedForView"):
-            flipped_count += 1
         if not result.get("ok"):
             failed.append(
                 {
                     "bodyName": result.get("bodyName") or "",
                     "reason": result.get("reason") or "analyze_failed",
+                    "reasons": list(result.get("reasons") or []),
+                    "halfStatus": result.get("halfStatus") or "",
+                    "topHalfCount": int(result.get("topHalfCount") or 0),
+                    "bottomHalfCount": int(result.get("bottomHalfCount") or 0),
                 }
             )
         elif result.get("skipped"):
@@ -674,7 +941,11 @@ def analyze_lay_flat_bodies(bodies, force=False, wait_callback=None):
         "analyzedCount": len(analyzed),
         "skippedFreshCount": len(skipped),
         "failedCount": len(failed),
-        "flippedForViewCount": flipped_count,
+        # Body-level count for the status line; face assigns can be much larger
+        # when dados split the machining skin into coplanar fragments.
+        "millingTintAppliedCount": int(tint_ctx.get("bodies") or 0),
+        "millingTintFaceCount": int(tint_ctx.get("applied") or 0),
+        "millingTintFailedCount": int(tint_ctx.get("failed") or 0),
         "analyzed": analyzed[:80],
         "skippedFresh": skipped[:40],
         "failed": failed[:40],

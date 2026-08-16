@@ -47,12 +47,12 @@ except Exception:
         _number = None
 
 try:
-    from nesting.lay_flat_face_up import evaluate_body_faces_up
+    from nesting.lay_flat_face_up import evaluate_body_role_normals
 except Exception:
     try:
-        from lay_flat_face_up import evaluate_body_faces_up  # type: ignore
+        from lay_flat_face_up import evaluate_body_role_normals  # type: ignore
     except Exception:
-        evaluate_body_faces_up = None
+        evaluate_body_role_normals = None
 
 try:
     from nesting.preflight import _undefined
@@ -158,36 +158,6 @@ def _groove_exportable(feature, raw_points):
     return _point_count(points) >= 3 and _polygon_area_abs(points) > 0.0001
 
 
-def _normalize_blind_open_face(open_is, depth_mm, thickness_mm, feature=None):
-    """Remap false B opens when the floor sits near the colour skin.
-
-    After Lay Flat, A is machining (+Z). Topology sometimes tags top-face
-    dados/cups as B because walls also touch the underside; the recorded depth
-    to B is then shallow. Remap those to A with corrected depth.
-    """
-    open_is = str(open_is or "").strip().upper()
-    depth = _as_number(depth_mm)
-    thickness = _as_number(thickness_mm)
-    feature = feature if isinstance(feature, dict) else {}
-    if open_is != "B" or thickness <= 0:
-        return open_is, depth
-    floor_z = feature.get("floorOffsetMm")
-    offset_a = feature.get("openRemapOffsetA")
-    offset_b = feature.get("openRemapOffsetB")
-    try:
-        if floor_z is not None and offset_a is not None and offset_b is not None:
-            dist_a = abs(float(floor_z) - float(offset_a))
-            dist_b = abs(float(floor_z) - float(offset_b))
-            if dist_b + 0.5 < dist_a:
-                return "A", round(dist_a, 3)
-    except Exception:
-        pass
-    # Stored metadata without floor offsets: shallow B depth ⇒ floor near B.
-    if 0 < depth < min(6.0, thickness * 0.4):
-        return "A", round(max(depth, thickness - depth), 3)
-    return open_is, depth
-
-
 def _feature_reasons(features, thickness_mm=0.0):
     reasons = []
     blind_faces = set()
@@ -217,9 +187,6 @@ def _feature_reasons(features, thickness_mm=0.0):
 
         depth = _as_number(feature.get("depthMm"))
         if not through:
-            open_is, depth = _normalize_blind_open_face(
-                open_is, depth, thickness_mm, feature
-            )
             if open_is in ("A", "B"):
                 blind_faces.add(open_is)
                 if open_is != "A":
@@ -453,9 +420,9 @@ def evaluate_body(body, min_dot=None):
     reasons = list(check.get("reasons") or [])
 
     face_up = None
-    if callable(evaluate_body_faces_up):
+    if callable(evaluate_body_role_normals):
         try:
-            face_up = evaluate_body_faces_up(body, min_dot=min_dot)
+            face_up = evaluate_body_role_normals(body, min_dot=min_dot)
         except Exception as ex:
             face_up = {"ok": False, "reasons": ["faces_up_error:{}".format(ex)]}
         if not face_up.get("ok"):

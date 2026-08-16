@@ -460,6 +460,27 @@ class GeneratorDefaultAttributesTests(unittest.TestCase):
         self.assertEqual(lounge["classification"]["color"]["value"], "white_stipple")
         self.assertEqual(lounge["defaultAttributes"]["surfaceMode"], "DOUBLE_SIDED")
 
+    def test_kitchen_led_half_grooves_become_declared_cuts(self):
+        board = {
+            "id": "B3",
+            "type": "B3",
+            "halfGrooveVectors": [
+                {
+                    "sourceId": "B3_led_groove",
+                    "kind": "slot",
+                    "slotType": "half",
+                    "side": "left",
+                    "grooveDepth": 6.5,
+                }
+            ],
+        }
+        meta = self.mod.build_panel_metadata("kitchen", board, run_label="k1")
+        declared = meta.get("declaredCuts") or []
+        self.assertEqual(len(declared), 1)
+        self.assertEqual(declared[0]["sourceId"], "B3_led_groove")
+        self.assertEqual(declared[0]["purpose"], "led_groove")
+        self.assertEqual(declared[0]["grooveDepth"], 6.5)
+
 
 if __name__ == "__main__":
     unittest.main()

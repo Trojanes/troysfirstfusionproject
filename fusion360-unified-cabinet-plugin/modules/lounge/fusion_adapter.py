@@ -9,6 +9,16 @@ import adsk.fusion
 from geometry_ops import ATTRIBUTE_GROUP, MODEL_Z_OFFSET_MM, mm_to_cm, offset_matching_bodies_z_mm, sanitize_token
 
 try:
+    from nesting.workpiece_names import resolve_assembly_name
+except Exception:
+    _nesting_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "nesting")
+    )
+    if _nesting_dir not in sys.path:
+        sys.path.insert(0, _nesting_dir)
+    from workpiece_names import resolve_assembly_name
+
+try:
     from generator_default_attributes import (
         extract_carcass_color_from_result,
         write_generator_panel_metadata,
@@ -120,13 +130,12 @@ def _world_translation_transform(origin_x_mm=0.0, origin_y_mm=0.0, origin_z_mm=0
 
 
 def _new_lounge_component(root_comp, run_label, mode, component_name=None, origin_x_mm=0.0, origin_y_mm=0.0, origin_z_mm=0.0):
-    if component_name:
-        name = sanitize_token(component_name, fallback="assembly", limit=80)
-    else:
-        name = "LOUNGE_{}_{}".format(
-            sanitize_token(mode or "run", fallback="run", limit=24),
-            sanitize_token(run_label or int(time.time() * 1000), fallback="run", limit=60),
-        )
+    name = resolve_assembly_name(
+        component_name,
+        run_label=run_label,
+        default_name="Lounge",
+        include_human_run_label=True,
+    )
     occurrence = None
     try:
         transform = _world_translation_transform(origin_x_mm, origin_y_mm, origin_z_mm)
@@ -140,6 +149,8 @@ def _new_lounge_component(root_comp, run_label, mode, component_name=None, origi
         component.attributes.add(ATTRIBUTE_GROUP, "module", "lounge")
         component.attributes.add(ATTRIBUTE_GROUP, "previewMode", str(mode or "run"))
         component.attributes.add(ATTRIBUTE_GROUP, "runLabel", str(run_label or ""))
+        component.attributes.add(ATTRIBUTE_GROUP, "assemblyName", name)
+        component.attributes.add("UnifiedCabinetPlugin", "assemblyName", name)
     except Exception:
         pass
     return component, name, None

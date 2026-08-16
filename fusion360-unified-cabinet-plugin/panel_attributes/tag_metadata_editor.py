@@ -540,6 +540,85 @@ def _write_body_metadata(body, metadata):
     return metadata
 
 
+def snapshot_milling_state(body):
+    """Capture body metadata and all face metadata for transactional rollback."""
+    if not callable(read_face_metadata):
+        raise ValueError("Face metadata reader is unavailable; rollback is unsafe.")
+    body_metadata, read_error = _read_body_metadata_raw(body)
+    if read_error:
+        raise ValueError(read_error)
+    face_states = []
+    try:
+        faces = body.faces
+        count = int(faces.count or 0) if faces else 0
+    except Exception:
+        count = 0
+    for index in range(count):
+        try:
+            face = faces.item(index)
+        except Exception:
+            continue
+        metadata = None
+        if callable(read_face_metadata):
+            try:
+                metadata, face_error = read_face_metadata(face)
+            except Exception as ex:
+                raise ValueError(
+                    "Could not snapshot face {} metadata: {}".format(index, ex)
+                )
+            if face_error:
+                raise ValueError(
+                    "Could not snapshot face {} metadata: {}".format(
+                        index, face_error
+                    )
+                )
+        face_states.append(
+            {
+                "face": face,
+                "metadata": copy.deepcopy(metadata)
+                if isinstance(metadata, dict)
+                else None,
+            }
+        )
+    return {
+        "bodyMetadata": copy.deepcopy(body_metadata)
+        if isinstance(body_metadata, dict)
+        else {},
+        "faces": face_states,
+    }
+
+
+def restore_milling_state(body, snapshot):
+    """Restore a snapshot created by :func:`snapshot_milling_state`."""
+    state = snapshot if isinstance(snapshot, dict) else {}
+    restored = 0
+    errors = []
+    body_metadata = state.get("bodyMetadata")
+    if isinstance(body_metadata, dict):
+        try:
+            _write_body_metadata(body, copy.deepcopy(body_metadata))
+            restored += 1
+        except Exception as ex:
+            errors.append("body metadata: {}".format(ex))
+    for item in state.get("faces") or []:
+        if not isinstance(item, dict):
+            continue
+        face = item.get("face")
+        metadata = item.get("metadata")
+        try:
+            if isinstance(metadata, dict) and callable(write_face_metadata):
+                write_face_metadata(face, copy.deepcopy(metadata))
+                restored += 1
+            elif metadata is None and callable(remove_face_metadata):
+                remove_face_metadata(face)
+                restored += 1
+        except Exception as ex:
+            errors.append("face metadata: {}".format(ex))
+    if errors:
+        raise ValueError("; ".join(errors))
+    return restored
+
+
 def _bootstrap_face_metadata(body_metadata, face):
     panel_id = ""
     if isinstance(body_metadata, dict):

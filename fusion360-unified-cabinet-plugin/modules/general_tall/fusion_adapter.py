@@ -11,6 +11,18 @@ import adsk.fusion
 from geometry_ops import ATTRIBUTE_GROUP, MODEL_Z_OFFSET_MM, avoid_existing_at_origin, capture_position_snapshot, mm_to_cm, move_body_by_mm, offset_matching_bodies_z_mm, sanitize_token
 
 try:
+    from nesting.workpiece_names import resolve_assembly_name
+except Exception:
+    import sys
+
+    _nesting_dir = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "..", "nesting")
+    )
+    if _nesting_dir not in sys.path:
+        sys.path.insert(0, _nesting_dir)
+    from workpiece_names import resolve_assembly_name
+
+try:
     from generator_default_attributes import (
         PANEL_ATTRIBUTE_GROUP,
         PANEL_ID_ATTR,
@@ -2085,13 +2097,12 @@ def _new_container_component(
     origin_z_mm=MODEL_Z_OFFSET_MM,
     origin_rotation_deg=0.0,
 ):
-    if component_name:
-        resolved_component_name = sanitize_token(component_name, fallback="assembly", limit=80)
-    else:
-        resolved_component_name = "{}_{}".format(
-            sanitize_token(component_prefix or module_name, fallback="assembly", limit=40),
-            sanitize_token(run_label, fallback="run", limit=60),
-        )
+    resolved_component_name = resolve_assembly_name(
+        component_name,
+        run_label=run_label,
+        default_name=component_prefix or module_name,
+        include_human_run_label=True,
+    )
     if not create_component:
         return root_comp, "Using root component container for {} rough bodies.".format(module_name), None
 

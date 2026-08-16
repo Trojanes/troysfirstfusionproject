@@ -154,9 +154,10 @@ def _simplify_collinear_2d(points, tolerance=1e-6):
     return simplified
 
 
-def feature_kind_from_loop(edge_count, has_arc, points=None):
+def feature_kind_from_loop(edge_count, has_arc, points=None, cut_type=None):
     if has_arc and edge_count <= 2:
         return FEATURE_KIND_HOLE
+    through = str(cut_type or "").upper() == CUT_TYPE_FULL
     if not has_arc:
         corners = _simplify_collinear_2d(points) if points else []
         if edge_count == 4 or len(corners) == 4:
@@ -172,10 +173,11 @@ def feature_kind_from_loop(edge_count, has_arc, points=None):
                 # clearly elongated channel is safe to reduce to centerline.
                 if short_side <= 1e-6 or long_side / short_side < 3.0:
                     return FEATURE_KIND_POCKET
-                return FEATURE_KIND_GROOVE
+                # Through slots (lock cutouts, etc.) are openings, not grooves.
+                return FEATURE_KIND_POCKET if through else FEATURE_KIND_GROOVE
         if edge_count == 4 and not points:
             # Backward-compatible pure classification when geometry is absent.
-            return FEATURE_KIND_GROOVE
+            return FEATURE_KIND_POCKET if through else FEATURE_KIND_GROOVE
     return FEATURE_KIND_POCKET
 
 
@@ -469,21 +471,69 @@ def _face_centroid_local_mm(face, body, coordinate_mode="body"):
 
 
 def _sample_edge_points(edge):
+    """Sample edge strokes in native edge direction (Point3D-like objects)."""
     try:
-        evaluator = edge.evaluator
-        ext = evaluator.getParameterExtents()
-        if isinstance(ext, (tuple, list)) and len(ext) >= 3:
-            start_param, end_param = ext[1], ext[2]
+        evaluator = getattr(edge, "evaluator", None)
+        if evaluator is None:
+            geometry = getattr(edge, "geometry", None)
+            evaluator = getattr(geometry, "evaluator", None)
+        if evaluator is None:
+            return []
+        extents = evaluator.getParameterExtents()
+        if not isinstance(extents, (tuple, list)):
+            return []
+        if len(extents) >= 3 and isinstance(extents[0], bool):
+            if not extents[0]:
+                return []
+            start_param, end_param = extents[1], extents[2]
+        elif len(extents) >= 3:
+            start_param, end_param = extents[1], extents[2]
+        elif len(extents) >= 2:
+            start_param, end_param = extents[-2], extents[-1]
         else:
             return []
         strokes = evaluator.getStrokes(start_param, end_param, STROKE_TOLERANCE_CM)
-        if isinstance(strokes, (tuple, list)):
+        if isinstance(strokes, (tuple, list)) and strokes and isinstance(strokes[0], bool):
+            if not strokes[0]:
+                return []
+            points = strokes[1] if len(strokes) > 1 else []
+        elif isinstance(strokes, (tuple, list)):
             points = strokes[-1]
         else:
             points = strokes
         return list(points or [])
     except Exception:
         return []
+
+
+def _edge_endpoint_points(edge):
+    try:
+        return [edge.startVertex.geometry, edge.endVertex.geometry]
+    except Exception:
+        return []
+
+
+def _align_strokes_to_native_edge(edge, pts3d):
+    """Reverse stroke samples when they run end→start relative to BRepEdge."""
+    if len(pts3d) < 2:
+        return pts3d
+    try:
+        start = edge.startVertex.geometry
+        end = edge.endVertex.geometry
+        first = pts3d[0]
+
+        def _dist2(a, b):
+            return (
+                (float(a.x) - float(b.x)) ** 2
+                + (float(a.y) - float(b.y)) ** 2
+                + (float(a.z) - float(b.z)) ** 2
+            )
+
+        if _dist2(first, end) < _dist2(first, start):
+            return list(reversed(pts3d))
+    except Exception:
+        pass
+    return pts3d
 
 
 def _edge_is_circle(edge):
@@ -499,6 +549,13 @@ def _edge_is_circle(edge):
     return False, None
 
 
+def _edge_is_arc(edge):
+    try:
+        return str(edge.geometry.objectType).endswith("Arc3D")
+    except Exception:
+        return False
+
+
 def _loop_segments_2d(loop, body, thickness_axis, coordinate_mode="body"):
     """Return ordered (points2d, edge) per coEdge for a loop, plus arc flag."""
     segments = []
@@ -506,16 +563,19 @@ def _loop_segments_2d(loop, body, thickness_axis, coordinate_mode="body"):
     for coedge in _iter_collection(loop.coEdges):
         try:
             edge = coedge.edge
+            opposed = bool(coedge.isOpposedToEdge)
         except Exception:
             continue
         pts3d = _sample_edge_points(edge)
-        if not pts3d:
+        if len(pts3d) >= 2:
+            pts3d = _align_strokes_to_native_edge(edge, pts3d)
+        if len(pts3d) < 2:
+            # Keep lock-slot Arc3D ends in the ring even when getStrokes fails.
+            pts3d = _edge_endpoint_points(edge)
+        if len(pts3d) < 2:
             continue
-        try:
-            if coedge.isOpposedToEdge:
-                pts3d = list(reversed(pts3d))
-        except Exception:
-            pass
+        if opposed:
+            pts3d = list(reversed(pts3d))
         pts2d = [
             project_local_to_2d(
                 _to_local_point_mm(pt, body, coordinate_mode=coordinate_mode),
@@ -524,9 +584,12 @@ def _loop_segments_2d(loop, body, thickness_axis, coordinate_mode="body"):
             for pt in pts3d
         ]
         is_circle, _geom = _edge_is_circle(edge)
-        if is_circle:
+        is_arc = _edge_is_arc(edge)
+        if is_circle or is_arc:
             has_arc = True
-        segments.append({"points": pts2d, "edge": edge, "isCircle": is_circle})
+        segments.append(
+            {"points": pts2d, "edge": edge, "isCircle": is_circle, "isArc": is_arc}
+        )
     return segments, has_arc
 
 
@@ -752,8 +815,11 @@ def extract_features(
         feature = {
             "featureId": "",
             "cutType": CUT_TYPE_HALF,
-            "kind": feature_kind_from_loop(len(segments), has_arc, points=points),
+            "kind": feature_kind_from_loop(
+                len(segments), has_arc, points=points, cut_type=CUT_TYPE_HALF
+            ),
             "depthMm": depth,
+            "hasArc": bool(has_arc),
             "points": points,
             "openSurfaceToken": _entity_token(open_surface),
             "openSurfaceIs": "A" if open_surface is surface_a else "B",
@@ -800,9 +866,13 @@ def extract_features(
                 "featureId": "",
                 "cutType": CUT_TYPE_FULL,
                 "kind": feature_kind_from_loop(
-                    len(segments), has_arc, points=points
+                    len(segments),
+                    has_arc,
+                    points=points,
+                    cut_type=CUT_TYPE_FULL,
                 ),
                 "depthMm": thickness_mm,
+                "hasArc": bool(has_arc),
                 "points": points,
                 "openSurfaceToken": _entity_token(face),
             }
@@ -947,6 +1017,19 @@ def build_body_geometry(body, surface_faces, milling_roles, panel_context=None):
     return result
 
 
+def groove_opening_width_mm(points):
+    """Short in-plane span of a groove opening polygon (the slot width)."""
+    ring = [list(point[:2]) for point in (points or []) if len(point) >= 2]
+    if len(ring) < 2:
+        return None
+    xs = [float(point[0]) for point in ring]
+    ys = [float(point[1]) for point in ring]
+    short = min(max(xs) - min(xs), max(ys) - min(ys))
+    if short <= 1e-6:
+        return None
+    return round(short, 3)
+
+
 def _public_feature(feature):
     payload = {
         "featureId": feature.get("featureId"),
@@ -954,6 +1037,7 @@ def _public_feature(feature):
         "kind": feature.get("kind"),
         "depthMm": feature.get("depthMm"),
         "isCircle": bool(feature.get("isCircle")),
+        "hasArc": bool(feature.get("hasArc")),
         "radiusMm": feature.get("radiusMm"),
         "openSurfaceToken": feature.get("openSurfaceToken"),
         "openSurfaceIs": feature.get("openSurfaceIs"),
@@ -964,11 +1048,27 @@ def _public_feature(feature):
             [round(x, 3), round(y, 3)] for (x, y) in (feature.get("points") or [])
         ],
     }
+    kind = str(feature.get("kind") or "").strip().lower()
+    if kind == FEATURE_KIND_GROOVE:
+        width = feature.get("widthMm")
+        if width is None:
+            width = groove_opening_width_mm(feature.get("points") or [])
+        if width is not None:
+            try:
+                payload["widthMm"] = round(float(width), 3)
+            except Exception:
+                pass
     if feature.get("floorOffsetMm") is not None:
         try:
             payload["floorOffsetMm"] = round(float(feature.get("floorOffsetMm")), 3)
         except Exception:
             pass
+    purpose = str(feature.get("purpose") or feature.get("operationType") or "").strip()
+    if purpose:
+        payload["purpose"] = purpose
+    operation = str(feature.get("operationType") or "").strip()
+    if operation:
+        payload["operationType"] = operation
     return payload
 
 

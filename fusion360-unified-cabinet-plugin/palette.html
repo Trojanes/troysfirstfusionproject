@@ -4150,21 +4150,21 @@
           <h3>Lay Flat / 平铺加工面朝上</h3>
           <div class="card-body">
             <div class="attr-section-note">
-              Replaces the current Nesting Zone layout (<code>NESTING_LAYOUT</code>) with
-              machining-face-up copies in the <strong>same Nesting Zone</strong>, grouped by
-              board type in columns. Underside outlines stay clean for .cnjob export.
-              Names use <code>Assembly-Component</code>; panel metadata is preserved.
+              Select a cabinet occurrence or panels, then <strong>Lay Flat Selected</strong>.
+              Replaces the current Nesting Zone layout with machining-face-up copies
+              of those panels only. <strong>Lay Flat All</strong> still lays every Nesting Ready panel.
             </div>
             <div class="actions" style="margin-top:10px;">
-              <button type="button" class="primary" id="toolpathLayFlatBtn">Lay Flat</button>
+              <button type="button" class="primary" id="toolpathLayFlatBtn">Lay Flat Selected</button>
+              <button type="button" id="toolpathLayFlatAllBtn">Lay Flat All</button>
               <button type="button" id="toolpathCheckFacesUpBtn">Check Faces Up</button>
               <button type="button" id="toolpathAnalyzeLayFlatBtn">Analyze Lay Flat</button>
               <button type="button" id="toolpathExportReadyBtn">Export Ready</button>
               <button type="button" id="toolpathSelectNotExportReadyBtn" disabled>Select Not Ready</button>
             </div>
             <div id="toolpathLayFlatSummary" class="message" style="margin-top:10px;">
-              Run Nesting Ready + Build Nesting Outlines first, then Lay Flat.
-              Builds one LAY_FLAT with bodies named Assembly-Component (fast path).
+              Select a cabinet or panels, then Lay Flat Selected.
+              Builds one LAY_FLAT with bodies named Assembly-Component.
             </div>
             <div id="toolpathLayFlatGroups" style="margin-top:8px;"></div>
             <div id="toolpathCheckFacesUpSummary" class="message" style="margin-top:8px;">
@@ -13122,25 +13122,34 @@
       fusionSend("panelAttributes.exportManufacturingSnapshot", { scope: exportScope });
     }
 
-    function toolpathLayFlat() {
+    function toolpathLayFlat(scope) {
+      const layScope = scope === "all" ? "all" : "selection";
       const summary = document.getElementById("toolpathLayFlatSummary");
       const groupsHost = document.getElementById("toolpathLayFlatGroups");
       const btn = document.getElementById("toolpathLayFlatBtn");
+      const allBtn = document.getElementById("toolpathLayFlatAllBtn");
       if (btn) btn.disabled = true;
+      if (allBtn) allBtn.disabled = true;
       if (groupsHost) groupsHost.innerHTML = "";
       if (summary) {
-        summary.textContent = "Laying flat Nesting Ready panels (machining face up)...";
+        summary.textContent = layScope === "all"
+          ? "Laying flat all Nesting Ready panels (machining face up)..."
+          : "Laying flat selected panels (machining face up)...";
         summary.className = "message warn";
       }
       if (!attrFusionAvailable()) {
         if (btn) btn.disabled = false;
+        if (allBtn) allBtn.disabled = false;
         if (summary) {
           summary.textContent = "Lay Flat requires an active Fusion design.";
           summary.className = "message error";
         }
         return;
       }
-      fusionSend("panelAttributes.createLayFlatLayout", { zoneFilter: "all" });
+      fusionSend("panelAttributes.createLayFlatLayout", {
+        zoneFilter: "all",
+        scope: layScope,
+      });
     }
 
     function toolpathCheckFacesUp() {
@@ -16202,10 +16211,13 @@
         const summary = document.getElementById("toolpathLayFlatSummary");
         const groupsHost = document.getElementById("toolpathLayFlatGroups");
         const btn = document.getElementById("toolpathLayFlatBtn");
+        const allBtn = document.getElementById("toolpathLayFlatAllBtn");
         if (btn) btn.disabled = false;
+        if (allBtn) allBtn.disabled = false;
+        const scopeLabel = parsed.scope === "all" ? "Lay Flat All" : "Lay Flat Selected";
         const msg = parsed.message
           || (parsed.ok
-            ? `Lay Flat created ${Number(parsed.createdCount || 0)}/${Number(parsed.bodyCount || parsed.preparedCount || 0)} panel(s) in ${Number(parsed.groupCount || 0)} column(s).`
+            ? `${scopeLabel} created ${Number(parsed.createdCount || 0)}/${Number(parsed.bodyCount || parsed.preparedCount || 0)} panel(s) in ${Number(parsed.groupCount || 0)} column(s).`
             : (parsed.errors || ["Lay Flat failed."]).join(" "));
         const kind = parsed.ok
           ? (Number(parsed.notReadyCount || 0) || Number(parsed.failedCount || 0) ? "warn" : "ok")
@@ -16937,7 +16949,8 @@
       document.getElementById("nestingRebuildOutlinesBtn").addEventListener("click", () => nestingBuildOutlines(true));
       document.getElementById("nestingExportSnapshotBtn").addEventListener("click", () => nestingExportManufacturingSnapshot("selection"));
       document.getElementById("nestingExportAllSnapshotBtn").addEventListener("click", () => nestingExportManufacturingSnapshot("all"));
-      document.getElementById("toolpathLayFlatBtn").addEventListener("click", toolpathLayFlat);
+      document.getElementById("toolpathLayFlatBtn").addEventListener("click", () => toolpathLayFlat("selection"));
+      document.getElementById("toolpathLayFlatAllBtn").addEventListener("click", () => toolpathLayFlat("all"));
       document.getElementById("toolpathCheckFacesUpBtn").addEventListener("click", toolpathCheckFacesUp);
       document.getElementById("toolpathReverseMillingFaceBtn").addEventListener("click", toolpathReverseMillingFace);
       document.getElementById("toolpathLoadLayFlatTagsBtn").addEventListener("click", toolpathLoadLayFlatTags);

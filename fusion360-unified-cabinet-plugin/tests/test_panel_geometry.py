@@ -197,6 +197,25 @@ class PanelGeometryPureTests(unittest.TestCase):
             ),
             FEATURE_KIND_GROOVE,
         )
+        self.assertEqual(
+            feature_kind_from_loop(
+                4,
+                False,
+                points=[(0, 0), (100, 0), (100, 8), (0, 8)],
+                cut_type="FULL",
+            ),
+            FEATURE_KIND_POCKET,
+        )
+        # Arc3D stadium ends must count as curved → pocket, not groove.
+        self.assertEqual(
+            feature_kind_from_loop(
+                4,
+                True,
+                points=[(0, 0), (55, 0), (55, 15.5), (0, 15.5)],
+                cut_type="FULL",
+            ),
+            FEATURE_KIND_POCKET,
+        )
 
     def test_polyline_to_path(self):
         path = polyline_to_path([(0, 0), (10, 0), (10, 5)], close=True)

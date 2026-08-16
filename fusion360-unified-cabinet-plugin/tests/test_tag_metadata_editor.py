@@ -2,7 +2,7 @@ import json
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +14,86 @@ import tag_metadata_editor as editor  # noqa: E402
 
 
 class TagMetadataEditorTests(unittest.TestCase):
+    def test_milling_state_snapshot_restores_body_and_face_metadata(self):
+        body = MagicMock()
+        face_a = object()
+        face_b = object()
+        body.faces.count = 2
+        body.faces.item.side_effect = [face_a, face_b]
+        body_meta = {
+            "classification": {
+                "cuttingFace": {
+                    "value": "MILLING",
+                    "source": "manual",
+                    "locked": True,
+                }
+            }
+        }
+        face_meta_a = {
+            "millingSurface": "MILLING",
+            "millingSource": "manual",
+            "millingLocked": True,
+        }
+        writes = []
+        with patch.object(
+            editor, "_read_body_metadata_raw", return_value=(body_meta, None)
+        ), patch.object(
+            editor,
+            "read_face_metadata",
+            side_effect=[(face_meta_a, None), (None, None)],
+        ):
+            snapshot = editor.snapshot_milling_state(body)
+        with patch.object(
+            editor,
+            "_write_body_metadata",
+            side_effect=lambda target, metadata: writes.append(
+                ("body", target, metadata)
+            ),
+        ), patch.object(
+            editor,
+            "write_face_metadata",
+            side_effect=lambda face, metadata: writes.append(
+                ("face", face, metadata)
+            ),
+        ), patch.object(
+            editor,
+            "remove_face_metadata",
+            side_effect=lambda face: writes.append(("remove", face, None)),
+        ):
+            restored = editor.restore_milling_state(body, snapshot)
+        self.assertEqual(restored, 3)
+        self.assertEqual(writes[0][2], body_meta)
+        self.assertEqual(writes[1][2], face_meta_a)
+        self.assertEqual(writes[2][0], "remove")
+
+    def test_milling_state_snapshot_fails_on_face_read_error(self):
+        body = MagicMock()
+        body.faces.count = 1
+        body.faces.item.return_value = object()
+        with patch.object(
+            editor, "_read_body_metadata_raw", return_value=({}, None)
+        ), patch.object(
+            editor,
+            "read_face_metadata",
+            return_value=(None, "corrupt face metadata"),
+        ):
+            with self.assertRaisesRegex(ValueError, "corrupt face metadata"):
+                editor.snapshot_milling_state(body)
+
+    def test_milling_state_restore_reports_partial_failure(self):
+        body = MagicMock()
+        snapshot = {
+            "bodyMetadata": {"identity": {"panelId": "P1"}},
+            "faces": [{"face": object(), "metadata": {"millingSurface": "MILLING"}}],
+        }
+        with patch.object(editor, "_write_body_metadata"), patch.object(
+            editor,
+            "write_face_metadata",
+            side_effect=ValueError("face invalid after move"),
+        ):
+            with self.assertRaisesRegex(ValueError, "face invalid after move"):
+                editor.restore_milling_state(body, snapshot)
+
     def test_normalize_complementary_rejects_same_face(self):
         face = object()
         with self.assertRaises(ValueError):
