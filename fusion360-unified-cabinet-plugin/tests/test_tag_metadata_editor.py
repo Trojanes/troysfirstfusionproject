@@ -297,6 +297,22 @@ class TagMetadataEditorTests(unittest.TestCase):
         self.assertFalse(editor.color_scope_allows("doors", False))
         self.assertTrue(editor.color_scope_allows("panels", True))
         self.assertTrue(editor.color_scope_allows("panels", False))
+
+    def test_apply_grain_along_to_metadata(self):
+        metadata = {
+            "schemaVersion": 1,
+            "identity": {"panelId": "door-1"},
+            "defaultAttributes": {"materialClass": "door_board", "role": "door"},
+        }
+        updated, result = editor.apply_grain_along_to_metadata(metadata, 720)
+        self.assertTrue(result["changed"])
+        self.assertEqual(updated["classification"]["grainAlongMm"]["value"], 720.0)
+        self.assertTrue(updated["classification"]["grainAlongMm"]["locked"])
+        self.assertEqual(updated["derivedTags"]["grainAlongMm"], 720.0)
+        self.assertNotIn("horizontal", str(updated["classification"]).lower())
+        cleared, _result = editor.apply_grain_along_to_metadata(updated, "")
+        self.assertEqual(cleared["classification"]["grainAlongMm"]["value"], "")
+        self.assertNotIn("grainAlongMm", cleared.get("derivedTags") or {})
         with self.assertRaises(ValueError):
             editor.color_scope_allows("invalid", True)
 

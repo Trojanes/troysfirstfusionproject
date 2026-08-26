@@ -563,6 +563,36 @@ def _body_from_entity_token(root_component, entity_token):
     return None
 
 
+def find_lay_flat_bodies_for_source(root_component, source_body):
+    """Return LAY_FLAT copies whose stored SourceRef matches ``source_body``.
+
+    Reads ``sourceRefJson`` / metadata only — does not resolve each copy back
+    through the design (that path is O(boards × design) and freezes Fusion).
+    """
+    source_keys = panel_source_ref.keys_for_assembly_body(source_body)
+    if not source_keys or root_component is None:
+        return []
+    try:
+        from nesting.lay_flat_face_up import collect_lay_flat_bodies
+    except Exception:
+        try:
+            from lay_flat_face_up import collect_lay_flat_bodies
+        except Exception:
+            return []
+    matches = []
+    seen = set()
+    for lay_flat_body in collect_lay_flat_bodies(root_component):
+        ref_key = panel_source_ref.key(panel_source_ref.from_lay_flat_body(lay_flat_body))
+        if not ref_key or ref_key not in source_keys:
+            continue
+        marker = id(lay_flat_body)
+        if marker in seen:
+            continue
+        seen.add(marker)
+        matches.append(lay_flat_body)
+    return matches
+
+
 def resolve_source_bodies_for_lay_flat(
     root_component,
     lay_flat_body,

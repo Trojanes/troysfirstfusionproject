@@ -183,7 +183,7 @@ function assertFusionAdapterPoseContract() {
     path.join(pluginRoot, "modules", "general_tall", "fusion_adapter.py"),
     "utf8",
   );
-  assert(/ADAPTER_BUILD = \"2026-07-3\d-u-shape-ohc-\d+\"/.test(source));
+  assert(/ADAPTER_BUILD = \"20\d{2}-\d{2}-\d{2}-u-shape-ohc-\d+\"/.test(source));
   assert(source.includes("def measure_u_shape_assembly("));
   assert(source.includes("def _compose_occurrence_matrix("));
   assert(source.includes("Build each run in LOCAL identity first"));

@@ -9,8 +9,13 @@ from __future__ import annotations
 import hashlib
 import time
 
+try:
+    from nesting.in_plane_orient import clean_grain_mm, grain_mm_from_metadata
+except Exception:
+    from in_plane_orient import clean_grain_mm, grain_mm_from_metadata
+
 CACHE_KEY = "nestingFlatOutline"
-CACHE_SCHEMA = 2
+CACHE_SCHEMA = 3
 
 
 def _num(value, default=0.0):
@@ -146,17 +151,25 @@ def build_cache_record(
     cutting_face,
     allow_parts_in_part=False,
     reflected_source=False,
+    grain_along_mm=None,
 ):
     dims = dimensions if isinstance(dimensions, dict) else {}
     reflected = bool(reflected_source)
     if isinstance(outline, dict) and "reflectedSource" in outline:
         reflected = bool(outline.get("reflectedSource"))
+    grain = clean_grain_mm(
+        grain_along_mm
+        if grain_along_mm not in (None, "")
+        else (dims.get("grainAlongMm") if isinstance(dims, dict) else "")
+        or ((outline or {}).get("grainAlongMm") if isinstance(outline, dict) else "")
+    )
     payload = {
         "schemaVersion": CACHE_SCHEMA,
         "geometrySignature": str(geometry_signature or ""),
         "cuttingFace": str(cutting_face or "").strip().upper(),
         "allowPartsInPart": bool(allow_parts_in_part),
         "reflectedSource": reflected,
+        "grainAlongMm": grain if grain != "" else 0,
         "widthMm": round(_num(dims.get("widthMm")), 3),
         "depthMm": round(_num(dims.get("depthMm")), 3),
         "builtAtMs": int(time.time() * 1000),
@@ -192,6 +205,10 @@ def outline_cache_status(
     ).strip().upper():
         return "stale"
     if bool(cached.get("allowPartsInPart")) != bool(allow_parts_in_part):
+        return "stale"
+    expected_grain = grain_mm_from_metadata(metadata)
+    cached_grain = clean_grain_mm(cached.get("grainAlongMm"))
+    if expected_grain != cached_grain:
         return "stale"
     if reflected_source is not None:
         cached_reflected = bool(cached.get("reflectedSource"))

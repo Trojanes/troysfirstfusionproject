@@ -2115,8 +2115,8 @@
             </div>
             <label id="loungeLPositionLabel"><span data-i18n="lounge.lPosition">L 位置</span>
               <select id="loungeLPosition">
-                <option value="RIGHT" selected data-i18n="lounge.pos.left">左</option>
-                <option value="LEFT" data-i18n="lounge.pos.right">右</option>
+                <option value="LEFT" selected data-i18n="lounge.pos.left">左</option>
+                <option value="RIGHT" data-i18n="lounge.pos.right">右</option>
               </select>
             </label>
           </div>
@@ -2385,10 +2385,14 @@
               <button class="ghost" id="ohPresetUpdateBtn" data-i18n="common.update">更新</button>
               <button class="ghost" id="ohPresetDeleteBtn" data-i18n="common.delete">删除</button>
             </div>
-            <div class="actions" style="gap:8px;align-items:flex-end;">
+            <div class="actions" style="gap:8px;align-items:flex-end;flex-wrap:wrap;">
               <label style="font-size:12px;"><span data-i18n="common.assembly">装配名</span> <input type="text" id="ohAssemblyName" placeholder="OHC" style="width:160px;"></label>
               <label style="font-size:12px;"><span data-i18n="common.originX">原点 X (mm)</span> <input type="number" id="ohOriginX" placeholder="auto" step="100" style="width:110px;"></label>
               <label style="font-size:12px;"><span data-i18n="common.originY">原点 Y (mm)</span> <input type="number" id="ohOriginY" placeholder="auto" step="100" style="width:110px;"></label>
+              <label style="display:flex;align-items:center;gap:6px;margin:0;color:#6d7a8d;" data-i18n-title="oh.addAsNew.hint" title="勾选：保留已有吊柜再生成一套；取消：替换上一次吊柜">
+                <input id="ohAddAsNewCabinet" type="checkbox" checked style="width:auto;">
+                <span data-i18n="oh.addAsNew">生成新的</span>
+              </label>
             </div>
           </div>
         </div>
@@ -2406,8 +2410,9 @@
                 <div class="oh-editor-tools">
                   <button class="ghost" id="ohAddZoneBtn" data-i18n="gt.addZone">添加分区</button>
                   <button class="ghost" id="ohDeleteZoneBtn" data-i18n="gt.delZone">删除分区</button>
+                  <button class="ghost" id="ohAvgSelectedZonesBtn" data-i18n="oh.avgSelected" data-i18n-title="oh.avgSelected.hint" title="按住 Ctrl 多选后，将选中分区宽度均分（0.1 mm）">平均选中</button>
                 </div>
-                <div class="muted" style="margin-bottom:6px;" data-i18n="oh.zonesHint">功能分区（可拖拽调整宽度）</div>
+                <div class="muted" style="margin-bottom:6px;" data-i18n="oh.zonesHint">功能分区（可拖拽调整宽度；按住 Ctrl 可多选）</div>
                 <div class="oh-zone-strip" id="ohZoneStrip"></div>
                 <div class="oh-axis-row" id="ohZoneWidthRow"></div>
                 <div class="oh-axis-row" id="ohZoneCumulativeRow"></div>
@@ -2733,10 +2738,14 @@
               <button class="ghost" id="loungePresetUpdateBtn" data-i18n="common.update">更新</button>
               <button class="ghost" id="loungePresetDeleteBtn" data-i18n="common.delete">删除</button>
             </div>
-            <div class="actions" style="gap:8px;align-items:flex-end;">
+            <div class="actions" style="gap:8px;align-items:flex-end;flex-wrap:wrap;">
               <label style="font-size:12px;"><span data-i18n="common.assembly">装配名</span> <input type="text" id="loungeAssemblyName" placeholder="auto" style="width:160px;"></label>
               <label style="font-size:12px;"><span data-i18n="common.originX">原点 X (mm)</span> <input type="number" id="loungeOriginX" placeholder="auto" step="100" style="width:110px;"></label>
               <label style="font-size:12px;"><span data-i18n="common.originY">原点 Y (mm)</span> <input type="number" id="loungeOriginY" placeholder="auto" step="100" style="width:110px;"></label>
+              <label style="display:flex;align-items:center;gap:6px;margin:0;color:#6d7a8d;" data-i18n-title="lounge.addAsNew.hint" title="勾选：保留已有客厅柜再生成一套；取消：替换上一次客厅柜">
+                <input id="loungeAddAsNewCabinet" type="checkbox" checked style="width:auto;">
+                <span data-i18n="lounge.addAsNew">生成新的</span>
+              </label>
             </div>
           </div>
         </div>
@@ -2920,7 +2929,7 @@
                   <option value="open" data-i18n="oh.zone.open">开放格</option>
                 </select>
               </label>
-              <label><span data-i18n="oh.zoneWidth">宽度 (mm)</span> <input id="ohZoneWidth" type="number" min="120" step="1"></label>
+              <label><span data-i18n="oh.zoneWidth">宽度 (mm)</span> <input id="ohZoneWidth" type="number" min="120" step="0.1"></label>
               <label><span data-i18n="oh.zoneX0">计算位置 X0 (mm)</span> <input id="ohZoneX0" class="oh-readonly" readonly></label>
               <label><span data-i18n="oh.zoneX1">计算位置 X1 (mm)</span> <input id="ohZoneX1" class="oh-readonly" readonly></label>
             </div>
@@ -3665,7 +3674,7 @@
           <div class="card">
             <h3>1. 状态与手动字段</h3>
             <div class="card-body">
-              <div class="attr-section-note"><strong>Read-only scan.</strong> Select a body, face, or edge to see its canonical Board Type, Color, Face-up, source and lock. Edit creates a manual lock; automatic analysis will not overwrite it until Reset to Auto.</div>
+              <div class="attr-section-note"><strong>Read-only scan.</strong> Select a body, face, or edge to see its canonical Board Type, Color, Face-up and source. Board Type / Color edits still lock; Face-up / milling does not.</div>
               <div class="actions" style="margin-top:0;">
                 <button type="button" class="primary" id="attrTagScanSelectedBtn">Tag Scan Selected</button>
               </div>
@@ -3704,6 +3713,24 @@
           </div>
 
           <div class="card">
+            <h3 data-i18n="attr.title.manualGrain">3. 手动覆盖 — 木纹朝向</h3>
+            <div class="card-body">
+              <div class="attr-section-note" data-i18n="attr.note.manualGrain">立板：竖=沿 Z（高度），横=沿另一条饰面边。平板（厚度沿 Z）：俯视 横=沿 X（柜宽），竖=沿 Y（柜深）。写入的是该边长度 (mm)。</div>
+              <label style="display:block;margin-top:8px;font-size:12px;"><span data-i18n="attr.grain.orientation">木纹朝向</span>
+                <select id="attrGrainOrientation" style="width:100%;margin-top:4px;">
+                  <option value="none" data-i18n="attr.grain.none">无</option>
+                  <option value="horizontal" data-i18n="attr.grain.horizontal">横</option>
+                  <option value="vertical" data-i18n="attr.grain.vertical">竖</option>
+                </select>
+              </label>
+              <div id="attrGrainSelectionSummary" class="message" style="margin-top:8px;">Select a body or a face (uses its body), then apply.</div>
+              <div class="actions" style="margin-top:10px;">
+                <button type="button" class="primary" id="attrApplyGrainBtn" data-i18n="attr.btn.applyGrain">应用到选中板件</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
             <h3>2. Auto Analyze — Hinge Propagation</h3>
             <div class="card-body">
               <div class="attr-section-note">Finds blind circular hinge cups geometrically. The face they open onto is the <strong>back = MILLING</strong>. That back is copied to other selected panels that are <strong>coplanar and same-orientation</strong>. Opposite broad face becomes NON_MILLING.</div>
@@ -3719,7 +3746,7 @@
             <div class="card-body">
               <div style="display:flex;gap:14px;align-items:flex-start;">
                 <div style="flex:1;min-width:0;">
-                  <div class="attr-section-note"><strong>Writes immediately to unlocked panels.</strong> Geometry analysis for every selected body: hinge cups, then half-slots; no evidence → EITHER only when unassigned. Manual face-up locks are skipped. Select Milling Faces is read-only. <strong>Revert Selected Body</strong> only flips the selected face/body (ignores whole assemblies) — milling moves to the opposite broad face, no design-wide scan.</div>
+                  <div class="attr-section-note"><strong>Writes immediately.</strong> Geometry analysis for every selected body: hinge cups, then half-slots; no evidence → EITHER only when unassigned. Face-up is not locked. Select Milling Faces is read-only. <strong>Revert Selected Body</strong> only flips the selected face/body (ignores whole assemblies) — milling moves to the opposite broad face, no design-wide scan.</div>
                   <div id="attrMillingAnalysisSummary" class="message" style="margin-top:8px;">Select bodies (or their parent assembly), then analyze.</div>
                   <div class="actions" style="margin-top:10px;">
                     <button type="button" class="primary" id="attrAnalyzeMillingBtn">Analyze Selection</button>
@@ -3741,7 +3768,7 @@
           <div class="card">
             <h3>2. 自动分析 — 门板朝向</h3>
             <div class="card-body">
-                  <div class="attr-section-note"><strong>Orient</strong> writes unlocked doors (hinge/slot first, then assembly/view; otherwise EITHER). <strong>Revert Panel Surface</strong>: face/body selection flips that board only (fast, no hinge/slot scan); assembly selection flips doors under it. Always writes definite MILLING/NON_MILLING and locks face-up until Reset to Auto. <strong>Select Colour Faces</strong> is read-only (still expands the selection).</div>
+                  <div class="attr-section-note"><strong>Orient</strong> writes doors (hinge/slot first, then assembly/view; otherwise EITHER). <strong>Revert Panel Surface</strong>: face/body selection flips that board only (fast, no hinge/slot scan); assembly selection flips doors under it. Always writes definite MILLING/NON_MILLING; face-up stays writable. <strong>Select Colour Faces</strong> is read-only (still expands the selection).</div>
               <div style="margin-top:8px;font-size:12px;">
                 <label style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;">
                   <input type="radio" name="attrOrientPointMode" value="auto" checked> Auto — centre of selection
@@ -3797,7 +3824,7 @@
           <aside class="card" style="margin-bottom:0;">
             <h3>手动锁</h3>
             <div class="card-body">
-              <div class="attr-section-note">Manual Board Type, Color and Revert Face are protected from automatic analysis. Select panels, then unlock only the field you want automatic tools to control again.</div>
+              <div class="attr-section-note">Manual Board Type and Color stay locked until Reset. Face-up / milling is never locked — Check Faces Up and milling analysis can always overwrite it. Reset Face-up still clears leftover locks on older boards.</div>
               <div class="actions" style="margin-top:10px;">
                 <button type="button" class="secondary" id="attrResetBoardTypeAutoBtn">Reset Board Type to Auto</button>
                 <button type="button" class="secondary" id="attrResetColorAutoBtn">Reset Color to Auto</button>
@@ -3883,10 +3910,14 @@
           <button class="ghost" id="aohPresetUpdateBtn" data-i18n="common.update">更新</button>
           <button class="ghost" id="aohPresetDeleteBtn" data-i18n="common.delete">删除</button>
         </div>
-        <div class="oh-toolbar" style="gap:8px;align-items:flex-end;">
+        <div class="oh-toolbar" style="gap:8px;align-items:flex-end;flex-wrap:wrap;">
           <label style="font-size:12px;"><span data-i18n="common.assembly">装配名</span> <input type="text" id="aohAssemblyName" placeholder="OHC" style="width:160px;"></label>
           <label style="font-size:12px;"><span data-i18n="common.originX">原点 X (mm)</span> <input type="number" id="aohOriginX" placeholder="auto" step="100" style="width:110px;"></label>
           <label style="font-size:12px;"><span data-i18n="common.originY">原点 Y (mm)</span> <input type="number" id="aohOriginY" placeholder="auto" step="100" style="width:110px;"></label>
+          <label style="display:flex;align-items:center;gap:6px;margin:0;color:#6d7a8d;" data-i18n-title="oh.addAsNew.hint" title="勾选：保留已有吊柜再生成一套；取消：替换上一次吊柜">
+            <input id="aohAddAsNewCabinet" type="checkbox" checked style="width:auto;">
+            <span data-i18n="oh.addAsNew">生成新的</span>
+          </label>
         </div>
 
         <div class="card">
@@ -3921,6 +3952,7 @@
             <div class="oh-editor-tools">
               <button class="ghost" id="aohAddZoneBtn" data-i18n="gt.addZone">添加分区</button>
               <button class="ghost" id="aohDeleteZoneBtn" data-i18n="gt.delZone">删除分区</button>
+              <button class="ghost" id="aohAvgSelectedZonesBtn" data-i18n="oh.avgSelected" data-i18n-title="oh.avgSelected.hint" title="按住 Ctrl 多选后，将选中分区宽度均分（0.1 mm）">平均选中</button>
             </div>
             <div class="oh-zone-strip" id="aohZoneStrip"></div>
             <div class="oh-axis-row" id="aohZoneWidthRow"></div>
@@ -3943,7 +3975,7 @@
                     <option value="open">开放格</option>
                   </select>
                 </label>
-                <label>宽度 (mm) <input id="aohZoneWidth" type="number" min="120" step="1"></label>
+                <label>宽度 (mm) <input id="aohZoneWidth" type="number" min="120" step="0.1"></label>
                 <label>Computed X0 (mm) <input id="aohZoneX0" class="oh-readonly" readonly></label>
                 <label>Computed X1 (mm) <input id="aohZoneX1" class="oh-readonly" readonly></label>
               </div>
@@ -4217,6 +4249,23 @@
           </div>
         </div>
         <div class="card">
+          <h3 data-i18n="toolpath.title.rotateGrain">Rotate Wood Grain 90° / 木纹转 90°</h3>
+          <div class="card-body">
+            <div class="attr-section-note" data-i18n-html="toolpath.note.rotateGrain">
+              Select a <strong>body</strong>, or a <strong>face</strong> belonging to a body.
+              Swaps grainAlongMm to the other face edge (横 ↔ 竖).
+              On <strong>LAY_FLAT</strong>: writes the original board, rotates the copy 90° so grain stays along +X, then force Analyze.
+              Grain must already be set (Tag Edit). Square boards are skipped.
+            </div>
+            <div class="actions" style="margin-top:10px;">
+              <button type="button" class="primary" id="toolpathRotateGrain90Btn" data-i18n="toolpath.btn.rotateGrain">Rotate Grain 90°</button>
+            </div>
+            <div id="toolpathRotateGrain90Summary" class="message" style="margin-top:8px;">
+              Select a body or face, then rotate grain 90°. Original + LAY_FLAT + Analyze.
+            </div>
+          </div>
+        </div>
+        <div class="card">
           <h3>Edit LAY_FLAT Tags / 修改板材标签</h3>
           <div class="card-body">
             <div class="attr-section-note">
@@ -4310,6 +4359,7 @@
     const overheadState = {
       result: null,
       selectedZoneIndex: 0,
+      selectedZoneIndices: [0],
       dragBoundaryIndex: null,
       dragStartX: 0,
       dragLeftStart: 0,
@@ -4351,6 +4401,7 @@
     const attrOverheadState = {
       result: null,
       selectedZoneIndex: 0,
+      selectedZoneIndices: [0],
       dragBoundaryIndex: null,
       dragStartX: 0,
       dragLeftStart: 0,
@@ -4392,6 +4443,15 @@
 
     function ohNum(name) {
       return generalTallNumberValue(ohId(name));
+    }
+
+    function ohRound1(value) {
+      return Math.round(Number(value) * 10) / 10;
+    }
+
+    function ohFormatMm(value) {
+      const n = ohRound1(value);
+      return Number.isInteger(n) ? String(n) : n.toFixed(1);
     }
 
     function ohState() {
@@ -4522,7 +4582,7 @@
       drawerSettings: { frontPanelThickness: 15, lockStyle: "NONE" },
       flapSettings: { frontPanelThickness: 15, lockStyle: "NONE" },
       middleCabinetSettings: {
-        doorPanelThickness: 15,
+        doorPanelThickness: 16,
         doorClearance: 2,
         doorLockStyle: "RAZOR_ROUNDED",
         lockSideDistance: 30,
@@ -5118,9 +5178,14 @@
 
     function loungeLBounds(state) {
       if (state.lPosition === "LEFT") {
-        return { x0: 0, x1: state.lWidth, y0: 0, y1: state.lDepth };
+        return { x0: 0, x1: state.lWidth, y0: state.mainDepth, y1: state.mainDepth + state.lDepth };
       }
-      return { x0: state.mainWidth - state.lWidth, x1: state.mainWidth, y0: 0, y1: state.lDepth };
+      return {
+        x0: state.mainWidth - state.lWidth,
+        x1: state.mainWidth,
+        y0: state.mainDepth,
+        y1: state.mainDepth + state.lDepth,
+      };
     }
 
     function loungeLVisibleBounds(state) {
@@ -5165,7 +5230,6 @@
       mainDepthInput.value = String(Math.round(lDepth));
       lDepthInput.value = String(Math.round(mainDepth));
       lWidthInput.value = String(Math.round(newLWidth));
-      lPositionInput.value = lPositionInput.value === "LEFT" ? "RIGHT" : "LEFT";
       loungeState.selectedPart = loungeState.selectedPart === "MAIN_SECTION" ? "L_SECTION" : "MAIN_SECTION";
       document.getElementById("statusText").textContent = "Lounge legs swapped: deeper leg is now L Section.";
       return true;
@@ -5175,6 +5239,10 @@
       const warnings = [];
       if (!(state.lWidth < state.mainWidth)) warnings.push(t("lounge.warn.lWidth"));
       if (state.style !== "L_SHAPE") warnings.push(t("lounge.warn.lOnly"));
+      if (state.wheelAvoidanceEnabled) {
+        if (!(state.avoidanceDepth < Math.min(state.mainDepth, state.lDepth))) warnings.push(t("lounge.warn.avoidDepth"));
+        if (!(state.avoidanceHeight < state.height - state.partitionPanelThickness)) warnings.push(t("lounge.warn.avoidHeight"));
+      }
       return warnings;
     }
 
@@ -5189,7 +5257,7 @@
       setHidden("loungeLegsRow", isIShape);
       setHidden("loungeLPositionLabel", isIShape);
       setHidden("loungeParallelCard", !isParallel);
-      setHidden("loungeAvoidanceCard", !((isParallel || isIShape) && state.wheelAvoidanceEnabled));
+      setHidden("loungeAvoidanceCard", !state.wheelAvoidanceEnabled);
       setHidden("loungeMiddleCabinetCard", !isParallel);
       setHidden("loungeMiddleCabinetParams", !state.hasMiddleCabinet);
       setHidden("loungeLFrontAccessLabel", isParallel || isIShape);
@@ -5350,7 +5418,7 @@
             <label>Hole Diameter <input id="loungeMcPropHingeDia" type="number" value="${escapeHtml(mc.hingeCupDiameter)}"></label>
             <label>Hole Depth <input id="loungeMcPropHingeDepth" type="number" value="${escapeHtml(mc.hingeCupDepth)}"></label>
           </div>
-          <div class="message">Locks: Razor Rounded 55 x 15.5 through cut, ${escapeHtml(mc.lockSideDistance)}mm from the inner door edge, 30.5mm below the cabinet top underside.</div>
+          <div class="message">Locks: Razor Rounded 55 x 15.5 through cut, ${escapeHtml(mc.lockSideDistance + 35)}mm from the inner door edge (35mm outboard), 30.5mm below the mid-shelf underside.</div>
           ${warningHtml}`;
         const wire = (id, apply) => {
           const input = document.getElementById(id);
@@ -5431,16 +5499,23 @@
       const mainVisibleBounds = loungeMainVisibleBounds(state);
       const lBounds = loungeLBounds(state);
       const warnings = loungeWarnings(state);
+      const AD = Math.max(0, Number(state.avoidanceDepth) || 0);
+      const AH = Math.max(0, Number(state.avoidanceHeight) || 0);
+      const hasCutout = state.wheelAvoidanceEnabled === true
+        && AD > 0 && AD < Math.min(state.mainDepth, state.lDepth)
+        && AH > 0 && AH < panelH;
       const panels = [];
       const openings = [];
       const lids = [];
       const pushPanel = (panel) => panels.push({ thickness: ppt, material: loungeState.material, ...panel });
-      const lSupportOuter = (length, profileHeight) => {
-        const safeLength = Math.max(0, Number(length) || 0);
-        const safeHeight = Math.max(0, Number(profileHeight) || 0);
-        const returnDepth = Math.min(100, safeLength);
-        const topDropZ = Math.max(0, safeHeight - 100);
-        return [[0, 0], [0, safeHeight], [safeLength, safeHeight], [safeLength, topDropZ], [returnDepth, topDropZ], [returnDepth, 0], [0, 0]];
+      const sideOuter = (sideDepth, cut) => {
+        if (cut === "rear" && hasCutout) {
+          return [[AD, 0], [sideDepth, 0], [sideDepth, panelH], [0, panelH], [0, AH], [AD, AH], [AD, 0]];
+        }
+        if (cut === "front" && hasCutout) {
+          return [[0, 0], [sideDepth - AD, 0], [sideDepth - AD, AH], [sideDepth, AH], [sideDepth, panelH], [0, panelH], [0, 0]];
+        }
+        return [[0, 0], [sideDepth, 0], [sideDepth, panelH], [0, panelH], [0, 0]];
       };
       const addTop = (id, name, width, depth, sourceBounds) => {
         const panel = {
@@ -5494,125 +5569,52 @@
         }
         pushPanel(panel);
       };
-      pushPanel({
-        id: "main_front",
-        name: "Main Front",
-        kind: "front_panel",
-        profilePlane: "XZ",
-        width: mainVisibleBounds.x1 - mainVisibleBounds.x0,
-        height: panelH,
-        depth: ppt,
-        placement: {
-          x0: mainVisibleBounds.x0,
-          x1: mainVisibleBounds.x1,
-          y0: Math.max(0, state.mainDepth - ppt),
-          y1: state.mainDepth,
-          z0: 0,
-          z1: panelH,
-        },
-        outer: [[0, 0], [mainVisibleBounds.x1 - mainVisibleBounds.x0, 0], [mainVisibleBounds.x1 - mainVisibleBounds.x0, panelH], [0, panelH], [0, 0]],
-      });
-      addTop("main_top", "Main Top", mainVisibleBounds.x1 - mainVisibleBounds.x0, mainVisibleBounds.y1 - mainVisibleBounds.y0, mainVisibleBounds);
-      pushPanel({
-        id: "main_left_l_piece",
-        name: "Main Left L Piece",
-        kind: "l_support_profile",
-        profilePlane: "YZ",
-        length: Math.max(0, state.mainDepth - ppt),
-        verticalLegWidth: 100,
-        horizontalLegWidth: 100,
-        thickness: ppt,
-        placement: {
-          x0: mainVisibleBounds.x0,
-          x1: mainVisibleBounds.x0 + ppt,
-          y0: ppt,
-          y1: state.mainDepth,
-          z0: 0,
-          z1: panelH,
-        },
-        outer: lSupportOuter(state.mainDepth - ppt, panelH),
-      });
-      pushPanel({
-        id: "main_right_l_piece",
-        name: "Main Right L Piece",
-        kind: "l_support_profile",
-        profilePlane: "YZ",
-        length: Math.max(0, state.mainDepth - ppt),
-        verticalLegWidth: 100,
-        horizontalLegWidth: 100,
-        thickness: ppt,
-        mirrored: true,
-        placement: {
-          x0: mainVisibleBounds.x1 - ppt,
-          x1: mainVisibleBounds.x1,
-          y0: ppt,
-          y1: state.mainDepth,
-          z0: 0,
-          z1: panelH,
-        },
-        outer: lSupportOuter(state.mainDepth - ppt, panelH),
-      });
-      pushPanel({
-        id: "l_front",
-        name: "L Front",
-        kind: "front_panel",
-        profilePlane: "XZ",
-        width: Math.max(0, state.lWidth - ppt),
-        height: panelH,
-        depth: ppt,
-        placement: {
-          x0: (state.lPosition === "LEFT" ? lBounds.x0 + ppt : lBounds.x0) + ppt,
-          x1: (state.lPosition === "LEFT" ? lBounds.x1 : lBounds.x1 - ppt) + ppt,
-          y0: Math.max(0, state.lDepth - ppt),
-          y1: state.lDepth,
-          z0: 0,
-          z1: panelH,
-        },
-        outer: [[0, 0], [Math.max(0, state.lWidth - ppt), 0], [Math.max(0, state.lWidth - ppt), panelH], [0, panelH], [0, 0]],
-        note: "Width reduced by one PPT for future drawer/flap access logic.",
-      });
-      const lSideX0 = state.lPosition === "LEFT" ? lBounds.x0 : lBounds.x1 - ppt;
-      const lSideX1 = state.lPosition === "LEFT" ? lBounds.x0 + ppt : lBounds.x1;
-      const lSideShift = Math.max(0, state.lWidth - ppt);
-      pushPanel({
-        id: "l_side",
-        name: "L Side",
-        kind: "side_panel",
-        profilePlane: "YZ",
-        width: state.lDepth,
-        height: panelH,
-        depth: ppt,
-        placement: {
-          x0: lSideX0 - lSideShift,
-          x1: lSideX1 - lSideShift,
-          y0: 0,
-          y1: state.lDepth,
-          z0: 0,
-          z1: panelH,
-        },
-        outer: [[0, 0], [state.lDepth, 0], [state.lDepth, panelH], [0, panelH], [0, 0]],
-      });
-      pushPanel({
-        id: "l_side_strip",
-        name: "L Side Strip",
-        kind: "side_panel",
-        profilePlane: "YZ",
-        width: state.lDepth,
-        height: Math.min(100, panelH),
-        depth: ppt,
-        placement: {
-          x0: lSideX0,
-          x1: lSideX1,
-          y0: 0,
-          y1: Math.max(0, state.lDepth - ppt),
-          z0: Math.max(0, panelH - 100),
-          z1: panelH,
-        },
-        outer: [[0, 0], [Math.max(0, state.lDepth - ppt), 0], [Math.max(0, state.lDepth - ppt), Math.min(100, panelH)], [0, Math.min(100, panelH)], [0, 0]],
-      });
-      addTop("l_top", "L Top", state.lWidth, state.lDepth, lBounds);
+      const addBox = (prefix, label, bounds, innerSide, cutEnd) => {
+        const W = Math.max(0, bounds.x1 - bounds.x0);
+        const D = Math.max(0, bounds.y1 - bounds.y0);
+        const sideDepth = Math.max(0, D - ppt);
+        const leftCut = innerSide === "left" ? cutEnd : "none";
+        const rightCut = innerSide === "right" ? cutEnd : "none";
+        pushPanel({
+          id: `${prefix}_front`,
+          name: `${label} Front`,
+          kind: "front_panel",
+          profilePlane: "XZ",
+          width: W,
+          height: panelH,
+          depth: ppt,
+          placement: { x0: bounds.x0, x1: bounds.x1, y0: Math.max(bounds.y0, bounds.y1 - ppt), y1: bounds.y1, z0: 0, z1: panelH },
+          outer: [[0, 0], [W, 0], [W, panelH], [0, panelH], [0, 0]],
+        });
+        pushPanel({
+          id: prefix === "l" ? (innerSide === "left" ? "l_inner_side" : "l_side") : "main_left_side",
+          name: `${label} Left Side`,
+          kind: "side_panel",
+          profilePlane: "YZ",
+          width: sideDepth,
+          height: panelH,
+          depth: ppt,
+          placement: { x0: bounds.x0, x1: bounds.x0 + ppt, y0: bounds.y0, y1: bounds.y0 + sideDepth, z0: 0, z1: panelH },
+          outer: sideOuter(sideDepth, leftCut),
+        });
+        pushPanel({
+          id: prefix === "l" ? (innerSide === "right" ? "l_inner_side" : "l_side") : `${prefix}_right_side`,
+          name: prefix === "l" && innerSide !== "right" ? `${label} Side` : `${label} Right Side`,
+          kind: "side_panel",
+          profilePlane: "YZ",
+          width: sideDepth,
+          height: panelH,
+          depth: ppt,
+          placement: { x0: bounds.x1 - ppt, x1: bounds.x1, y0: bounds.y0, y1: bounds.y0 + sideDepth, z0: 0, z1: panelH },
+          outer: sideOuter(sideDepth, rightCut),
+        });
+        addTop(`${prefix}_top`, `${label} Top`, W, D, bounds);
+      };
+      const cut = hasCutout ? true : false;
+      addBox("main", "Main", mainVisibleBounds, state.lPosition === "LEFT" ? "left" : "right", cut ? "front" : "none");
+      addBox("l", "L", lBounds, state.lPosition === "LEFT" ? "right" : "left", cut ? "rear" : "none");
       return {
-        meta: { module: "lounge", style: state.style, phase: "ui_geometry_svg_only" },
+        meta: { module: "lounge", style: state.style, phase: "l_shape_two_box_v1" },
         state,
         footprint: {
           main: mainBounds,
@@ -5913,6 +5915,11 @@
       fusionSend("lounge.generateGeometry", { params });
     }
 
+    function loungeAddAsNewCabinet() {
+      const input = document.getElementById("loungeAddAsNewCabinet");
+      return input ? input.checked !== false : true;
+    }
+
     function loungeCreateFlatBodies() {
       if (!loungeState.geometryResult) {
         loungeGenerateGeometry();
@@ -5921,7 +5928,7 @@
       }
       const runLabel = `LOUNGE_FLAT_${new Date().toISOString().replace(/[:.]/g, "-")}`;
       document.getElementById("statusText").textContent = "Creating Lounge flat bodies...";
-      fusionSend("lounge.createFlatBodies", { result: loungeState.geometryResult, runLabel, ...generatorNamingPayload("lounge") });
+      fusionSend("lounge.createFlatBodies", { result: loungeState.geometryResult, runLabel, addAsNewCabinet: loungeAddAsNewCabinet(), ...generatorNamingPayload("lounge") });
     }
 
     function loungeCreateAssemblyBodies() {
@@ -5932,7 +5939,7 @@
       }
       const runLabel = `LOUNGE_ASSEMBLY_${new Date().toISOString().replace(/[:.]/g, "-")}`;
       document.getElementById("statusText").textContent = "Creating Lounge assembly bodies...";
-      fusionSend("lounge.createAssemblyBodies", { result: loungeState.geometryResult, runLabel, ...generatorNamingPayload("lounge") });
+      fusionSend("lounge.createAssemblyBodies", { result: loungeState.geometryResult, runLabel, addAsNewCabinet: loungeAddAsNewCabinet(), ...generatorNamingPayload("lounge") });
     }
 
     function renderLoungeUi() {
@@ -5962,7 +5969,7 @@
         lVisible: loungeLVisibleBounds(state),
       };
       const maxX = Math.max(state.mainWidth, bounds.l.x1);
-      const maxY = Math.max(state.mainDepth, state.lDepth);
+      const maxY = Math.max(state.mainDepth + state.lDepth, bounds.l.y1);
       const width = 860;
       const height = 560;
       const pad = 58;
@@ -5982,6 +5989,13 @@
       ];
       loungeRenderOpening(svgParts, bounds.mainVisible, "MAIN", scale, originX, originY, state);
       loungeRenderOpening(svgParts, bounds.lVisible, "L", scale, originX, originY, state);
+      const AD = Math.max(0, state.avoidanceDepth);
+      if (state.wheelAvoidanceEnabled && AD > 0) {
+        const cornerX = state.lPosition === "LEFT" ? bounds.lVisible.x1 - Math.min(AD, state.lWidth) : bounds.lVisible.x0;
+        const cornerY = state.mainDepth - Math.min(AD, state.mainDepth);
+        svgParts.push(`<rect x="${x(cornerX)}" y="${y(cornerY)}" width="${Math.min(AD, state.lWidth) * scale}" height="${(Math.min(AD, state.mainDepth) + Math.min(AD, state.lDepth)) * scale}" fill="#d9c49a" opacity="0.35" stroke="#8a6d3b" stroke-dasharray="4 4" pointer-events="none"></rect>`);
+        svgParts.push(`<text x="${x(cornerX + Math.min(AD, state.lWidth) / 2)}" y="${y(state.mainDepth)}" text-anchor="middle" font-size="11" fill="#6b4f1d" pointer-events="none">${tf("lounge.avoidCover", { w: Math.min(AD, state.lWidth), d: AD })}</text>`);
+      }
       svgParts.push(`<line x1="${x(0)}" y1="${originY - 20}" x2="${x(state.mainWidth)}" y2="${originY - 20}" stroke="#6b7280"></line>`);
       svgParts.push(`<text x="${x(state.mainWidth / 2)}" y="${originY - 28}" text-anchor="middle" font-size="13" fill="#111827">${state.mainWidth} mm</text>`);
       svgParts.push(`<line x1="${originX - 20}" y1="${y(0)}" x2="${originX - 20}" y2="${y(state.mainDepth)}" stroke="#6b7280"></line>`);
@@ -6024,6 +6038,7 @@
         t("lounge.sum.radius"),
         t("lounge.sum.lidClear"),
         t("lounge.sum.hole"),
+        state.wheelAvoidanceEnabled ? tf("lounge.sum.avoidOn", { d: state.avoidanceDepth, h: state.avoidanceHeight }) : t("lounge.sum.avoidOff"),
       ].map((text) => `<span>${escapeHtml(text)}</span>`).join("");
       const selectedLabel = loungeState.selectedPart === "MAIN_SECTION" ? t("lounge.part.main") : t("lounge.part.l");
       const access = state.lFrontAccess;
@@ -6405,21 +6420,83 @@
       const cabinetWidth = Math.max(1, ohNum("CabinetWidth"));
       const total = ohState().zones.reduce((sum, zone) => sum + (Number(zone.width) || 0), 0);
       if (total <= 0) {
-        const even = cabinetWidth / ohState().zones.length;
-        ohState().zones.forEach((zone) => { zone.width = even; });
+        const even = ohRound1(cabinetWidth / ohState().zones.length);
+        let allocated = 0;
+        ohState().zones.forEach((zone, index) => {
+          zone.width = index === ohState().zones.length - 1
+            ? ohRound1(cabinetWidth - allocated)
+            : even;
+          allocated = ohRound1(allocated + zone.width);
+        });
         return;
       }
-      if (Math.abs(total - cabinetWidth) < 0.001) return;
+      if (Math.abs(total - cabinetWidth) < 0.05) return;
       const scale = cabinetWidth / total;
       let allocated = 0;
       ohState().zones.forEach((zone, index) => {
         if (index === ohState().zones.length - 1) {
-          zone.width = Math.max(120, cabinetWidth - allocated);
+          zone.width = Math.max(120, ohRound1(cabinetWidth - allocated));
         } else {
-          zone.width = Math.max(120, Math.round((Number(zone.width) || 0) * scale));
-          allocated += zone.width;
+          zone.width = Math.max(120, ohRound1((Number(zone.width) || 0) * scale));
+          allocated = ohRound1(allocated + zone.width);
         }
       });
+    }
+
+    function overheadSelectedZoneIndices() {
+      const count = ohState().zones.length;
+      const primary = Math.min(Math.max(0, Number(ohState().selectedZoneIndex) || 0), Math.max(0, count - 1));
+      const raw = Array.isArray(ohState().selectedZoneIndices) ? ohState().selectedZoneIndices : [primary];
+      const indices = [...new Set(raw.map(Number).filter((index) => Number.isInteger(index) && index >= 0 && index < count))];
+      if (!indices.includes(primary)) indices.unshift(primary);
+      indices.sort((a, b) => a - b);
+      ohState().selectedZoneIndex = primary;
+      ohState().selectedZoneIndices = indices.length ? indices : [primary];
+      return ohState().selectedZoneIndices;
+    }
+
+    function selectOverheadZone(index, additive) {
+      const count = ohState().zones.length;
+      const next = Math.min(Math.max(0, Number(index) || 0), Math.max(0, count - 1));
+      if (!additive) {
+        ohState().selectedZoneIndex = next;
+        ohState().selectedZoneIndices = [next];
+        return;
+      }
+      const current = new Set(overheadSelectedZoneIndices());
+      if (current.has(next) && current.size > 1) {
+        current.delete(next);
+        ohState().selectedZoneIndices = [...current].sort((a, b) => a - b);
+        if (!current.has(ohState().selectedZoneIndex)) {
+          ohState().selectedZoneIndex = ohState().selectedZoneIndices[0];
+        }
+        return;
+      }
+      current.add(next);
+      ohState().selectedZoneIndex = next;
+      ohState().selectedZoneIndices = [...current].sort((a, b) => a - b);
+    }
+
+    function averageSelectedOverheadZones() {
+      const indices = overheadSelectedZoneIndices();
+      if (indices.length < 2) {
+        setOverheadStatusText(ohBench(), t("oh.avgSelected.needTwo"));
+        return;
+      }
+      const total = ohRound1(indices.reduce((sum, index) => sum + (Number(ohState().zones[index]?.width) || 0), 0));
+      const even = ohRound1(total / indices.length);
+      if (even < 120) {
+        setOverheadStatusText(ohBench(), tf("oh.avgSelected.tooNarrow", { width: even }));
+        return;
+      }
+      let allocated = 0;
+      indices.forEach((index, i) => {
+        const width = i === indices.length - 1 ? ohRound1(total - allocated) : even;
+        ohState().zones[index].width = width;
+        allocated = ohRound1(allocated + width);
+      });
+      renderOverheadUi(ohState().result);
+      setOverheadStatusText(ohBench(), tf("oh.avgSelected.ok", { n: indices.length, width: even }));
     }
 
     function overheadInternalDividerCenterlines() {
@@ -8048,7 +8125,7 @@
         const openingX1 = rightDivider ? Number(rightDivider.x0) : Number(panel.x1) + clearance;
         const r = rect(openingX0, 0, openingX1, ch - tch);
         const dimY = oy + bodyH + 20 + (index % 2) * 15;
-        const selected = index === ohState().selectedZoneIndex;
+        const selected = overheadSelectedZoneIndices().includes(index);
         return `
           <rect x="${fmt(r.x)}" y="${fmt(r.y)}" width="${fmt(r.w)}" height="${fmt(r.h)}" fill="${overheadZoneColors(panel.boardType).bg}" stroke="${selected ? "#0f6bff" : "#9db6d5"}" stroke-width="${selected ? 2 : 1}"></rect>
           <line x1="${fmt(r.x)}" y1="${fmt(dimY)}" x2="${fmt(r.x + r.w)}" y2="${fmt(dimY)}" stroke="#0f6bff"></line>
@@ -8273,21 +8350,25 @@
       const cumulativeRow = ohEl("ZoneCumulativeRow");
       const cabinetWidth = Math.max(1, ohNum("CabinetWidth"));
       if (!strip || !widthRow || !cumulativeRow) return;
+      const selectedIndices = new Set(overheadSelectedZoneIndices());
+      const avgBtn = ohEl("AvgSelectedZonesBtn");
+      if (avgBtn) avgBtn.disabled = selectedIndices.size < 2;
       strip.innerHTML = bounds.map(({ zone, index, width }) => `
-        <div class="oh-zone ${escapeHtml(zone.type)} ${index === ohState().selectedZoneIndex ? "selected" : ""}" data-oh-zone="${index}" style="width:${(width / cabinetWidth * 100).toFixed(4)}%">
+        <div class="oh-zone ${escapeHtml(zone.type)} ${selectedIndices.has(index) ? "selected" : ""}" data-oh-zone="${index}" style="width:${(width / cabinetWidth * 100).toFixed(4)}%">
           <div>
             <div class="oh-zone-title">${escapeHtml(tf("common.zoneN", { n: index + 1 }))}</div>
             <div>${escapeHtml(overheadZoneLabel(zone.type))}</div>
-            <div>${Math.round(width)} mm</div>
+            <div>${ohFormatMm(width)} mm</div>
           </div>
           ${index < bounds.length - 1 ? `<div class="oh-zone-boundary" data-oh-boundary="${index}" title="${escapeHtml(t("common.dragBoundary"))}"></div>` : ""}
         </div>`).join("");
-      widthRow.innerHTML = bounds.map(({ width }) => `<span style="width:${(width / cabinetWidth * 100).toFixed(4)}%">${Math.round(width)}</span>`).join("");
-      cumulativeRow.innerHTML = bounds.map(({ x0, x1, width }, index) => `<span style="width:${(width / cabinetWidth * 100).toFixed(4)}%">${index === 0 ? `${Math.round(x0)} | ` : ""}${Math.round(x1)}</span>`).join("");
+      widthRow.innerHTML = bounds.map(({ width }) => `<span style="width:${(width / cabinetWidth * 100).toFixed(4)}%">${ohFormatMm(width)}</span>`).join("");
+      cumulativeRow.innerHTML = bounds.map(({ x0, x1, width }, index) => `<span style="width:${(width / cabinetWidth * 100).toFixed(4)}%">${index === 0 ? `${ohFormatMm(x0)} | ` : ""}${ohFormatMm(x1)}</span>`).join("");
       strip.querySelectorAll("[data-oh-zone]").forEach((el) => {
-        el.addEventListener("click", () => {
+        el.addEventListener("click", (event) => {
+          if (event.target.closest("[data-oh-boundary]")) return;
           runOverheadBench(bench, () => {
-            ohState().selectedZoneIndex = Number(el.dataset.ohZone);
+            selectOverheadZone(Number(el.dataset.ohZone), event.ctrlKey || event.metaKey);
             renderOverheadUi(ohState().result);
           });
         });
@@ -8342,7 +8423,7 @@
         const py = oy + topClearanceHeight * scale;
         const pw = Math.max(zoneWidth * scale, 1);
         const ph = innerHeight * scale;
-        const selected = index === ohState().selectedZoneIndex;
+        const selected = overheadSelectedZoneIndices().includes(index);
         const panelInset = clearance * scale;
         const internalWidth = Math.max(0, zoneWidth - sideThickness - (index === bounds.length - 1 ? sideThickness : 0));
         const internalX0 = px + (index === 0 ? sideThickness * scale : 0);
@@ -8425,8 +8506,8 @@
         const pairTotal = ohState().dragLeftStart + ohState().dragRightStart;
         const nextLeft = Math.min(Math.max(ohState().dragLeftStart + deltaMm, minWidth), pairTotal - minWidth);
         const nextRight = pairTotal - nextLeft;
-        ohState().zones[index].width = Math.round(nextLeft);
-        ohState().zones[index + 1].width = Math.round(nextRight);
+        ohState().zones[index].width = ohRound1(nextLeft);
+        ohState().zones[index + 1].width = ohRound1(nextRight);
         renderOverheadUi(ohState().result);
         setOverheadStatusText(overheadDragBench, "Overhead zone boundary changed");
         event.preventDefault();
@@ -8461,7 +8542,10 @@
       badge.style.background = colors.bg;
       badge.style.border = `1px solid ${colors.border}`;
       badge.style.color = colors.text;
-      badge.textContent = tf("common.selectedZone", { n: index + 1, type: overheadZoneLabel(zone.type) });
+      const selectedCount = overheadSelectedZoneIndices().length;
+      badge.textContent = selectedCount > 1
+        ? tf("oh.zones.multiSelected", { n: selectedCount, current: index + 1, type: overheadZoneLabel(zone.type) })
+        : tf("common.selectedZone", { n: index + 1, type: overheadZoneLabel(zone.type) });
       markI18nFilled(badge);
       const zoneType = ohEl("ZoneType");
       const zoneWidth = ohEl("ZoneWidth");
@@ -8470,9 +8554,9 @@
       const hingeSettings = ohEl("HingeSettings");
       const rangehoodSettings = ohEl("RangehoodSettings");
       if (zoneType) zoneType.value = zone.type;
-      if (zoneWidth) zoneWidth.value = String(Math.round(width));
-      if (zoneX0) zoneX0.value = String(Math.round(x0));
-      if (zoneX1) zoneX1.value = String(Math.round(x1));
+      if (zoneWidth) zoneWidth.value = String(ohRound1(width));
+      if (zoneX0) zoneX0.value = String(ohRound1(x0));
+      if (zoneX1) zoneX1.value = String(ohRound1(x1));
       if (hingeSettings) hingeSettings.open = zone.type === "up_flap" || zone.type === "rangehood_flap";
       if (rangehoodSettings) {
         rangehoodSettings.hidden = zone.type !== "rangehood_flap";
@@ -8506,12 +8590,12 @@
           const zone = ohState().zones[index];
           if (!zone) return;
           const oldWidth = Number(zone.width) || 0;
-          const nextWidth = Math.max(120, Number(event.target.value) || oldWidth);
-          const delta = nextWidth - oldWidth;
+          const nextWidth = Math.max(120, ohRound1(Number(event.target.value) || oldWidth));
+          const delta = ohRound1(nextWidth - oldWidth);
           const neighbor = ohState().zones[index + 1] || ohState().zones[index - 1];
           if (neighbor && (Number(neighbor.width) || 0) - delta >= 120) {
-            zone.width = Math.round(nextWidth);
-            neighbor.width = Math.round((Number(neighbor.width) || 0) - delta);
+            zone.width = nextWidth;
+            neighbor.width = ohRound1((Number(neighbor.width) || 0) - delta);
           }
           renderOverheadUi(ohState().result);
         });
@@ -8552,6 +8636,7 @@
         width: splitWidth,
       });
       ohState().selectedZoneIndex += 1;
+      ohState().selectedZoneIndices = [ohState().selectedZoneIndex];
       renderOverheadUi(ohState().result);
     }
 
@@ -8560,8 +8645,9 @@
       const index = ohState().selectedZoneIndex;
       const removed = ohState().zones.splice(index, 1)[0];
       const receiver = ohState().zones[Math.max(0, index - 1)] || ohState().zones[0];
-      receiver.width += Number(removed.width) || 0;
+      receiver.width = ohRound1((Number(receiver.width) || 0) + (Number(removed.width) || 0));
       ohState().selectedZoneIndex = Math.min(index, ohState().zones.length - 1);
+      ohState().selectedZoneIndices = [ohState().selectedZoneIndex];
       renderOverheadUi(ohState().result);
     }
 
@@ -9145,13 +9231,13 @@
               </select>
             </label>
             <label>${t("kitchen.side.bchNotch")}
-              <select data-kitchen-side-option="${dataSide}:bchNotchEnabled" ${frontDisabled ? "disabled" : ""}>
+              <select data-kitchen-side-option="${dataSide}:bchNotchEnabled">
                 <option value="true" ${options.bchNotchEnabled !== false ? "selected" : ""}>${t("kitchen.enabled")}</option>
                 <option value="false" ${options.bchNotchEnabled === false ? "selected" : ""}>${t("kitchen.disabled")}</option>
               </select>
             </label>
             <label>${t("kitchen.side.extend")}
-              <select data-kitchen-side-option="${dataSide}:extendT2T3B4ToOuterFace" ${frontDisabled ? "disabled" : ""}>
+              <select data-kitchen-side-option="${dataSide}:extendT2T3B4ToOuterFace">
                 <option value="true" ${options.extendT2T3B4ToOuterFace !== false ? "selected" : ""}>${t("kitchen.enabled")}</option>
                 <option value="false" ${options.extendT2T3B4ToOuterFace === false ? "selected" : ""}>${t("kitchen.disabled")}</option>
               </select>
@@ -9490,14 +9576,16 @@
 
     function addKitchenColumn() {
       const columnType = "drawer";
-      const width = 400;
+      const targetLength = kitchenRound1(Number(kitchenState.globalSettings.length) || kitchenTotalColumnWidth());
+      const share = Math.max(1, kitchenRound1(targetLength / (kitchenState.columns.length + 1)));
       kitchenState.columns.push({
         id: kitchenId("k-col"),
-        width,
+        width: share,
         columnType,
         zones: createKitchenDefaultZones(columnType),
       });
-      kitchenState.globalSettings.length = kitchenRound1(kitchenState.columns.reduce((sum, column) => sum + (Number(column.width) || 0), 0));
+      kitchenScaleColumnsToLength(targetLength, kitchenTotalColumnWidth());
+      kitchenState.globalSettings.length = targetLength;
       kitchenSelect({ type: "column", columnId: kitchenState.columns[kitchenState.columns.length - 1].id });
     }
 
@@ -9517,6 +9605,7 @@
     function duplicateKitchenColumn(columnId = kitchenState.selection.columnId) {
       const index = kitchenColumnIndex(columnId);
       if (index < 0) return;
+      const targetLength = kitchenRound1(Number(kitchenState.globalSettings.length) || kitchenTotalColumnWidth());
       const source = kitchenState.columns[index];
       const copy = {
         id: kitchenId("k-col"),
@@ -9525,7 +9614,8 @@
         zones: source.zones.map((zone) => ({ ...zone, id: kitchenId("k-zone") })),
       };
       kitchenState.columns.splice(index + 1, 0, copy);
-      kitchenState.globalSettings.length = kitchenRound1(kitchenState.globalSettings.length + (Number(copy.width) || 0));
+      kitchenScaleColumnsToLength(targetLength, kitchenTotalColumnWidth());
+      kitchenState.globalSettings.length = targetLength;
       kitchenSelect({ type: "column", columnId: copy.id });
     }
 
@@ -10015,12 +10105,36 @@
 
     // ---- Generic multi-preset library (dropdown + Load / Save New / Update / Delete) ----
     // Fusion palette localStorage is wiped when Fusion closes / palette is recreated.
-    // Source of truth is Python → %APPDATA%/UnifiedCabinet/presets/<module>.json
+    // Source of truth is Python → plugin presets/user/<module>.json (+ AppData backup).
     const presetManagersByModule = {};
+
+    function mergePresetLibraries(diskLibrary, localLibrary, moduleKey) {
+      const byId = new Map();
+      let activeId = "";
+      let moduleName = moduleKey || "";
+      [diskLibrary, localLibrary].forEach((payload) => {
+        if (!payload || !Array.isArray(payload.items)) return;
+        if (payload.module) moduleName = payload.module;
+        if (payload.activeId) activeId = payload.activeId;
+        payload.items.forEach((item) => {
+          if (!item || !item.id || !item.name) return;
+          const prev = byId.get(item.id);
+          if (!prev || String(item.savedAt || "") >= String(prev.savedAt || "")) {
+            byId.set(item.id, item);
+          }
+        });
+      });
+      const items = Array.from(byId.values());
+      if (activeId && !items.some((item) => item.id === activeId)) {
+        activeId = items[0]?.id || "";
+      }
+      return { version: 2, module: moduleName, activeId, items };
+    }
 
     function createPresetManager(config) {
       let memoryLibrary = null;
       let diskHydrated = false;
+      let pendingPersist = false;
 
       function status(text) {
         document.getElementById("statusText").textContent = text;
@@ -10057,6 +10171,10 @@
           localStorage.setItem(config.storageKey, JSON.stringify(library));
         } catch (error) {
           // localStorage is best-effort cache only; disk save is authoritative.
+        }
+        if (!diskHydrated) {
+          pendingPersist = true;
+          return true;
         }
         persistToDisk(library);
         return true;
@@ -10111,24 +10229,21 @@
         const incoming = library && library.version === 2 && Array.isArray(library.items)
           ? library
           : emptyLibrary();
+        const local = memoryLibrary || readLocalStorageLibrary();
+        const merged = mergePresetLibraries(incoming, local, config.moduleKey);
+        const hadLocalExtras = pendingPersist || (
+          local
+          && (local.items || []).some((item) => !(incoming.items || []).some((diskItem) => diskItem.id === item.id))
+        );
         diskHydrated = true;
-        const local = readLocalStorageLibrary();
-        // Prefer disk when it has items. If disk empty but local still has items
-        // (first run after this fix), migrate local → disk.
-        if ((incoming.items || []).length > 0 || exists) {
-          memoryLibrary = incoming;
-          try {
-            localStorage.setItem(config.storageKey, JSON.stringify(incoming));
-          } catch (error) { /* ignore */ }
-          renderSelect(memoryLibrary);
-          return;
+        pendingPersist = false;
+        memoryLibrary = merged;
+        try {
+          localStorage.setItem(config.storageKey, JSON.stringify(merged));
+        } catch (error) { /* ignore */ }
+        if (hadLocalExtras || (!exists && (merged.items || []).length > 0)) {
+          persistToDisk(merged);
         }
-        if (local && (local.items || []).length > 0) {
-          writeLibrary(local);
-          renderSelect(local);
-          return;
-        }
-        memoryLibrary = incoming;
         renderSelect(memoryLibrary);
       }
 
@@ -10283,8 +10398,16 @@
             notifyActive(item);
           }
         });
+        const select = el("Select");
+        const actions = select && select.closest(".actions");
+        if (actions && !actions.querySelector(".preset-disk-hint")) {
+          const hint = document.createElement("div");
+          hint.className = "message preset-disk-hint";
+          hint.style.cssText = "flex-basis:100%;margin:0;";
+          hint.textContent = t("common.presetDiskHint");
+          actions.appendChild(hint);
+        }
         renderSelect();
-        requestDiskHydrate();
       }
 
       const api = {
@@ -10307,7 +10430,7 @@
       return api;
     }
 
-    function handlePresetLibraryResult(parsed) {
+    function applyOnePresetLibraryResult(parsed) {
       if (!parsed || !parsed.ok) {
         const errs = (parsed && parsed.errors) || ["preset library request failed"];
         document.getElementById("statusText").textContent = String(errs[0] || "preset library failed");
@@ -10315,9 +10438,49 @@
       }
       const manager = presetManagersByModule[parsed.moduleKey];
       if (!manager) return;
-      if (parsed.action === "presets.loadLibrary" || parsed.library) {
+      if (parsed.library) {
         manager.applyDiskLibrary(parsed.library, parsed.exists === true);
       }
+      if (parsed.action === "presets.saveLibrary" && parsed.path) {
+        const n = parsed.itemCount || (parsed.library && parsed.library.items ? parsed.library.items.length : 0);
+        document.getElementById("statusText").textContent =
+          `${parsed.moduleKey} presets saved to ${parsed.path} (${n})`;
+      }
+    }
+
+    function handlePresetLibraryResult(parsed) {
+      if (parsed && Array.isArray(parsed.libraries)) {
+        parsed.libraries.forEach((entry) => applyOnePresetLibraryResult(entry));
+        const count = Number(parsed.itemCount) || parsed.libraries.reduce((sum, entry) => {
+          const items = entry && entry.library && Array.isArray(entry.library.items) ? entry.library.items.length : 0;
+          return sum + items;
+        }, 0);
+        const firstPath = (parsed.paths && parsed.paths[0])
+          || (parsed.libraries.find((entry) => entry && entry.path) || {}).path;
+        if (count > 0) {
+          document.getElementById("statusText").textContent = firstPath
+            ? `Presets loaded from ${firstPath} (${count} saved)`
+            : `Presets loaded (${count} saved)`;
+        }
+        return;
+      }
+      applyOnePresetLibraryResult(parsed);
+    }
+
+    function requestAllPresetLibraries() {
+      fusionSend("presets.loadAllLibraries", {
+        moduleKeys: Object.keys(presetManagersByModule),
+      });
+    }
+
+    function requestAllPresetLibrariesUntilHydrated() {
+      requestAllPresetLibraries();
+      const retry = () => {
+        const pending = Object.values(presetManagersByModule).some((manager) => manager && !manager.isDiskHydrated());
+        if (pending) requestAllPresetLibraries();
+      };
+      setTimeout(retry, 800);
+      setTimeout(retry, 3000);
     }
 
     function gtSyncPresetTextarea(data) {
@@ -10392,6 +10555,7 @@
               };
             }
             ohState().selectedZoneIndex = Math.max(0, Math.min(ohState().zones.length - 1, Number(preset.selectedZoneIndex) || 0));
+            ohState().selectedZoneIndices = [ohState().selectedZoneIndex];
             ohState().result = null;
             renderOverheadUi(null);
             overheadGenerate(bench);
@@ -11344,6 +11508,11 @@
       renderUohUi();
     }
 
+    function ohAddAsNewCabinet() {
+      const input = ohEl("AddAsNewCabinet");
+      return input ? input.checked !== false : true;
+    }
+
     function overheadCreateFusionRoughBodies(bench = ohBench()) {
       return runOverheadBench(bench, () => {
         const params = buildOverheadParams();
@@ -11354,6 +11523,7 @@
           result: ohState().result || undefined,
           params,
           caseName: runLabel,
+          addAsNewCabinet: ohAddAsNewCabinet(),
           ...generatorNamingPayload(ohId("")),
           clientBenchId: bench.benchId,
         });
@@ -11481,13 +11651,40 @@
       }
     }
 
+    const fusionSendQueue = [];
+    let fusionSendFlushTimer = null;
+
+    function fusionBridgeReady() {
+      return Boolean(window.adsk && window.adsk.fusionSendData);
+    }
+
+    function flushFusionSendQueue() {
+      if (!fusionBridgeReady()) return false;
+      while (fusionSendQueue.length) {
+        const item = fusionSendQueue.shift();
+        window.adsk.fusionSendData(item.action, item.data);
+      }
+      return true;
+    }
+
+    function ensureFusionSendFlush() {
+      if (flushFusionSendQueue()) return;
+      if (fusionSendFlushTimer) return;
+      fusionSendFlushTimer = setInterval(() => {
+        if (!flushFusionSendQueue()) return;
+        clearInterval(fusionSendFlushTimer);
+        fusionSendFlushTimer = null;
+      }, 250);
+    }
+
     function fusionSend(action, payload) {
       const data = JSON.stringify(payload || {});
-      if (window.adsk && window.adsk.fusionSendData) {
+      if (fusionBridgeReady()) {
         window.adsk.fusionSendData(action, data);
-      } else {
-        console.log("fusionSendData", action, payload);
+        return;
       }
+      fusionSendQueue.push({ action, data });
+      ensureFusionSendFlush();
     }
 
     function calculate() {
@@ -11912,6 +12109,7 @@
     ohPresetManager.bind();
     document.getElementById("ohAddZoneBtn").addEventListener("click", () => runOverheadBench(overheadMainBench, addOverheadZone));
     document.getElementById("ohDeleteZoneBtn").addEventListener("click", () => runOverheadBench(overheadMainBench, deleteOverheadZone));
+    document.getElementById("ohAvgSelectedZonesBtn")?.addEventListener("click", () => runOverheadBench(overheadMainBench, averageSelectedOverheadZones));
     document.getElementById("ohStyle").addEventListener("change", () => syncOverheadStyle1LedVisibility(overheadMainBench));
     syncOverheadStyle1LedVisibility(overheadMainBench);
     document.getElementById("uohGenerateBtn").addEventListener("click", uohGenerate);
@@ -11934,6 +12132,7 @@
     aohPresetManager.bind();
     document.getElementById("aohAddZoneBtn").addEventListener("click", () => runOverheadBench(attrOverheadBench, addOverheadZone));
     document.getElementById("aohDeleteZoneBtn").addEventListener("click", () => runOverheadBench(attrOverheadBench, deleteOverheadZone));
+    document.getElementById("aohAvgSelectedZonesBtn")?.addEventListener("click", () => runOverheadBench(attrOverheadBench, averageSelectedOverheadZones));
     document.getElementById("aohStyle").addEventListener("change", () => syncOverheadStyle1LedVisibility(attrOverheadBench));
     syncOverheadStyle1LedVisibility(attrOverheadBench);
     bindOverheadZoneProperties(overheadMainBench);
@@ -11991,6 +12190,7 @@
       });
     });
     loungePresetManager.bind();
+    requestAllPresetLibrariesUntilHydrated();
     [
       "kitchenLength",
       "kitchenDepth",
@@ -13188,6 +13388,25 @@
         return;
       }
       fusionSend("panelAttributes.reverseMillingFace", {});
+    }
+
+    function toolpathRotateGrain90() {
+      const summary = document.getElementById("toolpathRotateGrain90Summary");
+      const btn = document.getElementById("toolpathRotateGrain90Btn");
+      if (btn) btn.disabled = true;
+      if (summary) {
+        summary.textContent = t("toolpath.status.rotateGrain");
+        summary.className = "message warn";
+      }
+      if (!attrFusionAvailable()) {
+        if (btn) btn.disabled = false;
+        if (summary) {
+          summary.textContent = t("toolpath.status.rotateGrainNeedFusion");
+          summary.className = "message error";
+        }
+        return;
+      }
+      fusionSend("panelAttributes.rotateGrain90", {});
     }
 
     function toolpathSetTagEditorOptions(selectId, values, currentValues) {
@@ -14427,6 +14646,8 @@
       const classification = metadata.classification || {};
       const boardState = classification.boardType || {};
       const colorState = classification.color || {};
+      const grainState = classification.grainAlongMm || {};
+      const grainMm = grainState.value || body.grainAlongMm || derivedTags.grainAlongMm;
       const cuttingState = classification.cuttingFace || (metadata.faceRegistry || {}).faceUpState || {};
       const attributeReady = body.attributeReady === true;
       const attributeMissing = body.attributeReadyMissing || [];
@@ -14447,8 +14668,10 @@
         `<dt>Attribute State</dt><dd>${readyBadge}<div class="muted" style="margin-top:4px;">cutting face: ${escapeHtml(String(requiredFaceUp))}${attributeMissing.length ? " · missing: " + escapeHtml(attributeMissing.join(", ")) : ""}</div></dd>`,
         attrTagScanEditableRow("Board Type", "boardTypeTag", boardState.value || derivedTags.boardTypeTag, rowOpts),
         attrTagScanEditableRow("Color", "colorTag", colorState.value || derivedTags.colorTag, rowOpts),
+        attrTagScanRow("Grain along (mm)", grainMm, "—"),
         attrTagScanRow("Board Type Source", `${boardState.source || "legacy"}${boardState.locked ? " · MANUAL LOCK" : ""}`),
         attrTagScanRow("Color Source", `${colorState.source || "legacy"}${colorState.locked ? " · MANUAL LOCK" : ""}`),
+        attrTagScanRow("Grain Source", grainMm ? `${grainState.source || "legacy"}${grainState.locked ? " · MANUAL LOCK" : ""}` : "—"),
         attrTagScanRow("Cutting Face Source", `${cuttingState.source || "legacy"}${cuttingState.locked ? " · MANUAL LOCK" : ""}`),
         attrTagScanRow("Source Board", identity.sourceBoardId || body.sourceBoardId),
         attrTagScanRow("Detailed Type (generator)", identity.boardType || body.boardType),
@@ -14934,6 +15157,34 @@
         return;
       }
       fusionSend("panelAttributes.applyDoorColorToSelection", { colorName, surfaceMode, scope });
+    }
+
+    function attrApplyGrainToSelection() {
+      const summary = document.getElementById("attrGrainSelectionSummary");
+      const orientation = String(document.getElementById("attrGrainOrientation")?.value || "none").trim();
+      const pending = orientation === "none"
+        ? "Clearing grainAlongMm on selected panel(s)..."
+        : `Applying wood grain (${orientation === "vertical" ? "竖" : "横"}) to selected panel(s)...`;
+      if (summary) {
+        summary.textContent = pending;
+        summary.className = "message warn";
+      }
+      attrShowFormMessage(pending, "warn", { action: "applyGrainToSelection", clearDetails: true });
+      if (!attrFusionAvailable()) {
+        const previewMsg = orientation === "none"
+          ? "Preview only: would clear grainAlongMm on the selected body / face-owner body."
+          : `Preview only: would measure the ${orientation === "vertical" ? "Z-aligned" : "across-Z"} face edge and write grainAlongMm.`;
+        if (summary) {
+          summary.textContent = previewMsg;
+          summary.className = "message warn";
+        }
+        attrShowFormMessage(previewMsg, "warn", {
+          action: "applyGrainToSelection",
+          details: { orientation, preview: true },
+        });
+        return;
+      }
+      fusionSend("panelAttributes.applyGrainToSelection", { orientation });
     }
 
     function attrPropagateMillingFromHingeCups() {
@@ -15866,6 +16117,25 @@
         }
         return;
       }
+      if (parsed.action === "applyGrainToSelection") {
+        const summary = document.getElementById("attrGrainSelectionSummary");
+        const msg = parsed.message
+          || (parsed.ok
+            ? `Updated grainAlongMm on ${Number(parsed.updatedCount || 0)} panel(s).`
+            : (parsed.errors || ["Wood grain apply failed."]).join(" "));
+        const kind = parsed.ok
+          ? ((Array.isArray(parsed.warnings) && parsed.warnings.length) || Number(parsed.skippedErrorCount || 0) ? "warn" : "ok")
+          : "error";
+        if (summary) {
+          summary.textContent = msg;
+          summary.className = `message ${kind}`;
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "applyGrainToSelection",
+          details: attrBuildCommandDetails(parsed),
+        });
+        return;
+      }
       if (parsed.action === "propagateMillingFromHingeCups") {
         const summary = document.getElementById("attrPropagateMillingSummary");
         const msg = parsed.message
@@ -16363,6 +16633,34 @@
         }
         attrShowFormMessage(msg, kind, {
           action: "reverseMillingFace",
+          details: attrBuildCommandDetails(parsed),
+        });
+        return;
+      }
+      if (parsed.action === "rotateGrain90") {
+        const summary = document.getElementById("toolpathRotateGrain90Summary");
+        const btn = document.getElementById("toolpathRotateGrain90Btn");
+        if (btn) btn.disabled = false;
+        let msg;
+        if (parsed.ok) {
+          msg = parsed.message
+            || `Rotated grain 90°: selected ${Number(parsed.updatedCount || 0)} · source ${Number(parsed.sourceUpdatedCount || 0)}`
+              + ` · geometry ${Number(parsed.geometryRotatedCount || 0)}`
+              + ` · Analyze ${Number(parsed.analyzedCount || 0)}/${Number(parsed.analyzeBodyCount || 0)}`
+              + (Number(parsed.skippedCount || 0) ? ` · skipped ${parsed.skippedCount}` : "")
+              + ".";
+        } else {
+          msg = (parsed.errors || ["Rotate grain 90° failed."]).join(" ");
+        }
+        const kind = parsed.ok
+          ? (Number(parsed.skippedCount || 0) || Number(parsed.analyzeFailedCount || 0) || Number(parsed.geometryFailedCount || 0) || (Array.isArray(parsed.warnings) && parsed.warnings.length) ? "warn" : "ok")
+          : "error";
+        if (summary) {
+          summary.textContent = msg;
+          summary.className = `message ${kind}`;
+        }
+        attrShowFormMessage(msg, kind, {
+          action: "rotateGrain90",
           details: attrBuildCommandDetails(parsed),
         });
         return;
@@ -16916,6 +17214,7 @@
       document.getElementById("attrTagGlobalApplyBtn").addEventListener("click", attrApplyTagGlobalEdit);
       document.getElementById("attrApplyColorDoorsBtn").addEventListener("click", () => attrApplyColorToSelection("doors"));
       document.getElementById("attrApplyColorPanelsBtn").addEventListener("click", () => attrApplyColorToSelection("panels"));
+      document.getElementById("attrApplyGrainBtn").addEventListener("click", attrApplyGrainToSelection);
       document.getElementById("attrSaveColorPresetBtn").addEventListener("click", attrSaveColorPreset);
       document.getElementById("attrDeleteColorPresetBtn").addEventListener("click", attrDeleteColorPreset);
       document.getElementById("attrPropagateMillingBtn").addEventListener("click", attrPropagateMillingFromHingeCups);
@@ -16953,6 +17252,7 @@
       document.getElementById("toolpathLayFlatAllBtn").addEventListener("click", () => toolpathLayFlat("all"));
       document.getElementById("toolpathCheckFacesUpBtn").addEventListener("click", toolpathCheckFacesUp);
       document.getElementById("toolpathReverseMillingFaceBtn").addEventListener("click", toolpathReverseMillingFace);
+      document.getElementById("toolpathRotateGrain90Btn").addEventListener("click", toolpathRotateGrain90);
       document.getElementById("toolpathLoadLayFlatTagsBtn").addEventListener("click", toolpathLoadLayFlatTags);
       document.getElementById("toolpathApplyLayFlatTagsBtn").addEventListener("click", toolpathApplyLayFlatTags);
       document.getElementById("toolpathAnalyzeLayFlatBtn").addEventListener("click", toolpathAnalyzeLayFlat);
@@ -18672,7 +18972,6 @@
         fusionSend("palette.close", {});
       });
     }
-    calculate();
     document.addEventListener("cabinetnc:langchange", () => {
       try {
         if (typeof updateCommandbarPrimaryVerb === "function") updateCommandbarPrimaryVerb(activeModule);

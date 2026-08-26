@@ -96,17 +96,23 @@ except Exception:
 try:
     from nesting.brep_loops import (
         extract_flattened_rings_mm,
+        extract_dxf_projection_rings_mm,
         _floor_feature_rings_mm,
+        _ring_bounds_key,
     )
 except Exception:
     try:
         from brep_loops import (  # type: ignore
             extract_flattened_rings_mm,
+            extract_dxf_projection_rings_mm,
             _floor_feature_rings_mm,
+            _ring_bounds_key,
         )
     except Exception:
         extract_flattened_rings_mm = None
+        extract_dxf_projection_rings_mm = None
         _floor_feature_rings_mm = None
+        _ring_bounds_key = None
 
 PANEL_GROUP = "UnifiedCabinet.Panel"
 ANALYZED_STATE = "lay_flat_analyzed"
@@ -461,6 +467,18 @@ def _translate_points(points, dx, dy):
     return out
 
 
+def translate_evidence_rings(rings, dx, dy):
+    """Map DXF/BRep evidence rings into the same panel-local frame as extract."""
+    out = []
+    for ring in rings or []:
+        if not isinstance(ring, dict):
+            continue
+        cloned = dict(ring)
+        cloned["points"] = _translate_points(ring.get("points") or [], dx, dy)
+        out.append(cloned)
+    return out
+
+
 def _milling_and_colour_faces(body):
     if not callable(_fast_broad_faces) or not callable(face_world_plane):
         return None, None
@@ -551,6 +569,13 @@ def _extract_features_for_body(
         points = _translate_points(public.get("pointsLocal") or [], dx, dy)
         public["pointsLocal"] = points
         public["points"] = points
+        holes = []
+        for ring in public.get("holes") or []:
+            translated = _translate_points(ring, dx, dy)
+            if len(translated) >= 3:
+                holes.append(translated)
+        if holes:
+            public["holes"] = holes
         center = public.get("center2d")
         if isinstance(center, (list, tuple)) and len(center) >= 2:
             public["center2d"] = [
@@ -579,26 +604,138 @@ def _extract_features_for_body(
         if not public.get("featureId"):
             public["featureId"] = "FEAT-{:02d}".format(index + 1)
         features.append(public)
+    features = supplement_features_from_evidence_rings(
+        features,
+        translate_evidence_rings(_feature_evidence_rings(body), dx, dy),
+        thickness_mm,
+    )
+    for index, feature in enumerate(features):
+        if not feature.get("featureId"):
+            feature["featureId"] = "FEAT-{:02d}".format(index + 1)
     return features, ""
 
 
-def _brep_feature_ring_count(body):
-    """Count feature evidence without fabricating kind/depth/open-face data."""
-    if not callable(extract_flattened_rings_mm):
-        return 0
+def _feature_evidence_rings(body):
+    if not callable(extract_dxf_projection_rings_mm):
+        return []
     try:
-        _outer, holes = extract_flattened_rings_mm(
-            body, include_holes=True, through_only=False
-        )
+        return list(extract_dxf_projection_rings_mm(body) or [])
     except Exception:
-        holes = []
-    floors = []
-    if callable(_floor_feature_rings_mm):
-        try:
-            floors = _floor_feature_rings_mm(body) or []
-        except Exception:
-            floors = []
-    return len(list(holes or [])) + len(list(floors or []))
+        return []
+
+
+def feature_ring_evidence_count(rings):
+    """Unique feature rings (holes + floors), outer outline excluded."""
+    if not callable(_ring_bounds_key):
+        return sum(
+            1
+            for ring in rings or []
+            if isinstance(ring, dict) and str(ring.get("role") or "") == "feature"
+        )
+    seen = set()
+    count = 0
+    for ring in rings or []:
+        if not isinstance(ring, dict) or str(ring.get("role") or "") != "feature":
+            continue
+        key = _ring_bounds_key(ring.get("points") or [])
+        if key is not None and key in seen:
+            continue
+        if key is not None:
+            seen.add(key)
+        count += 1
+    return count
+
+
+def _feature_points(feature):
+    if not isinstance(feature, dict):
+        return []
+    return list(feature.get("points") or feature.get("pointsLocal") or [])
+
+
+def _extent_key(points, quantum_mm=0.5):
+    """Bounds-only key so rebate rings still match after retessellation."""
+    xs = []
+    ys = []
+    for point in points or []:
+        if isinstance(point, dict):
+            xs.append(float(point.get("x") or 0.0))
+            ys.append(float(point.get("y") or 0.0))
+        elif isinstance(point, (list, tuple)) and len(point) >= 2:
+            xs.append(float(point[0]))
+            ys.append(float(point[1]))
+    if len(xs) < 3:
+        if callable(_ring_bounds_key):
+            return _ring_bounds_key(points)
+        return None
+    return (
+        round(min(xs) / quantum_mm),
+        round(min(ys) / quantum_mm),
+        round(max(xs) / quantum_mm),
+        round(max(ys) / quantum_mm),
+    )
+
+
+def supplement_features_from_evidence_rings(features, rings, thickness_mm):
+    """Add BRep hole/floor rings that extract_features missed.
+
+    Lounge lid openings (and similar rebate + through cuts) yield a HALF floor
+    plus a smaller broad-face hole. Walls of that hole stop at the rebate
+    floor, so extract_features never marks it FULL. The hole still has to go
+    into the manufacturing payload as a closed pocket (not a circular hole).
+    """
+    working = list(features or [])
+    existing = set()
+    floor_keys = set()
+    for feature in working:
+        key = _extent_key(_feature_points(feature))
+        if key is not None:
+            existing.add(key)
+    for ring in rings or []:
+        if not isinstance(ring, dict) or str(ring.get("role") or "") != "feature":
+            continue
+        key = _extent_key(ring.get("points") or [])
+        if key is not None and str(ring.get("source") or "") == "flatBodyFloor":
+            floor_keys.add(key)
+    next_index = len(working)
+    try:
+        thickness = float(thickness_mm or 0.0)
+    except (TypeError, ValueError):
+        thickness = 0.0
+    half_depth = round(thickness / 2.0, 3) if thickness > 0 else 0.0
+    for ring in rings or []:
+        if not isinstance(ring, dict) or str(ring.get("role") or "") != "feature":
+            continue
+        points = list(ring.get("points") or [])
+        key = _extent_key(points)
+        if key is None or key in existing:
+            continue
+        source = str(ring.get("source") or "")
+        cut = str(ring.get("cutType") or "HALF").upper()
+        if source != "flatBodyFloor" and cut != "FULL" and key not in floor_keys:
+            # Smaller opening inside a rebate: air on both skins.
+            cut = "FULL"
+        if source != "flatBodyFloor" and cut != "FULL":
+            continue
+        added = {
+            "featureId": "FEAT-{:02d}".format(next_index + 1),
+            "cutType": cut,
+            "kind": "pocket",
+            "depthMm": thickness if cut == "FULL" else half_depth,
+            "hasArc": False,
+            "points": points,
+            "pointsLocal": points,
+        }
+        if cut != "FULL":
+            added["openSurfaceIs"] = "A"
+        working.append(added)
+        existing.add(key)
+        next_index += 1
+    return working
+
+
+def _brep_feature_ring_count(body):
+    """Count unique hole/floor rings (same evidence as DXF projection)."""
+    return feature_ring_evidence_count(_feature_evidence_rings(body))
 
 
 def feature_evidence_complete(features, expected_count):
@@ -843,6 +980,10 @@ def analyze_lay_flat_body(body, force=False, tint_ctx=None):
         "MILLING",
         allow_parts_in_part=False,
         reflected_source=bool(outline.get("reflectedSource")),
+        grain_along_mm=(
+            (outline or {}).get("grainAlongMm")
+            or (metadata.get("classification") or {}).get("grainAlongMm")
+        ),
     )
     cache["analyzedAtMs"] = int(time.time() * 1000)
     cache["featureCount"] = len(features)

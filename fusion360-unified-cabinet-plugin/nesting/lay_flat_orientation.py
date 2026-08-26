@@ -5,7 +5,11 @@ Contract:
 * world +Z is machining side A;
 * world -Z is colour / underside B;
 * HALF features may open on A only for single-sided manufacturing;
-* HALF features on both sides are unsupported.
+* HALF features on both sides are unsupported;
+* colour / −Z outer must stay the full panel. An edge-open HALF or FULL
+  that has been eaten into the underside outer (U/C bite) is a fail.
+  Floor ``openSurfaceIs`` alone is not enough: a top-side groove can
+  still notch the colour loop.
 
 This module is read-only.  Role writes and geometry flips belong to the
 controller transaction so a failed repair can be rolled back safely.
@@ -44,11 +48,32 @@ except Exception:
         _face_centroid_local_mm = None
         extract_features = None
 
+try:
+    from nesting.outline import close_ring, point_in_polygon, polygon_area
+except Exception:
+    try:
+        from outline import close_ring, point_in_polygon, polygon_area  # type: ignore
+    except Exception:
+        close_ring = None
+        point_in_polygon = None
+        polygon_area = None
+
+try:
+    from nesting.brep_loops import _rings_from_broad_face
+except Exception:
+    try:
+        from brep_loops import _rings_from_broad_face  # type: ignore
+    except Exception:
+        _rings_from_broad_face = None
+
 
 HALF_TOP = "topHalf"
 HALF_BOTTOM = "bottomHalf"
 HALF_DOUBLE = "doubleSide"
 HALF_NONE = "none"
+BOTTOM_OUTLINE_AREA_RATIO = 0.90
+FEATURE_OUTSIDE_FRACTION = 0.45
+EDGE_TOLERANCE_MM = 0.75
 
 
 def classify_half_openings(features):
@@ -87,6 +112,113 @@ def classify_half_openings(features):
         "topFeatures": top,
         "bottomFeatures": bottom,
         "unknownFeatures": unknown,
+    }
+
+
+def _point_to_segment_mm(point, start, end):
+    px, py = float(point[0]), float(point[1])
+    x0, y0 = float(start[0]), float(start[1])
+    x1, y1 = float(end[0]), float(end[1])
+    dx, dy = x1 - x0, y1 - y0
+    length2 = dx * dx + dy * dy
+    if length2 <= 1e-18:
+        return ((px - x0) ** 2 + (py - y0) ** 2) ** 0.5
+    t = max(0.0, min(1.0, ((px - x0) * dx + (py - y0) * dy) / length2))
+    return ((px - x0 - t * dx) ** 2 + (py - y0 - t * dy) ** 2) ** 0.5
+
+
+def _on_or_inside_outer(point, outer, edge_tol_mm=EDGE_TOLERANCE_MM):
+    """Boundary counts as inside so a top-side groove touching the edge passes."""
+    if not callable(point_in_polygon) or not callable(close_ring):
+        return False
+    if point_in_polygon(point, outer):
+        return True
+    ring = close_ring(outer)
+    if len(ring) < 4:
+        return False
+    for index in range(len(ring) - 1):
+        if _point_to_segment_mm(point, ring[index], ring[index + 1]) <= edge_tol_mm:
+            return True
+    return False
+
+
+def _feature_ring_points(feature):
+    if not isinstance(feature, dict):
+        return []
+    points = feature.get("points") or feature.get("pointsLocal") or []
+    return [p for p in points if p is not None and len(p) >= 2]
+
+
+def _ring_centroid(points):
+    if not points:
+        return None
+    xs = [float(p[0]) for p in points]
+    ys = [float(p[1]) for p in points]
+    return (sum(xs) / len(xs), sum(ys) / len(ys))
+
+
+def feature_bites_outer(feature_points, outer_points, outside_fraction=FEATURE_OUTSIDE_FRACTION):
+    """True when a feature mostly sits outside the face outer (U-bite)."""
+    if not callable(close_ring):
+        return False
+    outer = close_ring(outer_points)
+    ring = _feature_ring_points({"points": feature_points})
+    if len(outer) < 4 or len(ring) < 2:
+        return False
+    samples = [(float(p[0]), float(p[1])) for p in ring]
+    centroid = _ring_centroid(ring)
+    if centroid is not None:
+        samples.append(centroid)
+    outside = sum(1 for sample in samples if not _on_or_inside_outer(sample, outer))
+    return (outside / float(len(samples))) >= float(outside_fraction)
+
+
+def bottom_outer_more_notched(bottom_outer, top_outer, ratio=BOTTOM_OUTLINE_AREA_RATIO):
+    """True when the underside outer is materially smaller than the top outer."""
+    if not callable(polygon_area):
+        return False
+    bottom_area = float(polygon_area(bottom_outer) or 0.0)
+    top_area = float(polygon_area(top_outer) or 0.0)
+    if bottom_area < 1.0 or top_area < 1.0:
+        return False
+    return bottom_area < top_area * float(ratio)
+
+
+def _face_area(face):
+    try:
+        return float(face.area)
+    except Exception:
+        return 0.0
+
+
+def classify_bottom_outline_notch(bottom_outer, top_outer, features, bottom_face=None, top_face=None):
+    """Detect colour-outer bites that floor ``openSurfaceIs`` misses.
+
+    A top-only HALF still fails when its 2D ring (or a FULL) sits in the
+    bite of a notched underside outer, or when that outer is much smaller
+    than the machining-face outer.
+    """
+    bitten = []
+    for feature in features or []:
+        points = _feature_ring_points(feature)
+        if feature_bites_outer(points, bottom_outer):
+            bitten.append(feature)
+    area_notched = bottom_outer_more_notched(bottom_outer, top_outer)
+    if not area_notched and bottom_face is not None and top_face is not None:
+        bottom_area = _face_area(bottom_face)
+        top_area = _face_area(top_face)
+        if bottom_area > 1e-9 and top_area > 1e-9:
+            area_notched = bottom_area < top_area * BOTTOM_OUTLINE_AREA_RATIO
+    notched = bool(bitten) or bool(area_notched)
+    reason = ""
+    if bitten:
+        reason = "feature_outside_colour_outer"
+    elif area_notched:
+        reason = "colour_outer_smaller_than_milling"
+    return {
+        "bottomOutlineNotched": notched,
+        "bottomOutlineNotchReason": reason,
+        "bottomOutlineNotchCount": len(bitten),
     }
 
 
@@ -177,6 +309,28 @@ def inspect_half_openings(body):
             **faces,
         }
     result = classify_half_openings(raw)
+    bottom_outer = []
+    top_outer = []
+    if callable(_rings_from_broad_face):
+        try:
+            bottom_outer, _ = _rings_from_broad_face(
+                faces["bottomFace"], body, include_holes=False, through_only=True
+            )
+        except Exception:
+            bottom_outer = []
+        try:
+            top_outer, _ = _rings_from_broad_face(
+                faces["topFace"], body, include_holes=False, through_only=True
+            )
+        except Exception:
+            top_outer = []
+    notch = classify_bottom_outline_notch(
+        bottom_outer,
+        top_outer,
+        raw,
+        bottom_face=faces.get("bottomFace"),
+        top_face=faces.get("topFace"),
+    )
     result.update(
         {
             "ok": not result.get("unknownHalfCount"),
@@ -189,6 +343,7 @@ def inspect_half_openings(body):
             "topOffsetMm": float(top_offset),
             "bottomOffsetMm": float(bottom_offset),
             "thicknessMm": float(thickness),
+            **notch,
             **faces,
         }
     )

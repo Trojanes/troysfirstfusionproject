@@ -14,26 +14,48 @@ class NestingWorkpieceNameTests(unittest.TestCase):
     def test_assembly_component_format(self):
         name = names.nesting_workpiece_name({
             "assemblyName": "Kitchen",
-            "componentName": "K_V2",
-            "bodyName": "KITCHEN_vPanel_V2",
+            "componentName": "Kitchen-V2",
+            "bodyName": "Kitchen-V2",
         })
-        self.assertEqual(name, "Kitchen-K_V2")
+        self.assertEqual(name, "Kitchen-V2")
 
     def test_unique_suffix_on_collision(self):
         used = set()
         first = names.nesting_workpiece_name({
             "assemblyName": "GT",
-            "componentName": "GT_B3",
-            "bodyName": "GT_B3",
+            "componentName": "GT-B3",
+            "bodyName": "GT-B3",
         }, used)
         second = names.nesting_workpiece_name({
             "assemblyName": "GT",
-            "componentName": "GT_B3",
-            "bodyName": "GT_B3",
+            "componentName": "GT-B3",
+            "bodyName": "GT-B3",
         }, used)
-        self.assertEqual(first, "GT-GT_B3")
+        self.assertEqual(first, "GT-B3")
         self.assertNotEqual(first, second)
-        self.assertTrue(second.startswith("GT-GT_B3__"))
+        self.assertTrue(second.startswith("GT-B3__"))
+
+    def test_legacy_child_prefix_is_stripped(self):
+        self.assertEqual(
+            names.nesting_workpiece_name({
+                "assemblyName": "GT",
+                "componentName": "GT_B3",
+                "bodyName": "GT_B3",
+            }),
+            "GT-B3",
+        )
+        self.assertEqual(
+            names.nesting_workpiece_name({
+                "assemblyName": "Kitchen",
+                "componentName": "K_V2",
+                "bodyName": "KITCHEN_vPanel_V2",
+            }),
+            "Kitchen-V2",
+        )
+        self.assertEqual(
+            names.board_component_label("Island", "V1"),
+            "Island-V1",
+        )
 
     def test_sanitizes_illegal_chars(self):
         name = names.nesting_workpiece_name({
@@ -114,8 +136,8 @@ class NestingWorkpieceNameTests(unittest.TestCase):
         placement = {
             "panelId": "overhead.BP@layflat-1-24",
             "assemblyName": "OHC_1",
-            "componentName": "OH_BP",
-            "bodyName": "OH_BP",
+            "componentName": "OHC_1-BP",
+            "bodyName": "OHC_1-BP",
         }
         browser_name = names.nesting_workpiece_name(placement)
         export_name = names.display_workpiece_name(
@@ -127,8 +149,8 @@ class NestingWorkpieceNameTests(unittest.TestCase):
                     "identity": {
                         "sourceRef": {
                             "assemblyName": "OHC_1",
-                            "componentName": "OH_BP",
-                            "bodyName": "OH_BP",
+                            "componentName": "OHC_1-BP",
+                            "bodyName": "OHC_1-BP",
                             "panelId": "overhead.BP",
                         }
                     }
@@ -136,7 +158,7 @@ class NestingWorkpieceNameTests(unittest.TestCase):
             },
             placement["panelId"],
         )
-        self.assertEqual(browser_name, "OHC_1-OH_BP")
+        self.assertEqual(browser_name, "OHC_1-BP")
         self.assertEqual(export_name, browser_name)
 
     def test_identity_suffix_is_not_part_of_display_name(self):

@@ -1,5 +1,6 @@
 import copy
 import json
+import re
 
 from panel_body_resolver import list_solid_bodies, resolve_occurrence_path_for_body
 from panel_metadata_types import PANEL_ATTRIBUTE_GROUP, PANEL_ID_ATTR, PANEL_METADATA_ATTR
@@ -301,7 +302,12 @@ def _metadata_summary(metadata, fallback_panel_id):
         [["defaultAttributes", "materialClass"], ["materialClass"]],
     )
     tags = _path_value(metadata, [["defaultAttributes", "tags"], ["tags"]])
-    return {
+    grain_along = None
+    reader = getattr(attribute_state_service, "read_grain_along_mm", None)
+    if callable(reader):
+        grain_value = reader(metadata)
+        grain_along = grain_value if grain_value != "" else None
+    summary = {
         "panelId": str(panel_id or ""),
         "boardType": str(board_type or ""),
         "sourceBoardId": str(source_board_id or ""),
@@ -309,6 +315,9 @@ def _metadata_summary(metadata, fallback_panel_id):
         "materialClass": str(material_class or ""),
         "tags": _list_value(tags),
     }
+    if grain_along is not None:
+        summary["grainAlongMm"] = grain_along
+    return summary
 
 
 def _contains_white_stipple(value):
@@ -502,15 +511,20 @@ def _derived_tags(metadata, summary):
     material_class = summary.get("materialClass") or ""
     color_tag = _derive_color_tag(metadata, material_class)
     board_type_tag = _derive_board_type_tag(metadata)
+    derived = {
+        "colorTag": color_tag,
+        "boardTypeTag": board_type_tag,
+    }
+    grain_along = summary.get("grainAlongMm")
+    reader = getattr(attribute_state_service, "read_grain_along_mm", None)
+    if grain_along is None and callable(reader):
+        grain_value = reader(metadata)
+        grain_along = grain_value if grain_value != "" else None
+    if grain_along is not None:
+        derived["grainAlongMm"] = grain_along
     return {
-        "derivedTags": {
-            "colorTag": color_tag,
-            "boardTypeTag": board_type_tag,
-        },
-        "typedTags": {
-            "colorTag": color_tag,
-            "boardTypeTag": board_type_tag,
-        },
+        "derivedTags": dict(derived),
+        "typedTags": dict(derived),
     }
 
 
@@ -713,9 +727,25 @@ def _synthesize_from_ancestors(component, body_name=""):
     return None
 
 
+def _unmarked_panel_id(component_name="", body_name=""):
+    """Stable id for solids that have no generator / Panel attributes.
+
+    Many imported or copied boards keep Fusion defaults (Body1). Prefer the
+    owning component name so fifty Body1 rows do not collapse to one panelId.
+    """
+    body = str(body_name or "").strip()
+    component = str(component_name or "").strip()
+    generic = (not body) or body.lower() == "body" or (
+        body.lower().startswith("body") and body[4:].isdigit()
+    )
+    if generic and component:
+        return component
+    return body or component or "unnamed_body"
+
+
 def _entity_record(entity, entity_kind, occurrence_path, component_name="", body_name="", include_missing=False, parent_component=None, thickness_rules_payload=None, detail="full"):
     detail_mode = str(detail or "full").strip().lower() or "full"
-    light = detail_mode in ("light", "nesting", "preflight")
+    light = detail_mode in ("light", "nesting", "preflight", "thickness")
 
     metadata, parse_error, raw_metadata = _read_metadata(entity)
     fallback_panel_id = _attr_value(entity, PANEL_ID_ATTR)
@@ -768,12 +798,9 @@ def _entity_record(entity, entity_kind, occurrence_path, component_name="", body
                     fallback_panel_id = str(_path_value(metadata, [["identity", "panelId"]]) or fallback_panel_id or "")
     if metadata is None and not parse_error and not fallback_panel_id and not include_missing:
         return None
-    if light and metadata is None and not fallback_panel_id:
-        # Truly unmarked solids (not generator panels) stay skipped.
-        return None
     if metadata is None and include_missing and not parse_error and not fallback_panel_id:
-        # Still emit a Missing row so unscanned boards are visible in the list.
-        fallback_panel_id = str(body_name or component_name or "unnamed_body")
+        # Unmarked solids still appear (Scan All / thickness classify).
+        fallback_panel_id = _unmarked_panel_id(component_name, body_name)
 
     status, warnings = _validate_metadata(metadata, parse_error, fallback_panel_id)
     if legacy_metadata:
@@ -1109,7 +1136,8 @@ def _walk_component(component, occurrence_path, sink, zone_context=None, root_co
         return
     root = root_component or component
     detail_mode = str(detail or "full").strip().lower() or "full"
-    light = detail_mode in ("light", "nesting", "preflight")
+    light = detail_mode in ("light", "nesting", "preflight", "thickness")
+    include_unmarked = (not light) or detail_mode == "thickness"
 
     if not light:
         component_record = _entity_record(
@@ -1160,7 +1188,7 @@ def _walk_component(component, occurrence_path, sink, zone_context=None, root_co
             component_name=getattr(component, "name", "") or "",
             body_name=getattr(body, "name", "") or "",
             parent_component=component,
-            include_missing=not light,
+            include_missing=include_unmarked,
             thickness_rules_payload=(zone_context or {}).get("thicknessRules"),
             detail=detail_mode,
         )
@@ -1319,7 +1347,7 @@ def scan_panel_metadata(root_component, zone_filter=None, detail="full", profile
     records = []
     layout = None
     detail_mode = str(detail or "full").strip().lower() or "full"
-    light = detail_mode in ("light", "nesting", "preflight")
+    light = detail_mode in ("light", "nesting", "preflight", "thickness")
     if profiler is not None:
         profiler.begin("scanWalk")
         profiler.mark("scanBegin", detail=detail_mode)
@@ -1714,6 +1742,8 @@ def _body_name_looks_like_door(name):
     if "frontpanel" in text or "front_panel" in text:
         return True
     if "_fp_" in text or text.startswith("gt_fp") or text.startswith("oh_fp") or text.startswith("fp_"):
+        return True
+    if re.search(r"(^|_)fp(\d|_|$)", text):
         return True
     if "door" in text and "board" not in text:
         return True

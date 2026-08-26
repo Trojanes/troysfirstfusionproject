@@ -8,10 +8,10 @@ import copy
 import adsk.core
 import adsk.fusion
 
-from geometry_ops import ATTRIBUTE_GROUP, MODEL_Z_OFFSET_MM, avoid_existing_at_origin, capture_position_snapshot, mm_to_cm, move_body_by_mm, offset_matching_bodies_z_mm, sanitize_token
+from geometry_ops import ATTRIBUTE_GROUP, MODEL_Z_OFFSET_MM, avoid_existing_at_origin, capture_position_snapshot, entity_board_id, is_module_artifact, mm_to_cm, move_body_by_mm, offset_matching_bodies_z_mm, sanitize_token
 
 try:
-    from nesting.workpiece_names import resolve_assembly_name
+    from nesting.workpiece_names import board_component_label, resolve_assembly_name
 except Exception:
     import sys
 
@@ -20,7 +20,7 @@ except Exception:
     )
     if _nesting_dir not in sys.path:
         sys.path.insert(0, _nesting_dir)
-    from workpiece_names import resolve_assembly_name
+    from workpiece_names import board_component_label, resolve_assembly_name
 
 try:
     from generator_default_attributes import (
@@ -51,7 +51,7 @@ except Exception:
         write_panel_metadata_to_body,
     )
 
-ADAPTER_BUILD = "2026-07-31-u-shape-ohc-22"
+ADAPTER_BUILD = "2026-08-20-u-shape-ohc-23"
 U_SHAPE_CASE_FINGERPRINT_KEYS = (
     "totalWidth",
     "leftArmLength",
@@ -136,13 +136,9 @@ def _infer_u_run_id(name):
 
 
 def _board_id_from_entity(entity):
-    try:
-        attrs = entity.attributes
-        attr = attrs.itemByName(ATTRIBUTE_GROUP, "boardId") if attrs else None
-        if attr and attr.value:
-            return str(attr.value)
-    except Exception:
-        pass
+    board_id = entity_board_id(entity)
+    if board_id:
+        return board_id
     try:
         name = str(getattr(entity, "name", "") or "")
     except Exception:
@@ -151,7 +147,7 @@ def _board_id_from_entity(entity):
     for token in ("U_CONNECTOR_LEFT", "U_CONNECTOR_RIGHT", "D_CORNER_LEFT", "D_CORNER_RIGHT", "U_CONNECTOR", "T4", "T3", "T2", "T1", "BP"):
         if token in upper:
             return token
-    # Names like UOH_LEFT_D1 / ..._FP2 / ..._G0
+    # Names like UOH_LEFT_D1 / U Shape OHC-LEFT-D1 / ..._FP2 / ..._G0
     match = re.search(r"(?:^|_)((?:D|G|FP|S|L|R)\d+|BP|T[1-5]|U_CONNECTOR)(?:$|_)", upper)
     if match:
         return match.group(1)
@@ -2145,6 +2141,34 @@ def _capture_position_snapshot(root_comp):
     capture_position_snapshot(root_comp)
 
 
+def _delete_previous_module_assemblies(root_comp, module_name):
+    """Remove earlier assemblies for this module so Replace (not Generate new) can reuse the origin."""
+    deleted = {"occurrences": 0, "bodies": 0}
+    if not root_comp or not module_name:
+        return deleted
+    try:
+        for index in range(root_comp.occurrences.count - 1, -1, -1):
+            occurrence = root_comp.occurrences.item(index)
+            child = getattr(occurrence, "component", None)
+            occ_name = str(getattr(occurrence, "name", "") or "")
+            child_name = str(getattr(child, "name", "") or "") if child else ""
+            if is_module_artifact(child, module_name, name=occ_name) or is_module_artifact(child, module_name, name=child_name):
+                occurrence.deleteMe()
+                deleted["occurrences"] += 1
+    except Exception:
+        pass
+    try:
+        for index in range(root_comp.bRepBodies.count - 1, -1, -1):
+            body = root_comp.bRepBodies.item(index)
+            name = str(getattr(body, "name", "") or "")
+            if is_module_artifact(body, module_name, name=name):
+                body.deleteMe()
+                deleted["bodies"] += 1
+    except Exception:
+        pass
+    return deleted
+
+
 def _avoid_existing_at_origin(root_comp, origin_x_mm, origin_y_mm, footprint_mm):
     return avoid_existing_at_origin(root_comp, origin_x_mm, origin_y_mm, footprint_mm)
 
@@ -2357,7 +2381,7 @@ def _align_body_axis_min(component, body, axis, target_min_mm, feature_prefix="G
     move_body_by_mm(component, body, dx, dy, dz, feature_prefix=feature_prefix)
 
 
-def _add_box_body(component, board_id, bbox, body_prefix="GT", module_name="generalTall", move_prefix="GT_MOVE_"):
+def _add_box_body(component, board_id, bbox, body_prefix="GT", module_name="generalTall", move_prefix="GT_MOVE_", display_name=None):
     sketches = component.sketches
     sketch = sketches.add(component.xYConstructionPlane)
     p0 = adsk.core.Point3D.create(mm_to_cm(bbox["x0"]), mm_to_cm(bbox["y0"]), 0)
@@ -2377,7 +2401,7 @@ def _add_box_body(component, board_id, bbox, body_prefix="GT", module_name="gene
         return None, "Extrude created no body."
 
     body = extrude.bodies.item(0)
-    body.name = "{}_{}".format(body_prefix, sanitize_token(board_id, fallback="board", limit=110))
+    body.name = display_name or board_component_label(body_prefix, board_id, fallback_assembly=body_prefix)
     if abs(bbox["z0"]) > 1e-6:
         move_body_by_mm(component, body, 0.0, 0.0, float(bbox["z0"]), feature_prefix=move_prefix)
     try:
@@ -2583,6 +2607,7 @@ def _add_profile_body(
     body_prefix="GT",
     module_name="generalTall",
     align_prefix="GT_ALIGN_",
+    display_name=None,
 ):
     plane = str(board.get("profilePlane") or "")
     axis = str(board.get("thicknessAxis") or "")
@@ -2635,7 +2660,7 @@ def _add_profile_body(
 
     body = extrude.bodies.item(0)
     _align_body_axis_min(component, body, axis, _axis_start_mm(bbox, axis), feature_prefix=align_prefix)
-    body.name = "{}_{}".format(body_prefix, sanitize_token(board_id, fallback="board", limit=110))
+    body.name = display_name or board_component_label(body_prefix, board_id, fallback_assembly=body_prefix)
     try:
         body.attributes.add(ATTRIBUTE_GROUP, "module", module_name)
         body.attributes.add(ATTRIBUTE_GROUP, "boardId", str(board_id))
@@ -3976,6 +4001,7 @@ def create_rough_bodies_from_board_result(
     origin_y_mm=None,
     avoid_existing_origin=True,
     origin_rotation_deg=0.0,
+    add_as_new=True,
 ):
     # None = "auto": place at the generation-zone centre from the saved layout.
     # This also covers callers that predate the origin parameters, because this
@@ -3988,6 +4014,7 @@ def create_rough_bodies_from_board_result(
         "originParam": [origin_x_mm, origin_y_mm],
         "createContainer": bool(create_container_component),
         "componentName": component_name,
+        "addAsNewCabinet": bool(add_as_new),
     }
     origin_active = origin_x_mm is not None or origin_y_mm is not None
     if origin_x_mm is None and origin_y_mm is None:
@@ -4077,6 +4104,17 @@ def create_rough_bodies_from_board_result(
         else {}
     )
     result_debug = result.get("debug") if isinstance(result.get("debug"), dict) else {}
+
+    # Lock existing assemblies (Kitchen, Lounge, earlier OHC) before any
+    # timeline edit. Without this, Fusion recomputes and those poses rewind.
+    _capture_position_snapshot(root_comp)
+    deleted_previous = {"occurrences": 0, "bodies": 0}
+    if not add_as_new:
+        deleted_previous = _delete_previous_module_assemblies(root_comp, module_name)
+        _capture_position_snapshot(root_comp)
+    summary["addAsNewCabinet"] = bool(add_as_new)
+    summary["deletedPrevious"] = deleted_previous
+    placement_debug["deletedPrevious"] = deleted_previous
 
     # Spawn avoidance: shift +X in furniture-sized slots when the target spot
     # already holds generated content.
@@ -4182,9 +4220,10 @@ def create_rough_bodies_from_board_result(
         # One board = one child component (assembly semantics), for EVERY module
         # that has a real assembly container (not the Part-document fallback).
         if create_container_component and container is not root_comp:
-            board_component_name = "{}_{}".format(
-                sanitize_token(body_prefix, fallback="BOARD", limit=20),
-                sanitize_token(board_id, fallback="board", limit=60),
+            board_component_name = board_component_label(
+                assembly_component_name or body_prefix,
+                board_id,
+                fallback_assembly=body_prefix,
             )
             try:
                 target_component = _new_child_component(container, board_component_name, module_name=module_name, board_id=board_id)
@@ -4203,6 +4242,9 @@ def create_rough_bodies_from_board_result(
                 body_prefix=body_prefix,
                 module_name=module_name,
                 align_prefix=align_feature_prefix,
+                display_name=board_component_name or board_component_label(
+                    assembly_component_name or body_prefix, board_id, fallback_assembly=body_prefix
+                ),
             )
             if err:
                 summary["warnings"].append(
@@ -4216,6 +4258,9 @@ def create_rough_bodies_from_board_result(
                     body_prefix=body_prefix,
                     module_name=module_name,
                     move_prefix=move_feature_prefix,
+                    display_name=board_component_name or board_component_label(
+                        assembly_component_name or body_prefix, board_id, fallback_assembly=body_prefix
+                    ),
                 )
         else:
             body, err = _add_box_body(
@@ -4225,6 +4270,9 @@ def create_rough_bodies_from_board_result(
                 body_prefix=body_prefix,
                 module_name=module_name,
                 move_prefix=move_feature_prefix,
+                display_name=board_component_name or board_component_label(
+                    assembly_component_name or body_prefix, board_id, fallback_assembly=body_prefix
+                ),
             )
 
         if err or not body:
@@ -4383,7 +4431,10 @@ def create_rough_bodies_from_board_result(
         summary["dividerZShiftsCreated"] = len([row for row in postprocess.get("dividerZShifts", []) if row.get("status") == "created"])
         summary["supportZShiftsCreated"] = len([row for row in postprocess.get("supportZShifts", []) if row.get("status") == "created"])
         summary["bodyComponentsCreated"] = len(components_by_id)
-        summary["bodyComponentNames"] = ["OH_{}".format(sanitize_token(board_id, fallback="board", limit=60)) for board_id in components_by_id.keys()]
+        summary["bodyComponentNames"] = [
+            str(getattr(comp, "name", "") or board_component_label(assembly_component_name or body_prefix, bid, fallback_assembly=body_prefix))
+            for bid, comp in components_by_id.items()
+        ]
         for group_name in (
             "bpGrooveCuts",
             "rangehoodBpCutouts",
@@ -4681,17 +4732,25 @@ def _gt_create_front_panel_bodies(component, result, summary):
         # One front panel = one child component (assembly semantics); fall back
         # to the container when children are unsupported (Part documents).
         target = component
+        fp_name = board_component_label(
+            summary.get("assemblyComponentName") or "GT",
+            panel_id,
+            fallback_assembly="GT",
+        )
         try:
             target = _new_child_component(
                 component,
-                "GT_FP_{}".format(sanitize_token(panel_id, fallback="FP", limit=60)),
+                fp_name,
                 module_name="generalTall",
                 board_id=panel_id,
             )
         except Exception:
             target = component
         try:
-            body, err = _add_box_body(target, panel_id, bbox, body_prefix="GT_FP", module_name="generalTall", move_prefix="GT_FP_MOVE_")
+            body, err = _add_box_body(
+                target, panel_id, bbox, body_prefix="GT_FP", module_name="generalTall",
+                move_prefix="GT_FP_MOVE_", display_name=fp_name,
+            )
             if err or not body:
                 summary["skippedBoards"].append({"boardId": panel_id, "reason": err or "front_panel_create_failed"})
                 continue
@@ -5089,7 +5148,11 @@ def create_u_shape_overhead_assembly(
             enable_overhead_postprocess=True,
             create_container_component=True,
             component_prefix="UOH",
-            component_name="{}_{}".format(component_name or "U Shape OHC", run_id),
+            component_name=board_component_label(
+                resolved_name or component_name or "U Shape OHC",
+                run_id,
+                fallback_assembly="U Shape OHC",
+            ),
             origin_x_mm=0.0,
             origin_y_mm=0.0,
             avoid_existing_origin=False,

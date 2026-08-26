@@ -11,7 +11,7 @@ import adsk.core
 import adsk.fusion
 
 from modules.general_tall import fusion_adapter as board_fusion_adapter
-from geometry_ops import mm_to_cm, sanitize_token
+from geometry_ops import entity_board_id, mm_to_cm, sanitize_token
 
 ADAPTER_REVISION = "smallCabinetJoineryLocks_v1"
 
@@ -64,31 +64,25 @@ def _resolve_body_maps(summary, result, body_prefix="SC"):
     if container is None:
         return bodies_by_id, components_by_id, None
 
-    # Child components are named SC_<boardId>
     try:
         for index in range(container.occurrences.count):
             occ = container.occurrences.item(index)
             child = getattr(occ, "component", None)
             if child is None:
                 continue
-            name = str(getattr(child, "name", "") or "")
-            matched = None
-            for board_id in board_ids:
-                token = "{}_{}".format(
-                    sanitize_token(body_prefix, fallback="SC", limit=20),
-                    sanitize_token(board_id, fallback="board", limit=60),
-                )
-                if name == token or name.startswith(token):
-                    matched = board_id
-                    break
-            if not matched:
-                # Also accept attribute boardId
-                try:
-                    attr = child.attributes.itemByName("UnifiedCabinet", "boardId")
-                    if attr:
-                        matched = str(attr.value)
-                except Exception:
-                    pass
+            matched = entity_board_id(child)
+            if matched not in board_ids:
+                matched = None
+                name = str(getattr(child, "name", "") or "")
+                for board_id in board_ids:
+                    token = "{}_{}".format(
+                        sanitize_token(body_prefix, fallback="SC", limit=20),
+                        sanitize_token(board_id, fallback="board", limit=60),
+                    )
+                    hyphen = "-{}".format(board_id)
+                    if name == token or name.startswith(token) or name.endswith(hyphen) or name.endswith("_" + board_id):
+                        matched = board_id
+                        break
             if not matched:
                 continue
             components_by_id[matched] = child
@@ -104,6 +98,10 @@ def _resolve_body_maps(summary, result, body_prefix="SC"):
     try:
         for index in range(container.bRepBodies.count):
             body = container.bRepBodies.item(index)
+            matched = entity_board_id(body)
+            if matched in board_ids and matched not in bodies_by_id:
+                bodies_by_id[matched] = body
+                continue
             name = str(getattr(body, "name", "") or "")
             for board_id in board_ids:
                 if board_id in name and board_id not in bodies_by_id:

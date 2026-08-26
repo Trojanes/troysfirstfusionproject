@@ -422,6 +422,34 @@ class AnalyzeMillingSurfacesTests(unittest.TestCase):
             prop._extract_half_features = orig_extract
             prop.classify_box_faces = orig_classify
 
+    def test_edge_open_u_overrides_wrong_floor_vote(self):
+        """Bitten colour-style U is MILLING even if openSurfaceIs points at the intact face."""
+        full = [(0.0, 0.0), (400.0, 0.0), (400.0, 400.0), (0.0, 400.0)]
+        notched = [
+            (0.0, 0.0), (400.0, 0.0), (400.0, 400.0),
+            (210.0, 400.0), (210.0, 20.0), (190.0, 20.0), (190.0, 400.0),
+            (0.0, 400.0),
+        ]
+        pocket = {
+            "cutType": "HALF",
+            "openSurfaceIs": "A",
+            "kind": "groove",
+            "points": [(192.0, 30.0), (208.0, 30.0), (208.0, 380.0), (192.0, 380.0)],
+        }
+        roles = prop.decide_half_slot_roles([pocket], outer_a=full, outer_b=notched)
+        self.assertEqual(roles, ["NON_MILLING", "MILLING"])
+
+    def test_closed_groove_keeps_floor_vote_when_outers_match(self):
+        rect = [(0.0, 0.0), (400.0, 0.0), (400.0, 400.0), (0.0, 400.0)]
+        pocket = {
+            "cutType": "HALF",
+            "openSurfaceIs": "B",
+            "kind": "groove",
+            "points": [(80.0, 80.0), (120.0, 80.0), (120.0, 320.0), (80.0, 320.0)],
+        }
+        roles = prop.decide_half_slot_roles([pocket], outer_a=rect, outer_b=rect)
+        self.assertEqual(roles, ["NON_MILLING", "MILLING"])
+
     def test_half_slot_when_no_hinge(self):
         prop._half_slot_surface_roles = lambda body, a, b: ["MILLING", "NON_MILLING"]
         writes = []

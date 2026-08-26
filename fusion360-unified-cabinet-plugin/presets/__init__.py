@@ -1,1 +1,1 @@
-# Preset library persistence (AppData) for palette Save New / Update / Load.
+# Preset library persistence (plugin presets/user + AppData) for palette Save New / Update / Load.

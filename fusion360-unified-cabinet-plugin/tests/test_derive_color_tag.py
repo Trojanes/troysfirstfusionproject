@@ -99,9 +99,12 @@ class DeriveColorTagTests(unittest.TestCase):
         )
         self.assertTrue(inspector._body_name_looks_like_door("GT_FP_FP_zone-1_L"))
         self.assertTrue(inspector._body_name_looks_like_door("OH_FP0"))
+        self.assertTrue(inspector._body_name_looks_like_door("Island-FP_k-zone-1"))
+        self.assertTrue(inspector._body_name_looks_like_door("OHC-FP0"))
         self.assertFalse(inspector._body_name_looks_like_door("GT_B3"))
         self.assertFalse(inspector._body_name_looks_like_door("KITCHEN_vPanel_V1"))
         self.assertFalse(inspector._body_name_looks_like_door("GT_SidePanel_L"))
+        self.assertFalse(inspector._body_name_looks_like_door("Island-V1"))
 
     def test_derive_board_type_from_free_tags(self):
         self.assertEqual(

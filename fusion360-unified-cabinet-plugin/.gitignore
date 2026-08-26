@@ -1,3 +1,10 @@
 nesting/vendor/
 nesting/nesting_runtime_profile.json
 nesting/nesting_not_ready_summary.json
+presets/user/*.json
+__pycache__/
+*.pyc
+logs/*
+!logs/.gitkeep
+_tmp_*
+*_tmp_*

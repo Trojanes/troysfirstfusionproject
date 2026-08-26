@@ -119,5 +119,48 @@ class ThicknessMeasureTests(unittest.TestCase):
         self.assertEqual(report["thicknessMm"], 15.0)
 
 
+class UnmarkedBoardScanTests(unittest.TestCase):
+    def test_unmarked_panel_id_prefers_component_over_body1(self):
+        import metadata_inspector as inspector
+
+        self.assertEqual(inspector._unmarked_panel_id("Component69", "Body1"), "Component69")
+        self.assertEqual(inspector._unmarked_panel_id("Ensuite_OHC-BP", "Ensuite_OHC-BP"), "Ensuite_OHC-BP")
+
+    def test_nesting_scan_drops_unmarked_but_thickness_keeps_them(self):
+        import metadata_inspector as inspector
+
+        class _Attrs:
+            def itemByName(self, *_args, **_kwargs):
+                return None
+
+        class _Body:
+            name = "Body1"
+            attributes = _Attrs()
+
+        nesting = inspector._entity_record(
+            _Body(),
+            "body",
+            [0, 0],
+            component_name="Component69",
+            body_name="Body1",
+            include_missing=False,
+            detail="nesting",
+        )
+        self.assertIsNone(nesting)
+
+        classify = inspector._entity_record(
+            _Body(),
+            "body",
+            [0, 0],
+            component_name="Component69",
+            body_name="Body1",
+            include_missing=True,
+            detail="thickness",
+        )
+        self.assertIsNotNone(classify)
+        self.assertEqual(classify["panelId"], "Component69")
+        self.assertEqual(classify["status"], "Missing")
+
+
 if __name__ == "__main__":
     unittest.main()

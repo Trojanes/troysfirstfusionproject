@@ -29,3 +29,11 @@ class ToolsController:
         result = store.save_library(module_key, library)
         result["action"] = "presets.saveLibrary"
         return ("presetLibraryResult", result)
+
+    def load_all_preset_libraries(self, payload, _palette):
+        store = importlib.reload(importlib.import_module("presets.library_store"))
+        data = payload if isinstance(payload, dict) else {}
+        keys = data.get("moduleKeys") or data.get("module_keys") or None
+        result = store.load_all_libraries(keys)
+        result["action"] = "presets.loadAllLibraries"
+        return ("presetLibraryResult", result)

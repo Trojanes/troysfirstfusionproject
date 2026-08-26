@@ -1,0 +1,39 @@
+---
+description: Never invent throughProfile rounding from size alone (lock slots)
+globs: **/manufacturing_snapshot_export.py,**/capsule_outline.py,**/panel_geometry.py,**/test_manufacturing_snapshot_export.py,**/test_capsule_outline.py
+alwaysApply: false
+---
+
+# Through-cutout / lock-slot geometry (export)
+
+## Hard rule
+
+**Do not rebuild stadium / rounded ends from AABB size alone** (e.g. 55×15.5).
+
+A real sharp rectangular through opening of any size must export as a sharp profile.
+
+## Allowed stadium rebuild (opt-in only)
+
+`_maybe_lock_stadium_profile` / through fallback may rebuild a capsule **only** when:
+
+1. Explicit lock intent (`purpose` / `hardwareType` / `operationType` / `hostRole` contains `lock`), or
+2. Extract set `hasArc: true` (Arc3D/Circle3D on the loop — covers hand-drawn arc slots with no tag)
+
+Never use “dimensions match door lock” as the sole trigger.
+
+## Extract first
+
+Prefer fixing `panel_geometry` stroking so arc ends survive in `pointsLocal`. Stadium rebuild is a safety net for collapsed quads with `hasArc`/lock tag — not a size classifier.
+
+## Persist `hasArc`
+
+Public feature payloads and snapshot features must carry `hasArc` when the loop had arc/circle edges, so Cut can apply the same policy without guessing.
+
+## Regression coverage
+
+Keep tests for:
+
+- Untagged sharp 55×15.5 → 4-point `throughProfile`
+- `hasArc: true` collapsed quad (no tag) → stadium
+- Lock-tagged sharp quad → stadium
+---

@@ -613,13 +613,13 @@ def kitchen_board_semantics(entry, v_panels=None):
     if panel_type in mapping:
         identity, role = mapping[panel_type]
         return _pack(identity, "carcass", role, "structural", ["kitchen", "carcass", board_id])
-    if "avoidance-top" in board_id or board_id.endswith("-avoidance-top"):
+    if "avoidance-top" in board_id or board_id.endswith("-avoidance-top") or board_id.endswith("-AT"):
         return _pack("wheel_avoidance_top", "carcass", "carcass", "structural", ["kitchen", "avoidance", "carcass", board_id])
-    if "avoidance-front" in board_id or board_id.endswith("-avoidance-front"):
+    if "avoidance-front" in board_id or board_id.endswith("-avoidance-front") or board_id.endswith("-AF"):
         return _pack("wheel_avoidance_front", "carcass", "carcass", "structural", ["kitchen", "avoidance", "carcass", board_id])
     if board_id.endswith("-B4") or "-B4" in board_id:
         return _pack("wheel_avoidance_raised_b4", "carcass", "carcass", "structural", ["kitchen", "avoidance", "carcass", board_id])
-    if "side-strengthening-strip" in board_id:
+    if "side-strengthening-strip" in board_id or board_id.startswith("SS_L_") or board_id.startswith("SS_R_"):
         return _pack("side_strengthening_strip", "carcass", "carcass", "structural", ["kitchen", "carcass", board_id])
     return _pack(panel_type or "unknown_board", "carcass", "carcass", "structural", ["kitchen", "carcass", board_id or "board"])
 
@@ -648,20 +648,20 @@ def lounge_milling_direction(board):
     board_id = str(board.get("id") or "")
     kind = str(board.get("kind") or "").strip().lower()
 
-    if kind == "cabinet_door" or board_id.endswith("_door"):
+    if kind == "cabinet_door" or board_id.endswith("_door") or board_id.endswith("_DR"):
         return _direction_pair("+Y")
 
-    if kind == "cabinet_side" or board_id in ("middle_cabinet_left", "middle_cabinet_right"):
-        if board_id.endswith("_left") or board_id == "middle_cabinet_left":
+    if kind == "cabinet_side" or board_id in ("middle_cabinet_left", "middle_cabinet_right", "MC_L", "MC_R"):
+        if board_id.endswith("_left") or board_id in ("middle_cabinet_left", "MC_L"):
             return _direction_pair("+X")
-        if board_id.endswith("_right") or board_id == "middle_cabinet_right":
+        if board_id.endswith("_right") or board_id in ("middle_cabinet_right", "MC_R"):
             return _direction_pair("-X")
         return _direction_pair("")
 
-    if kind == "cabinet_top" or board_id == "middle_cabinet_top":
+    if kind == "cabinet_top" or board_id in ("middle_cabinet_top", "MC_TOP"):
         return _direction_pair("-Z")
 
-    if kind == "cabinet_bottom" or board_id == "middle_cabinet_bottom":
+    if kind == "cabinet_bottom" or board_id in ("middle_cabinet_bottom", "MC_BOT"):
         return _direction_pair("+Z")
 
     if kind == "lid" or board_id.endswith("_lid"):
@@ -769,7 +769,7 @@ def lounge_board_semantics(item):
     board_id = str(item.get("id") or "")
     kind = str(item.get("kind") or "")
 
-    if board_id.startswith("middle_cabinet_") or kind.startswith("cabinet_"):
+    if board_id.startswith("middle_cabinet_") or board_id.startswith("MC_") or kind.startswith("cabinet_"):
         identity_map = {
             "cabinet_bottom": "cabinet_bottom",
             "cabinet_top": "cabinet_top",
@@ -777,13 +777,13 @@ def lounge_board_semantics(item):
             "cabinet_divider": "cabinet_divider",
             "cabinet_door": "cabinet_door",
         }
-        if board_id.endswith("_left_door") or board_id == "middle_cabinet_left_door":
+        if board_id.endswith("_left_door") or board_id in ("middle_cabinet_left_door", "MC_L_DR"):
             identity = "left_door_panel"
-        elif board_id.endswith("_right_door") or board_id == "middle_cabinet_right_door":
+        elif board_id.endswith("_right_door") or board_id in ("middle_cabinet_right_door", "MC_R_DR"):
             identity = "right_door_panel"
-        elif board_id.endswith("_left") or board_id == "middle_cabinet_left":
+        elif board_id.endswith("_left") or board_id in ("middle_cabinet_left", "MC_L"):
             identity = "cabinet_left_side"
-        elif board_id.endswith("_right") or board_id == "middle_cabinet_right":
+        elif board_id.endswith("_right") or board_id in ("middle_cabinet_right", "MC_R"):
             identity = "cabinet_right_side"
         else:
             identity = identity_map.get(kind, kind or "cabinet_panel")

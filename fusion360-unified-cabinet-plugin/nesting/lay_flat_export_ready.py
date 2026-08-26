@@ -30,21 +30,27 @@ except Exception:
 
 try:
     from nesting.manufacturing_snapshot_export import (
+        _edge_open_groove_profile,
         _groove_centerline,
         _normalize_closed_points,
         _number,
+        _resolved_groove_width,
     )
 except Exception:
     try:
         from manufacturing_snapshot_export import (  # type: ignore
+            _edge_open_groove_profile,
             _groove_centerline,
             _normalize_closed_points,
             _number,
+            _resolved_groove_width,
         )
     except Exception:
+        _edge_open_groove_profile = None
         _groove_centerline = None
         _normalize_closed_points = None
         _number = None
+        _resolved_groove_width = None
 
 try:
     from nesting.lay_flat_face_up import evaluate_body_role_normals
@@ -146,16 +152,53 @@ def _closed_points(raw_points):
     return points
 
 
-def _groove_exportable(feature, raw_points):
+def _groove_exportable(feature, raw_points, thickness_mm=0.0):
     """True when groove can convert like manufacturing_snapshot_export."""
     points = _closed_points(raw_points)
+    derived = 0.0
     if callable(_groove_centerline):
-        centerline, width = _groove_centerline(points)
-        width = _as_number(feature.get("widthMm")) or _as_number(width)
+        centerline, derived = _groove_centerline(points)
+        if callable(_resolved_groove_width):
+            width = _resolved_groove_width(feature, derived, thickness_mm)
+        else:
+            width = _as_number(feature.get("widthMm")) or _as_number(derived)
         if len(centerline or []) >= 2 and width > 0:
             return True
+    elif callable(_resolved_groove_width):
+        width = _resolved_groove_width(feature, 0.0, thickness_mm)
+    else:
+        width = _as_number(feature.get("widthMm"))
     # Match export fallback: non-quad channels ship as closed pocket profiles.
-    return _point_count(points) >= 3 and _polygon_area_abs(points) > 0.0001
+    if _point_count(points) >= 3 and _polygon_area_abs(points) > 0.0001:
+        return True
+    # Edge-open / collapsed slots: AABB or fattened centreline → pocket.
+    if callable(_edge_open_groove_profile):
+        fallback = _edge_open_groove_profile(points, width)
+        return _point_count(fallback) >= 3 and _polygon_area_abs(fallback) > 0.0001
+    return False
+
+
+def _feature_debug(features):
+    debug = []
+    for feature in features or []:
+        if not isinstance(feature, dict):
+            continue
+        raw = feature.get("pointsLocal") or feature.get("points") or feature.get("path") or []
+        points = _closed_points(raw)
+        xs = [point[0] for point in points]
+        ys = [point[1] for point in points]
+        debug.append(
+            {
+                "featureId": feature.get("featureId"),
+                "kind": feature.get("kind"),
+                "cutType": feature.get("cutType"),
+                "widthMm": feature.get("widthMm"),
+                "depthMm": feature.get("depthMm"),
+                "pointCount": len(points),
+                "aabb": [min(xs), min(ys), max(xs), max(ys)] if xs and ys else None,
+            }
+        )
+    return debug
 
 
 def _feature_reasons(features, thickness_mm=0.0):
@@ -222,9 +265,9 @@ def _feature_reasons(features, thickness_mm=0.0):
             if not has_positions and not has_center:
                 reasons.append("feature_geometry")
         elif kind == "groove":
-            # Align with export: 4-pt outline → centreline + width > 0.
-            if not _groove_exportable(feature, points):
-                reasons.append("groove_geometry")
+            # Unrecoverable slots are dropped at export; do not block the job.
+            if not _groove_exportable(feature, points, thickness_mm=thickness_mm):
+                continue
         else:
             # Pocket / throughProfile / unknown profile features need a closed ring.
             if _point_count(points) < 3:
@@ -340,6 +383,7 @@ def evaluate_metadata(metadata, geometry_signature=None):
         "outlineSource": str(outline.get("source") or ""),
         "lifecycleState": state,
         "analyzed": analyzed,
+        "featureDebug": _feature_debug(features if isinstance(features, list) else []),
     }
 
 
@@ -467,6 +511,7 @@ def evaluate_body(body, min_dot=None):
         "outlineSource": check.get("outlineSource") or "",
         "lifecycleState": check.get("lifecycleState") or "",
         "analyzed": bool(check.get("analyzed")),
+        "featureDebug": list(check.get("featureDebug") or []),
         "faceUp": {
             "ok": bool((face_up or {}).get("ok")),
             "reasons": list((face_up or {}).get("reasons") or []),
@@ -500,6 +545,7 @@ def check_bodies(bodies, min_dot=None, wait_callback=None):
             "lifecycleState": item.get("lifecycleState") or "",
             "analyzed": bool(item.get("analyzed")),
             "faceUp": item.get("faceUp"),
+            "featureDebug": list(item.get("featureDebug") or []),
         }
         slim["_body"] = item.get("_body")
         if slim["ready"]:

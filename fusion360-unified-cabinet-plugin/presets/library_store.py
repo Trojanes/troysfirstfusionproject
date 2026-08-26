@@ -1,8 +1,12 @@
 """Persistent preset libraries for the Fusion palette.
 
-Fusion palette ``localStorage`` is unreliable across Fusion restarts (file://
-webview / palette deleteMe). Store libraries under APPDATA so Save New / Update
-survive closing Fusion.
+Fusion palette ``localStorage`` is wiped when Fusion closes or the palette is
+recreated. Libraries are written to two local folders:
+
+1. Plugin ``presets/user/<module>.json`` — visible file next to the add-in
+2. ``%APPDATA%/UnifiedCabinet/presets/<module>.json`` — roaming backup
+
+Opening the plugin reads and merges both so Save New / Update survive restart.
 """
 
 from __future__ import annotations
@@ -14,8 +18,26 @@ from pathlib import Path
 
 _MODULE_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{0,63}$")
 
+KNOWN_MODULE_KEYS = (
+    "generalTall",
+    "overhead",
+    "attrOverhead",
+    "uShapeOverhead",
+    "kitchen",
+    "lounge",
+)
 
-def presets_dir():
+
+def plugin_user_presets_dir():
+    try:
+        folder = Path(__file__).resolve().parent / "user"
+        folder.mkdir(parents=True, exist_ok=True)
+        return folder
+    except Exception:
+        return None
+
+
+def roaming_presets_dir():
     try:
         if os.name == "nt":
             base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
@@ -28,6 +50,15 @@ def presets_dir():
         return None
 
 
+def presets_dir():
+    """Primary visible store (plugin folder), falling back to AppData."""
+    return plugin_user_presets_dir() or roaming_presets_dir()
+
+
+# Tests may replace this list so they never touch the real plugin/AppData folders.
+STORE_DIRS = [plugin_user_presets_dir, roaming_presets_dir]
+
+
 def _safe_module_key(module_key):
     key = str(module_key or "").strip()
     if not _MODULE_RE.match(key):
@@ -35,12 +66,27 @@ def _safe_module_key(module_key):
     return key
 
 
-def library_path(module_key):
-    folder = presets_dir()
+def library_paths(module_key):
     key = _safe_module_key(module_key)
-    if folder is None or key is None:
-        return None
-    return folder / "{}.json".format(key)
+    if key is None:
+        return []
+    paths = []
+    for folder_fn in STORE_DIRS:
+        try:
+            folder = folder_fn()
+        except Exception:
+            folder = None
+        if folder is None:
+            continue
+        path = Path(folder) / "{}.json".format(key)
+        if path not in paths:
+            paths.append(path)
+    return paths
+
+
+def library_path(module_key):
+    paths = library_paths(module_key)
+    return paths[0] if paths else None
 
 
 def empty_library(module_key):
@@ -80,64 +126,131 @@ def normalize_library(payload, module_key):
     }
 
 
+def merge_libraries(libraries, module_key):
+    by_id = {}
+    active_id = ""
+    module_name = str(module_key or "")
+    for payload in libraries or []:
+        library = normalize_library(payload, module_key)
+        if library.get("module"):
+            module_name = library["module"]
+        if library.get("activeId"):
+            active_id = library["activeId"]
+        for item in library.get("items") or []:
+            prev = by_id.get(item["id"])
+            if prev is None or str(item.get("savedAt") or "") >= str(prev.get("savedAt") or ""):
+                by_id[item["id"]] = item
+    items = list(by_id.values())
+    if active_id and not any(item["id"] == active_id for item in items):
+        active_id = items[0]["id"] if items else ""
+    return {
+        "version": 2,
+        "module": module_name,
+        "activeId": active_id,
+        "items": items,
+    }
+
+
+def _read_library_file(path):
+    if path is None or not path.is_file():
+        return None
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return raw if isinstance(raw, dict) else None
+
+
 def load_library(module_key):
-    path = library_path(module_key)
-    if path is None:
+    paths = library_paths(module_key)
+    if not paths:
         return {
             "ok": False,
             "moduleKey": module_key,
             "library": empty_library(module_key),
             "errors": ["Invalid module key or presets folder unavailable."],
         }
-    if not path.is_file():
-        return {
-            "ok": True,
-            "moduleKey": module_key,
-            "library": empty_library(module_key),
-            "path": str(path),
-            "exists": False,
-        }
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        library = normalize_library(raw, module_key)
-        return {
-            "ok": True,
-            "moduleKey": module_key,
-            "library": library,
-            "path": str(path),
-            "exists": True,
-        }
-    except Exception as ex:
-        return {
-            "ok": False,
-            "moduleKey": module_key,
-            "library": empty_library(module_key),
-            "path": str(path),
-            "errors": ["Failed to read preset library: {}".format(ex)],
-        }
+    loaded = []
+    errors = []
+    existing_paths = []
+    for path in paths:
+        try:
+            raw = _read_library_file(path)
+        except Exception as ex:
+            errors.append("Failed to read {}: {}".format(path, ex))
+            continue
+        if raw is None:
+            continue
+        loaded.append(normalize_library(raw, module_key))
+        existing_paths.append(str(path))
+    library = merge_libraries(loaded, module_key) if loaded else empty_library(module_key)
+    result = {
+        "ok": not errors,
+        "moduleKey": module_key,
+        "library": library,
+        "path": existing_paths[0] if existing_paths else str(paths[0]),
+        "paths": [str(path) for path in paths],
+        "exists": bool(existing_paths),
+    }
+    if errors:
+        result["errors"] = errors
+        if loaded:
+            result["ok"] = True
+    return result
 
 
 def save_library(module_key, library_payload):
-    path = library_path(module_key)
-    if path is None:
+    paths = library_paths(module_key)
+    if not paths:
         return {
             "ok": False,
             "moduleKey": module_key,
             "errors": ["Invalid module key or presets folder unavailable."],
         }
     library = normalize_library(library_payload, module_key)
-    try:
-        path.write_text(json.dumps(library, ensure_ascii=False, indent=2), encoding="utf-8")
-        return {
-            "ok": True,
-            "moduleKey": module_key,
-            "library": library,
-            "path": str(path),
-            "itemCount": len(library.get("items") or []),
-        }
-    except Exception as ex:
+    written = []
+    errors = []
+    text = json.dumps(library, ensure_ascii=False, indent=2)
+    for path in paths:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8")
+            written.append(str(path))
+        except Exception as ex:
+            errors.append("Failed to write {}: {}".format(path, ex))
+    if not written:
         return {
             "ok": False,
             "moduleKey": module_key,
-            "errors": ["Failed to write preset library: {}".format(ex)],
+            "errors": errors or ["Failed to write preset library."],
         }
+    result = {
+        "ok": True,
+        "moduleKey": module_key,
+        "library": library,
+        "path": written[0],
+        "paths": written,
+        "itemCount": len(library.get("items") or []),
+    }
+    if errors:
+        result["errors"] = errors
+    return result
+
+
+def load_all_libraries(module_keys=None):
+    keys = []
+    raw_keys = module_keys if isinstance(module_keys, (list, tuple)) else KNOWN_MODULE_KEYS
+    for key in raw_keys:
+        safe = _safe_module_key(key)
+        if safe and safe not in keys:
+            keys.append(safe)
+    libraries = [load_library(key) for key in keys]
+    paths = []
+    for entry in libraries:
+        for path in entry.get("paths") or []:
+            if path not in paths:
+                paths.append(path)
+    item_count = sum(len((entry.get("library") or {}).get("items") or []) for entry in libraries)
+    return {
+        "ok": True,
+        "libraries": libraries,
+        "paths": paths,
+        "itemCount": item_count,
+    }

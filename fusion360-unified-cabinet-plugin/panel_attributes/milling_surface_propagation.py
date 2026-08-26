@@ -47,6 +47,8 @@ try:
         thickness_axis_from_normal,
         _face_centroid_local_mm,
         _face_normal_local,
+        _face_outer_loop_2d,
+        _polygon_area,
         _entity_token,
         _face_key,
     )
@@ -59,6 +61,8 @@ except Exception:
             thickness_axis_from_normal,
             _face_centroid_local_mm,
             _face_normal_local,
+            _face_outer_loop_2d,
+            _polygon_area,
             _entity_token,
             _face_key,
         )
@@ -69,8 +73,15 @@ except Exception:
         thickness_axis_from_normal = None
         _face_centroid_local_mm = None
         _face_normal_local = None
+        _face_outer_loop_2d = None
+        _polygon_area = None
         _entity_token = None
         _face_key = None
+
+# Edge-open dado: the bitten silhouette is MILLING, even when floor-wall
+# topology votes the intact colour skin (Kitchen OHC-D0).
+NOTCHED_OUTER_AREA_RATIO = 0.90
+FEATURE_OUTSIDE_FRACTION = 0.55
 
 
 def normalize_vector(vector):
@@ -344,13 +355,119 @@ def detect_hinge_back_face(body):
     }
 
 
+def _feature_ring_points(feature):
+    if not isinstance(feature, dict):
+        return []
+    points = feature.get("points") or feature.get("pointsLocal") or []
+    return [point for point in points if point is not None and len(point) >= 2]
+
+
+def _point_in_ring(point, ring):
+    if not ring or len(ring) < 3:
+        return False
+    px, py = float(point[0]), float(point[1])
+    inside = False
+    count = len(ring)
+    for index in range(count):
+        x1, y1 = float(ring[index][0]), float(ring[index][1])
+        x2, y2 = float(ring[(index + 1) % count][0]), float(ring[(index + 1) % count][1])
+        if (y1 > py) != (y2 > py):
+            x_at = (x2 - x1) * (py - y1) / ((y2 - y1) or 1e-18) + x1
+            if px < x_at:
+                inside = not inside
+    return inside
+
+
+def _feature_bites_outer(feature_points, outer, fraction=FEATURE_OUTSIDE_FRACTION):
+    """True when the HALF ring mostly sits outside that face's outer (U-bite)."""
+    ring = [point for point in (feature_points or []) if point is not None and len(point) >= 2]
+    if not outer or len(outer) < 3 or len(ring) < 2:
+        return False
+    samples = [(float(point[0]), float(point[1])) for point in ring]
+    xs = [sample[0] for sample in samples]
+    ys = [sample[1] for sample in samples]
+    samples.append((sum(xs) / len(xs), sum(ys) / len(ys)))
+    outside = sum(1 for sample in samples if not _point_in_ring(sample, outer))
+    return (outside / float(len(samples))) >= float(fraction)
+
+
+def _ring_area(points):
+    if callable(_polygon_area):
+        try:
+            return float(_polygon_area(points) or 0.0)
+        except Exception:
+            pass
+    ring = [point for point in (points or []) if point is not None and len(point) >= 2]
+    if len(ring) < 3:
+        return 0.0
+    area = 0.0
+    for index in range(len(ring)):
+        x1, y1 = float(ring[index][0]), float(ring[index][1])
+        x2, y2 = float(ring[(index + 1) % len(ring)][0]), float(ring[(index + 1) % len(ring)][1])
+        area += x1 * y2 - x2 * y1
+    return abs(area) / 2.0
+
+
+def decide_half_slot_roles(half_features, outer_a=None, outer_b=None):
+    """Pick MILLING from edge-open silhouette first, then floor votes.
+
+    Topology often marks the intact colour skin after an edge-open dado.
+    The face whose outer is bitten by the HALF ring is the machining side.
+    """
+    votes_a = 0
+    votes_b = 0
+    bites_a = False
+    bites_b = False
+    for feature in half_features or []:
+        which = str(feature.get("openSurfaceIs") or "").upper()
+        if which == "A":
+            votes_a += 1
+        elif which == "B":
+            votes_b += 1
+        points = _feature_ring_points(feature)
+        if outer_a and _feature_bites_outer(points, outer_a):
+            bites_a = True
+        if outer_b and _feature_bites_outer(points, outer_b):
+            bites_b = True
+    if bites_a and not bites_b:
+        return [MILLING_SURFACE, NON_MILLING_SURFACE]
+    if bites_b and not bites_a:
+        return [NON_MILLING_SURFACE, MILLING_SURFACE]
+    area_a = _ring_area(outer_a) if outer_a else 0.0
+    area_b = _ring_area(outer_b) if outer_b else 0.0
+    if area_a >= 1.0 and area_b >= 1.0:
+        if area_a < area_b * NOTCHED_OUTER_AREA_RATIO:
+            return [MILLING_SURFACE, NON_MILLING_SURFACE]
+        if area_b < area_a * NOTCHED_OUTER_AREA_RATIO:
+            return [NON_MILLING_SURFACE, MILLING_SURFACE]
+    if votes_a > votes_b:
+        return [MILLING_SURFACE, NON_MILLING_SURFACE]
+    if votes_b > votes_a:
+        return [NON_MILLING_SURFACE, MILLING_SURFACE]
+    return None
+
+
+def _broad_face_outers(body, surface_a, surface_b):
+    if not callable(_face_outer_loop_2d) or not callable(_face_normal_local):
+        return None, None
+    if not callable(thickness_axis_from_normal):
+        return None, None
+    try:
+        ref_normal = _face_normal_local(surface_a, body)
+        thickness_axis = thickness_axis_from_normal(ref_normal)
+        pts_a, _segs_a, _arc_a = _face_outer_loop_2d(surface_a, body, thickness_axis)
+        pts_b, _segs_b, _arc_b = _face_outer_loop_2d(surface_b, body, thickness_axis)
+        return pts_a or None, pts_b or None
+    except Exception:
+        return None, None
+
+
 def _half_slot_surface_roles(body, surface_a, surface_b):
     """Roles for the two broad faces from half-slot / blind groove evidence.
 
-    Prefer groove-floor open-surface votes (same topology as hinge cups). Plain
-    wall-adjacency against only the largest SURFACE face often picks the wrong
-    side after manual Extrude-Cuts split the milled skin, or after edge-open
-    underside slots leave false one-sided perimeter remnants.
+    Prefer the edge-open bitten silhouette, then groove-floor open-surface
+    votes. Plain wall-adjacency against only the largest SURFACE face often
+    picks the wrong side after Extrude-Cuts or edge-open remnant walls.
     """
     features = _extract_half_features(body, surface_a, surface_b)
     half_features = [
@@ -358,18 +475,10 @@ def _half_slot_surface_roles(body, surface_a, surface_b):
         for feature in (features or [])
         if str(feature.get("cutType") or "").upper() == "HALF"
     ]
-    votes_a = 0
-    votes_b = 0
-    for feature in half_features:
-        which = str(feature.get("openSurfaceIs") or "").upper()
-        if which == "A":
-            votes_a += 1
-        elif which == "B":
-            votes_b += 1
-    if votes_a > votes_b:
-        return [MILLING_SURFACE, NON_MILLING_SURFACE]
-    if votes_b > votes_a:
-        return [NON_MILLING_SURFACE, MILLING_SURFACE]
+    outer_a, outer_b = _broad_face_outers(body, surface_a, surface_b)
+    decided = decide_half_slot_roles(half_features, outer_a, outer_b)
+    if decided:
+        return decided
 
     try:
         from panel_face_initializer import detect_surface_milling_roles
@@ -397,9 +506,10 @@ def _half_slot_surface_roles(body, surface_a, surface_b):
 def analyze_milling_surfaces(bodies, write_pair):
     """Geometric milling-surface analysis for every body (any board type).
 
-    Priority per body: hinge cups -> half-slots -> EITHER. Machining evidence
-    always overwrites stored roles; without evidence, existing assigned roles
-    are kept and only unassigned panels are stamped EITHER/EITHER.
+    Priority per body: hinge cups -> half-slots (edge-open bitten outer
+    first, then floor votes) -> generator direction -> EITHER. Machining
+    evidence always overwrites stored roles; without evidence, existing
+    assigned roles are kept and only unassigned panels are stamped EITHER.
 
     ``write_pair(body, face_a, role_a, face_b, role_b)`` performs write-back.
     """

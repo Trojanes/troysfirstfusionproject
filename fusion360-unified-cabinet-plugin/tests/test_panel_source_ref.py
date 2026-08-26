@@ -79,6 +79,23 @@ class PanelSourceRefTests(unittest.TestCase):
             panel_source_ref.key({"panelId": "manual.Body1"}), ""
         )
 
+    def test_assembly_body_keys_include_token_and_path(self):
+        class Body:
+            entityToken = "tok-door"
+            name = "Door1"
+            assemblyContext = None
+            nativeObject = None
+
+        keys = panel_source_ref.keys_for_assembly_body(Body())
+        self.assertIn("token:tok-door", keys)
+        self.assertIn("path:|Door1", keys)
+        lay_flat_ref = panel_source_ref.normalize({
+            "entityToken": "tok-door",
+            "occurrencePath": [0],
+            "bodyName": "Door1",
+        })
+        self.assertIn(panel_source_ref.key(lay_flat_ref), keys)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -111,6 +111,23 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
         self.assertEqual(workpiece["features"][0]["sourceFace"], "A")
         self.assertEqual(workpiece["features"][1]["kind"], "groove")
         self.assertEqual(workpiece["features"][1]["geometry"]["widthMm"], 6)
+        self.assertNotIn("grainAlongMm", workpiece["material"])
+
+    def test_exports_grain_along_without_splitting_material_id(self):
+        record = _record()
+        record["metadata"]["classification"]["grainAlongMm"] = {
+            "value": 720,
+            "source": "manual",
+            "locked": True,
+        }
+        record["metadata"]["nestingFlatOutline"]["outline"]["grainAngleDeg"] = 0
+        record["metadata"]["nestingFlatOutline"]["outline"]["grainAlongMm"] = 720
+        result = build_snapshot([record], "JOB-1")
+        self.assertTrue(result["ok"], result["errors"])
+        material = result["snapshot"]["workpieces"][0]["material"]
+        self.assertEqual(material["grainAlongMm"], 720.0)
+        self.assertEqual(material["grainAngleDeg"], 0)
+        self.assertEqual(material["materialId"], "carcass-white-18")
 
     def test_rejects_bbox_fallback(self):
         result = build_snapshot([_record(outline_source="bboxFallback")], "JOB-1")
@@ -287,6 +304,69 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
                 self.assertGreaterEqual(len(feature["geometry"]["centerline"]), 2)
                 self.assertGreater(feature["geometry"]["widthMm"], 0)
 
+    def test_edge_open_line_groove_without_width_uses_default(self):
+        groove = {
+            "featureId": "G-line",
+            "kind": "groove",
+            "cutType": "HALF",
+            "depthMm": 8,
+            "openSurfaceIs": "A",
+            "pointsLocal": [[0, 0], [400, 0]],
+        }
+        result = build_snapshot([_record(features=[groove])], "JOB-1")
+        self.assertTrue(result["ok"], result["errors"])
+        feature = result["snapshot"]["workpieces"][0]["features"][0]
+        self.assertEqual(feature["kind"], "groove")
+        self.assertGreater(feature["geometry"]["widthMm"], 0)
+
+    def test_empty_groove_is_skipped_not_blocking(self):
+        groove = {
+            "featureId": "G-empty",
+            "kind": "groove",
+            "cutType": "HALF",
+            "depthMm": 8,
+            "openSurfaceIs": "A",
+            "pointsLocal": [],
+        }
+        result = build_snapshot([_record(features=[groove])], "JOB-1")
+        self.assertTrue(result["ok"], result["errors"])
+        self.assertEqual(result["snapshot"]["workpieces"][0]["features"], [])
+
+    def test_edge_open_line_groove_exports_as_groove(self):
+        groove = {
+            "featureId": "G-edge",
+            "kind": "groove",
+            "cutType": "HALF",
+            "depthMm": 8,
+            "openSurfaceIs": "A",
+            "widthMm": 8.0,
+            "pointsLocal": [[0, 0], [400, 0]],
+        }
+        result = build_snapshot([_record(features=[groove])], "JOB-1")
+        self.assertTrue(result["ok"], result["errors"])
+        feature = result["snapshot"]["workpieces"][0]["features"][0]
+        self.assertEqual(feature["kind"], "groove")
+        self.assertEqual(len(feature["geometry"]["centerline"]), 2)
+        self.assertEqual(feature["geometry"]["widthMm"], 8.0)
+
+    def test_edge_open_diagonal_groove_exports_as_pocket(self):
+        groove = {
+            "featureId": "G-diag",
+            "kind": "groove",
+            "cutType": "HALF",
+            "depthMm": 8,
+            "openSurfaceIs": "A",
+            "pointsLocal": [[0, 0], [400, 8]],
+        }
+        result = build_snapshot([_record(features=[groove])], "JOB-1")
+        self.assertTrue(result["ok"], result["errors"])
+        feature = result["snapshot"]["workpieces"][0]["features"][0]
+        self.assertIn(feature["kind"], ("groove", "pocket"))
+        if feature["kind"] == "pocket":
+            self.assertGreaterEqual(len(feature["geometry"]["profile"]["points"]), 3)
+        else:
+            self.assertGreater(feature["geometry"]["widthMm"], 0)
+
     def test_shallow_b_open_is_rejected_on_export(self):
         result = build_snapshot(
             [
@@ -426,7 +506,7 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
         record["assemblyName"] = "LAY_FLAT:1"
         record["componentName"] = "LAY_FLAT"
         # Named like Fusion browser after Create Lay Flat.
-        record["bodyName"] = "OHC_1-OH_BP"
+        record["bodyName"] = "OHC_1-BP"
         record["metadata"]["identity"] = {
             "panelId": "overhead.BP@layflat-1-24",
             "sourcePanelId": "overhead.BP",
@@ -434,7 +514,7 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
             "sourceRef": {
                 "panelId": "overhead.BP",
                 "bodyName": "BP",
-                "componentName": "OH_BP",
+                "componentName": "OHC_1-BP",
                 "assemblyName": "OHC_1",
             },
         }
@@ -443,7 +523,7 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
 
         self.assertTrue(result["ok"], result["errors"])
         workpiece = result["snapshot"]["workpieces"][0]
-        self.assertEqual(workpiece["name"], "OHC_1-OH_BP")
+        self.assertEqual(workpiece["name"], "OHC_1-BP")
         self.assertNotIn("LAY_FLAT", workpiece["name"].upper())
         self.assertEqual(workpiece["provenance"].get("sourcePanelId"), "overhead.BP")
 
@@ -459,7 +539,7 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
             "sourceRef": {
                 "panelId": "manual.Body1",
                 "bodyName": "Body1",
-                "componentName": "GT_V1",
+                "componentName": "Bunk_Tall_Right_1-V1",
                 "assemblyName": "Bunk_Tall_Right_1",
             },
         }
@@ -469,7 +549,7 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
         self.assertTrue(result["ok"], result["errors"])
         self.assertEqual(
             result["snapshot"]["workpieces"][0]["name"],
-            "Bunk_Tall_Right_1-GT_V1",
+            "Bunk_Tall_Right_1-V1",
         )
 
     def test_through_groove_exports_as_through_profile(self):
@@ -618,6 +698,90 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
         self.assertEqual(feature["kind"], "pocket")
         self.assertFalse(feature["through"])
         self.assertEqual(feature["intent"]["purpose"], "led_groove")
+
+    def test_top_rebate_exports_ring_pocket_and_local_through(self):
+        rebate = [[225, 140], [675, 140], [675, 420], [225, 420], [225, 140]]
+        through = [[234, 149], [666, 149], [666, 411], [234, 411], [234, 149]]
+        features = [
+            {
+                "featureId": "FEAT-01",
+                "kind": "pocket",
+                "cutType": "HALF",
+                "depthMm": 9,
+                "openSurfaceIs": "A",
+                "pointsLocal": rebate,
+                "holes": [through],
+            },
+            {
+                "featureId": "FEAT-02",
+                "kind": "pocket",
+                "cutType": "FULL",
+                "depthMm": 18,
+                "pointsLocal": through,
+            },
+        ]
+        result = build_snapshot([_record(features=features)], "JOB-REBATE-TOP")
+        self.assertTrue(result["ok"], result["errors"])
+        wp = result["snapshot"]["workpieces"][0]
+        kinds = {item["kind"]: item for item in wp["features"]}
+        self.assertEqual(kinds["pocket"]["depthMm"], 9)
+        self.assertFalse(kinds["pocket"]["through"])
+        holes = kinds["pocket"]["geometry"]["holes"]
+        self.assertEqual(len(holes), 1)
+        self.assertAlmostEqual(min(p[1] for p in holes[0]["points"]), 149, delta=0.2)
+        self.assertEqual(kinds["throughProfile"]["through"], True)
+        self.assertEqual(len(wp["geometry"]["innerProfiles"]), 1)
+        self.assertAlmostEqual(
+            min(p[1] for p in wp["geometry"]["innerProfiles"][0]["points"]),
+            149,
+            delta=0.2,
+        )
+
+    def test_lid_ring_keeps_pocket_hole_and_drops_finger_through_profile(self):
+        outer = [[0, 0], [447, 0], [447, 277], [0, 277], [0, 0]]
+        inner = [[9, 9], [438, 9], [438, 268], [9, 268], [9, 9]]
+        features = [
+            {
+                "featureId": "FEAT-01",
+                "kind": "pocket",
+                "cutType": "HALF",
+                "depthMm": 9,
+                "openSurfaceIs": "A",
+                "pointsLocal": outer,
+                "holes": [inner],
+            },
+            {
+                "featureId": "FEAT-02",
+                "kind": "hole",
+                "cutType": "FULL",
+                "depthMm": 18,
+                "center2d": [223.5, 138.5],
+                "diameterMm": 40,
+            },
+            {
+                "featureId": "FEAT-03",
+                "kind": "pocket",
+                "cutType": "FULL",
+                "depthMm": 18,
+                "pointsLocal": [
+                    [203.5, 118.5],
+                    [243.5, 118.5],
+                    [243.5, 158.5],
+                    [203.5, 158.5],
+                    [203.5, 118.5],
+                ],
+            },
+        ]
+        result = build_snapshot([_record(features=features)], "JOB-REBATE-LID")
+        self.assertTrue(result["ok"], result["errors"])
+        wp = result["snapshot"]["workpieces"][0]
+        kinds = [item["kind"] for item in wp["features"]]
+        self.assertIn("pocket", kinds)
+        self.assertIn("bore", kinds)
+        self.assertNotIn("throughProfile", kinds)
+        pocket = next(item for item in wp["features"] if item["kind"] == "pocket")
+        self.assertEqual(len(pocket["geometry"]["holes"]), 1)
+        self.assertEqual(wp["geometry"]["innerProfiles"], [])
 
 
 if __name__ == "__main__":

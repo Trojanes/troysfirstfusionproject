@@ -3,11 +3,11 @@
 Locked rules:
 1. Machining wins: hinge cups / half-slots decide the back (MILLING) face.
 2. Assembly vote (primary): the broad face pointing away from the panel's
-   owning root-level sub-assembly centre M (each GT_/OHC_/Lounge_/Fridge/…
-   child of the design root — not the root design itself) is the colour
-   face (NON_MILLING). M must sit on the opposite side of the panel from
-   the observation point O; otherwise the centre is treated as a room/run
-   void and the assembly vote abstains.
+   owning root-level sub-assembly centre M (the design-root child that
+   carries ``module`` / ``assemblyName`` — not the root design itself) is
+   the colour face (NON_MILLING). M must sit on the opposite side of the
+   panel from the observation point O; otherwise the centre is treated as
+   a room/run void and the assembly vote abstains.
 3. View-point vote (secondary): the broad face aimed at O (the "red dot")
    is the colour face; used when assembly is unavailable, or as a
    supporting check when it agrees.
@@ -265,7 +265,7 @@ def _occurrence_for_assembly_center(body):
     Browser hierarchy is typically::
 
         Root design  (e.g. "Bunk Bed and Bathroom")
-          ├─ GT_xxx / OHC:1 / Fridge:1 / LOUNGE_…   ← M lives here
+          ├─ Island / OHC / Fridge / Lounge   ← M lives here (assemblyName)
           │    └─ per-board leaf occurrence
           │         └─ door body
           └─ …
@@ -306,9 +306,9 @@ def assembly_center_for_body(body):
     """World centre (mm) of the body's owning root-level cabinet occurrence.
 
     Resolves the occurrence that is a direct child of the design root (each
-    GT_/OHC_/Lounge_/Fridge/… sub-assembly), not the root design and not the
-    leaf door component. Falls back to the body's own world bbox when no
-    occurrence is available.
+    cabinet / sub-assembly), not the root design and not the leaf door
+    component. Falls back to the body's own world bbox when no occurrence
+    is available.
     """
     occurrence = _occurrence_for_assembly_center(body)
     if occurrence is not None:

@@ -7,18 +7,18 @@ import time
 import adsk.core
 import adsk.fusion
 
-from geometry_ops import avoid_existing_at_origin
+from geometry_ops import avoid_existing_at_origin, capture_position_snapshot, is_module_artifact, name_looks_like_module
 from assembly_cut_face import assembly_cut_face
 
 try:
-    from nesting.workpiece_names import is_blob_label, resolve_assembly_name
+    from nesting.workpiece_names import board_component_label, is_blob_label, resolve_assembly_name
 except Exception:
     _nesting_dir = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..", "nesting")
     )
     if _nesting_dir not in sys.path:
         sys.path.insert(0, _nesting_dir)
-    from workpiece_names import is_blob_label, resolve_assembly_name
+    from workpiece_names import board_component_label, is_blob_label, resolve_assembly_name
 
 try:
     from generator_default_attributes import (
@@ -36,7 +36,7 @@ except Exception:
         write_generator_panel_metadata,
     )
 
-ADAPTER_REVISION = "yzHalfCutSide_v39"
+ADAPTER_REVISION = "yzHalfCutSide_v40"
 ATTRIBUTE_GROUP = "CabinetNC"
 MODEL_Z_OFFSET_MM = 10000.0
 # Flat bodies are modelled at z=0 inside each panel component (same as Lounge).
@@ -456,6 +456,14 @@ def _assign_component_name(occurrence, component, desired_name):
         return base
 
 
+def _is_kitchen_artifact(entity, name=None):
+    return is_module_artifact(entity, "kitchen", name=name)
+
+
+def _is_kitchen_artifact_name(name):
+    return name_looks_like_module(name, "kitchen")
+
+
 def _new_panel_component(parent_component, panel_id):
     """One kitchen panel = one child component (assembly semantics).
 
@@ -466,8 +474,9 @@ def _new_panel_component(parent_component, panel_id):
     transform = adsk.core.Matrix3D.create()
     occurrence = parent_component.occurrences.addNewComponent(transform)
     component = occurrence.component
+    parent_name = str(getattr(parent_component, "name", "") or "Kitchen")
     _assign_component_name(
-        occurrence, component, "K_{}".format(sanitize_token(panel_id, fallback="panel", limit=60))
+        occurrence, component, board_component_label(parent_name, panel_id, fallback_assembly="Kitchen")
     )
     try:
         component.attributes.add(ATTRIBUTE_GROUP, "module", "kitchen")
@@ -601,7 +610,7 @@ def _delete_kitchen_artifacts_in_component(component, deleted, seen_components, 
         for index in range(component.bRepBodies.count - 1, -1, -1):
             body = component.bRepBodies.item(index)
             name = str(getattr(body, "name", "") or "")
-            if name.startswith("KITCHEN_") and (
+            if _is_kitchen_artifact(body, name=name) and (
                 run_prefix is None or name.startswith(run_prefix)
             ):
                 body.deleteMe()
@@ -623,17 +632,17 @@ def _delete_kitchen_artifacts_in_component(component, deleted, seen_components, 
         for index in range(component.occurrences.count - 1, -1, -1):
             occurrence = component.occurrences.item(index)
             name = str(getattr(occurrence, "name", "") or "")
-            component_name = str(getattr(getattr(occurrence, "component", None), "name", "") or "")
             child_component = getattr(occurrence, "component", None)
+            component_name = str(getattr(child_component, "name", "") or "") if child_component else ""
             if child_component:
                 _delete_kitchen_artifacts_in_component(child_component, deleted, seen_components, run_prefix=run_prefix)
-            if (
-                (name.startswith("KITCHEN_") or component_name.startswith("KITCHEN_"))
-                and (
-                    run_prefix is None
-                    or name.startswith(run_prefix)
-                    or component_name.startswith(run_prefix)
-                )
+            is_kitchen = _is_kitchen_artifact(child_component, name=name) or (
+                child_component is None and _is_kitchen_artifact_name(name)
+            ) or _is_kitchen_artifact(child_component, name=component_name)
+            if is_kitchen and (
+                run_prefix is None
+                or name.startswith(run_prefix)
+                or component_name.startswith(run_prefix)
             ):
                 occurrence.deleteMe()
                 deleted["occurrences"] += 1
@@ -648,7 +657,7 @@ def _delete_previous_kitchen_artifacts(root_comp, run_prefix=None):
         for index in range(root_comp.bRepBodies.count - 1, -1, -1):
             body = root_comp.bRepBodies.item(index)
             name = str(getattr(body, "name", "") or "")
-            if name.startswith("KITCHEN_") and (
+            if _is_kitchen_artifact(body, name=name) and (
                 run_prefix is None or name.startswith(run_prefix)
             ):
                 body.deleteMe()
@@ -723,7 +732,7 @@ def _draw_flat_profile_sketch(component, entry):
     return profile, None
 
 
-def _add_flat_body(component, entry):
+def _add_flat_body(component, entry, assembly_name=None):
     profile, error = _draw_flat_profile_sketch(component, entry)
     if error:
         return None, error
@@ -738,7 +747,7 @@ def _add_flat_body(component, entry):
 
     bodies = [extrude.bodies.item(index) for index in range(extrude.bodies.count)]
     body = bodies[0]
-    base_name = "KITCHEN_{}_{}".format(entry["kind"], sanitize_token(entry["id"], limit=80))
+    base_name = board_component_label(assembly_name or "Kitchen", entry["id"], fallback_assembly="Kitchen")
     for index, created_body in enumerate(bodies):
         created_body.name = base_name if index == 0 else "{}_part{}".format(base_name, index + 1)
         try:
@@ -754,7 +763,7 @@ def _add_flat_body(component, entry):
     return body, None
 
 
-def _add_oriented_panel_body(component, entry):
+def _add_oriented_panel_body(component, entry, assembly_name=None):
     """Create a panel already in its assembly plane/pose (used for YZ V-panels).
 
     Fusion moveFeatures with YZ rotation matrices are unreliable; drawing on
@@ -774,7 +783,7 @@ def _add_oriented_panel_body(component, entry):
 
     bodies = [extrude.bodies.item(index) for index in range(extrude.bodies.count)]
     body = bodies[0]
-    base_name = "KITCHEN_{}_{}".format(entry["kind"], sanitize_token(entry["id"], limit=80))
+    base_name = board_component_label(assembly_name or "Kitchen", entry["id"], fallback_assembly="Kitchen")
     for index, created_body in enumerate(bodies):
         created_body.name = base_name if index == 0 else "{}_part{}".format(base_name, index + 1)
         try:
@@ -878,8 +887,8 @@ def _move_bodies_to_target(component, bodies, matrix):
         return "Move flat body to target failed: {}".format(ex)
 
 
-def _add_assembly_body(component, entry):
-    return _add_flat_body(component, entry)
+def _add_assembly_body(component, entry, assembly_name=None):
+    return _add_flat_body(component, entry, assembly_name=assembly_name)
 
 
 def _body_bbox_mm(body):
@@ -1389,13 +1398,8 @@ def _kitchen_spawn_footprint_mm(entries):
 
 
 def _capture_position_snapshot(root_comp):
-    """Snapshot occurrence positions so parametric recomputes keep them."""
-    try:
-        design = root_comp.parentDesign
-        if design and design.snapshots and design.snapshots.hasPendingSnapshot:
-            design.snapshots.add()
-    except Exception:
-        pass
+    """Commit occurrence poses so later kitchen features do not rewind OHC/lounge."""
+    capture_position_snapshot(root_comp)
 
 
 def create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=None, create_cutouts=False, mode="flat", add_as_new=True, component_name=None, origin_x_mm=None, origin_y_mm=None):
@@ -1418,6 +1422,8 @@ def create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=N
     run_component_prefix = "KITCHEN_{}".format(
         sanitize_token(resolved_run_label, fallback="assembly", limit=60)
     )
+    # Lock existing assemblies (OHC, lounge, …) before any kitchen timeline edit.
+    _capture_position_snapshot(root)
     deleted_previous = _delete_previous_kitchen_artifacts(
         root,
         run_prefix=run_component_prefix if add_as_new else None,
@@ -1504,11 +1510,11 @@ def create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=N
                     panel_occurrence = None
             use_direct_assembly = mode == "flat_transform" and entry.get("plane") == "YZ"
             if use_direct_assembly:
-                body, error = _add_oriented_panel_body(panel_component, entry)
+                body, error = _add_oriented_panel_body(panel_component, entry, assembly_name=assembly_name)
             elif mode == "flat_transform":
-                body, error = _add_flat_body(panel_component, entry)
+                body, error = _add_flat_body(panel_component, entry, assembly_name=assembly_name)
             else:
-                body, error = _add_assembly_body(panel_component, entry)
+                body, error = _add_assembly_body(panel_component, entry, assembly_name=assembly_name)
             if error or body is None:
                 skipped.append({"id": entry["id"], "reason": error or "unknown body creation failure"})
                 continue

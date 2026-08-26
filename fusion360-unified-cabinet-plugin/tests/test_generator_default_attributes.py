@@ -277,8 +277,8 @@ class GeneratorDefaultAttributesTests(unittest.TestCase):
     def test_lounge_main_partition_middle_door(self):
         front = self.mod.lounge_board_semantics({"id": "main_front", "kind": "front_panel"})
         lid = self.mod.lounge_board_semantics({"id": "main_lid", "kind": "lid"})
-        door = self.mod.lounge_board_semantics({"id": "middle_cabinet_left_door", "kind": "cabinet_door"})
-        side = self.mod.lounge_board_semantics({"id": "middle_cabinet_left", "kind": "cabinet_side"})
+        door = self.mod.lounge_board_semantics({"id": "MC_L_DR", "kind": "cabinet_door"})
+        side = self.mod.lounge_board_semantics({"id": "MC_L", "kind": "cabinet_side"})
         self.assertEqual(front["panelClass"], "partition")
         self.assertEqual(lid["panelClass"], "partition")
         self.assertEqual(door["panelClass"], "door")
@@ -343,12 +343,12 @@ class GeneratorDefaultAttributesTests(unittest.TestCase):
 
     def test_lounge_milling_directions_xyz(self):
         cases = [
-            ({"id": "middle_cabinet_left_door", "kind": "cabinet_door"}, "+Y", "-Y", "MILLING"),
-            ({"id": "middle_cabinet_right_door", "kind": "cabinet_door"}, "+Y", "-Y", "MILLING"),
-            ({"id": "middle_cabinet_left", "kind": "cabinet_side"}, "+X", "-X", "MILLING"),
-            ({"id": "middle_cabinet_right", "kind": "cabinet_side"}, "-X", "+X", "MILLING"),
-            ({"id": "middle_cabinet_top", "kind": "cabinet_top"}, "-Z", "+Z", "MILLING"),
-            ({"id": "middle_cabinet_bottom", "kind": "cabinet_bottom"}, "+Z", "-Z", "MILLING"),
+            ({"id": "MC_L_DR", "kind": "cabinet_door"}, "+Y", "-Y", "MILLING"),
+            ({"id": "MC_R_DR", "kind": "cabinet_door"}, "+Y", "-Y", "MILLING"),
+            ({"id": "MC_L", "kind": "cabinet_side"}, "+X", "-X", "MILLING"),
+            ({"id": "MC_R", "kind": "cabinet_side"}, "-X", "+X", "MILLING"),
+            ({"id": "MC_TOP", "kind": "cabinet_top"}, "-Z", "+Z", "MILLING"),
+            ({"id": "MC_BOT", "kind": "cabinet_bottom"}, "+Z", "-Z", "MILLING"),
             ({"id": "main_top_lid", "kind": "lid"}, "-Z", "+Z", "MILLING"),
             (
                 {
@@ -363,8 +363,8 @@ class GeneratorDefaultAttributesTests(unittest.TestCase):
             ({"id": "main_top", "kind": "top_panel"}, "", "", "EITHER"),
             ({"id": "main_front", "kind": "front_panel"}, "", "", "EITHER"),
             ({"id": "l_side", "kind": "side_panel"}, "", "", "EITHER"),
-            ({"id": "middle_cabinet_mid_divider", "kind": "cabinet_divider"}, "", "", "EITHER"),
-            ({"id": "parallel_avoidance_front", "kind": "avoidance_front"}, "", "", "EITHER"),
+            ({"id": "MC_MID", "kind": "cabinet_divider"}, "", "", "EITHER"),
+            ({"id": "PA_FRONT", "kind": "avoidance_front"}, "", "", "EITHER"),
         ]
         for board, milling_dir, colour_dir, cutting in cases:
             label = "{}/{}".format(board.get("id"), board.get("kind") or "")

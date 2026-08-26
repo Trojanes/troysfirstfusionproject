@@ -13,7 +13,10 @@ from lay_flat_analyze import (  # noqa: E402
     analyze_lay_flat_body,
     cache_is_fresh,
     feature_evidence_complete,
+    feature_ring_evidence_count,
     milling_side_faces,
+    supplement_features_from_evidence_rings,
+    translate_evidence_rings,
     tint_milling_face,
     tint_milling_side,
 )
@@ -28,6 +31,104 @@ class LayFlatAnalyzeTests(unittest.TestCase):
         self.assertFalse(feature_evidence_complete([{"id": 1}], 2))
         self.assertFalse(feature_evidence_complete([], -1))
         self.assertTrue(feature_evidence_complete([], 0))
+
+    def test_feature_ring_count_dedupes_same_bounds_hole_and_floor(self):
+        square = [[0, 0], [40, 0], [40, 40], [0, 40], [0, 0]]
+        rings = [
+            {"role": "outer", "cutType": "OUTER", "points": [[0, 0], [200, 0], [200, 100], [0, 100]]},
+            {"role": "feature", "source": "flatBody", "cutType": "HALF", "points": square},
+            {"role": "feature", "source": "flatBodyFloor", "cutType": "HALF", "points": square},
+        ]
+        self.assertEqual(feature_ring_evidence_count(rings), 1)
+        # Same bounds: supplement must not invent a second feature.
+        filled = supplement_features_from_evidence_rings(
+            [{"cutType": "HALF", "points": square, "openSurfaceIs": "A"}],
+            rings,
+            18,
+        )
+        self.assertEqual(len(filled), 1)
+
+    def test_supplement_adds_through_hole_inside_rebate(self):
+        rebate = [[10, 10], [90, 10], [90, 70], [10, 70], [10, 10]]
+        through = [[20, 20], [80, 20], [80, 60], [20, 60], [20, 20]]
+        rings = [
+            {"role": "outer", "cutType": "OUTER", "points": [[0, 0], [100, 0], [100, 80], [0, 80]]},
+            {
+                "role": "feature",
+                "source": "flatBody",
+                "cutType": "HALF",
+                "points": through,
+            },
+            {
+                "role": "feature",
+                "source": "flatBodyFloor",
+                "cutType": "HALF",
+                "points": rebate,
+            },
+        ]
+        self.assertEqual(feature_ring_evidence_count(rings), 2)
+        filled = supplement_features_from_evidence_rings(
+            [{"cutType": "HALF", "kind": "pocket", "points": rebate, "openSurfaceIs": "A"}],
+            rings,
+            18,
+        )
+        self.assertEqual(len(filled), 2)
+        added = filled[1]
+        self.assertEqual(added["cutType"], "FULL")
+        self.assertEqual(added["kind"], "pocket")
+        self.assertEqual(added["depthMm"], 18)
+        self.assertGreaterEqual(len(added["pointsLocal"]), 3)
+        self.assertTrue(feature_evidence_complete(filled, 2))
+
+    def test_translate_evidence_rings_lets_supplement_match_local_rebate(self):
+        rebate = [[225, 140], [675, 140], [675, 420], [225, 420], [225, 140]]
+        through = [[234, 149], [666, 149], [666, 411], [234, 411], [234, 149]]
+        world_rebate = [[p[0] + 304.2, p[1] + 14060] for p in rebate]
+        world_through = [[p[0] + 304.2, p[1] + 14060] for p in through]
+        rings = translate_evidence_rings(
+            [
+                {"role": "outer", "cutType": "OUTER", "points": [[304.2, 14060], [1204.2, 14060], [1204.2, 14620], [304.2, 14620]]},
+                {"role": "feature", "source": "flatBody", "cutType": "HALF", "points": world_through},
+                {"role": "feature", "source": "flatBodyFloor", "cutType": "HALF", "points": world_rebate},
+            ],
+            -304.2,
+            -14060,
+        )
+        filled = supplement_features_from_evidence_rings(
+            [{
+                "cutType": "HALF",
+                "kind": "pocket",
+                "points": rebate,
+                "openSurfaceIs": "A",
+                "depthMm": 9,
+                "holes": [through],
+            }],
+            rings,
+            18,
+        )
+        self.assertEqual(len(filled), 2)
+        added = next(item for item in filled if str(item.get("cutType")) == "FULL")
+        self.assertEqual(added["depthMm"], 18)
+        xs = [p[0] for p in added["pointsLocal"]]
+        ys = [p[1] for p in added["pointsLocal"]]
+        self.assertAlmostEqual(min(xs), 234, delta=0.2)
+        self.assertAlmostEqual(min(ys), 149, delta=0.2)
+        self.assertLess(max(ys), 500)
+
+    def test_supplement_does_not_duplicate_retessellated_rebate(self):
+        rebate = [[10, 10], [90, 10], [90, 70], [10, 70], [10, 10]]
+        rebate_dense = [
+            [10, 10], [50, 10], [90, 10], [90, 40], [90, 70], [10, 70], [10, 10]
+        ]
+        rings = [
+            {"role": "feature", "source": "flatBodyFloor", "cutType": "HALF", "points": rebate_dense},
+        ]
+        filled = supplement_features_from_evidence_rings(
+            [{"cutType": "HALF", "kind": "pocket", "points": rebate, "openSurfaceIs": "A", "depthMm": 9}],
+            rings,
+            18,
+        )
+        self.assertEqual(len(filled), 1)
 
     def test_detailed_signature_detects_internal_face_move(self):
         class Point:

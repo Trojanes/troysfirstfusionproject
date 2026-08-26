@@ -174,8 +174,11 @@ class LoungeController:
         # then reload so adapter edits always take effect.
         import importlib
 
+        add_as_new = payload.get("addAsNewCabinet") is not False if isinstance(payload, dict) else True
         adapter_module = importlib.reload(importlib.import_module("modules.lounge.fusion_adapter"))
-        summary = adapter_module.create_lounge_bodies(self.fusion, result, run_label=run_label, **_naming_args(payload, self.fusion))
+        summary = adapter_module.create_lounge_bodies(
+            self.fusion, result, run_label=run_label, add_as_new=add_as_new, **_naming_args(payload, self.fusion)
+        )
         summary["ok"] = len(summary.get("errors") or []) == 0
         summary["action"] = "lounge.createFlatBodies"
         return ("loungeFlatBodyResult", summary)
@@ -199,8 +202,11 @@ class LoungeController:
         run_label = payload.get("runLabel") if isinstance(payload, dict) else None
         import importlib
 
+        add_as_new = payload.get("addAsNewCabinet") is not False if isinstance(payload, dict) else True
         adapter_module = importlib.reload(importlib.import_module("modules.lounge.fusion_adapter"))
-        summary = adapter_module.create_lounge_assembly_bodies(self.fusion, result, run_label=run_label, **_naming_args(payload, self.fusion))
+        summary = adapter_module.create_lounge_assembly_bodies(
+            self.fusion, result, run_label=run_label, add_as_new=add_as_new, **_naming_args(payload, self.fusion)
+        )
         summary["ok"] = len(summary.get("errors") or []) == 0
         summary["action"] = "lounge.createAssemblyBodies"
         return ("loungeAssemblyBodyResult", summary)

@@ -225,6 +225,7 @@ class OverheadController:
                     origin_y_mm = float(payload.get("originYMm") or 0.0)
                 except Exception:
                     origin_y_mm = 0.0
+        add_as_new = payload.get("addAsNewCabinet") is not False if isinstance(payload, dict) else True
         adapter_module = importlib.reload(board_fusion_adapter)
         rough = adapter_module.create_rough_bodies_from_board_result(
             self.fusion,
@@ -241,6 +242,7 @@ class OverheadController:
             component_name=assembly_name or "OHC",
             origin_x_mm=origin_x_mm,
             origin_y_mm=origin_y_mm,
+            add_as_new=add_as_new,
         )
         ok = len(rough.get("errors") or []) == 0
         if ok and self.fusion:
@@ -284,6 +286,9 @@ class OverheadController:
                     "errors": rough.get("errors", []),
                     "runLabel": rough.get("runLabel"),
                     "faceInitSummary": rough.get("faceInitSummary", {}),
+                    "addAsNewCabinet": rough.get("addAsNewCabinet"),
+                    "deletedPrevious": rough.get("deletedPrevious"),
+                    "originAvoidance": rough.get("originAvoidance"),
                 },
             ),
         )

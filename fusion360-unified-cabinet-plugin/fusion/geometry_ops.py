@@ -3,6 +3,20 @@ import adsk.core
 
 ATTRIBUTE_GROUP = "UnifiedCabinetPlugin"
 MODEL_Z_OFFSET_MM = 10000.0
+IDENTITY_ATTR_GROUPS = (
+    "CabinetNC",
+    "UnifiedCabinetPlugin",
+    "UnifiedCabinet",
+    "UnifiedCabinet.Panel",
+)
+MODULE_NAME_PREFIXES = {
+    "kitchen": ("KITCHEN_", "K_", "Kitchen-"),
+    "lounge": ("LOUNGE_", "L_", "Lounge-"),
+    "general_tall": ("GT_", "GT-"),
+    "overhead": ("OH_", "OHC-", "OHC_"),
+    "small_cabinet": ("SC_", "SC-"),
+    "u_shape_overhead": ("UOH_", "U Shape OHC-"),
+}
 
 
 def mm_to_cm(value_mm):
@@ -53,23 +67,79 @@ def move_body_min_corner_to(root_comp, body, target_x_mm, target_y_mm, target_z_
     )
 
 
+def entity_attr(entity, name):
+    """Read an identity attribute from any known generator group."""
+    if not entity:
+        return ""
+    try:
+        attrs = entity.attributes
+    except Exception:
+        return ""
+    if not attrs:
+        return ""
+    for group in IDENTITY_ATTR_GROUPS:
+        try:
+            attr = attrs.itemByName(group, name)
+            if attr and attr.value:
+                return str(attr.value).strip()
+        except Exception:
+            pass
+    return ""
+
+
+def entity_module(entity):
+    return entity_attr(entity, "module")
+
+
+def entity_board_id(entity):
+    return entity_attr(entity, "boardId") or entity_attr(entity, "bodyId")
+
+
+def entity_assembly_name(entity):
+    return entity_attr(entity, "assemblyName")
+
+
+def name_looks_like_module(name, module):
+    """Legacy browser-name fallback. Display names are not identity."""
+    text = str(name or "")
+    if not text:
+        return False
+    for prefix in MODULE_NAME_PREFIXES.get(str(module or ""), ()):
+        if text.startswith(prefix):
+            return True
+    return False
+
+
+def is_module_artifact(entity, module, name=None):
+    """True when entity belongs to ``module`` (attribute first, name last)."""
+    found = entity_module(entity)
+    if found:
+        return found == str(module or "")
+    if name is None:
+        try:
+            name = getattr(entity, "name", "") or ""
+        except Exception:
+            name = ""
+    return name_looks_like_module(name, module)
+
+
 def body_matches_module(body, name_prefixes=None, module=None, preview_mode=None):
+    found_module = entity_module(body)
+    if module is not None and found_module:
+        if found_module != str(module):
+            return False
+        if preview_mode is None:
+            return True
+        return entity_attr(body, "previewMode") == str(preview_mode)
     name = str(getattr(body, "name", "") or "")
     if name_prefixes:
         for prefix in name_prefixes:
             if name.startswith(str(prefix)):
                 return True
-    try:
-        attrs = body.attributes
-        if module is not None:
-            attr = attrs.itemByName(ATTRIBUTE_GROUP, "module")
-            if attr and str(attr.value) == str(module):
-                if preview_mode is None:
-                    return True
-                mode_attr = attrs.itemByName(ATTRIBUTE_GROUP, "previewMode")
-                return bool(mode_attr and str(mode_attr.value) == str(preview_mode))
-    except Exception:
-        pass
+    if module is not None and name_looks_like_module(name, module):
+        if preview_mode is None:
+            return True
+        return entity_attr(body, "previewMode") == str(preview_mode)
     return False
 
 
@@ -152,6 +222,53 @@ def capture_position_snapshot(root_comp):
         pass
 
 
+def _xy_rect_from_bbox_cm(bb):
+    """Convert a Fusion bounding box (cm) to (minX, minY, maxX, maxY) mm."""
+    try:
+        z0 = bb.minPoint.z * 10.0
+        if z0 > GENERATION_AVOID_Z_LIMIT_MM:
+            return None
+        x0 = bb.minPoint.x * 10.0
+        y0 = bb.minPoint.y * 10.0
+        x1 = bb.maxPoint.x * 10.0
+        y1 = bb.maxPoint.y * 10.0
+        if x1 <= x0 or y1 <= y0:
+            return None
+        return (x0, y0, x1, y1)
+    except Exception:
+        return None
+
+
+def _world_rect_from_occurrence_mm(occurrence):
+    """Root-occurrence XY box in model millimetres (not local child space)."""
+    try:
+        rect = _xy_rect_from_bbox_cm(occurrence.boundingBox)
+        if rect is not None:
+            return rect
+    except Exception:
+        pass
+    try:
+        bb = occurrence.component.boundingBox
+        transform = occurrence.transform
+        corners = []
+        for x in (bb.minPoint.x, bb.maxPoint.x):
+            for y in (bb.minPoint.y, bb.maxPoint.y):
+                for z in (bb.minPoint.z, bb.maxPoint.z):
+                    point = adsk.core.Point3D.create(x, y, z)
+                    point.transformBy(transform)
+                    corners.append(point)
+        xs = [p.x * 10.0 for p in corners]
+        ys = [p.y * 10.0 for p in corners]
+        zs = [p.z * 10.0 for p in corners]
+        if min(zs) > GENERATION_AVOID_Z_LIMIT_MM:
+            return None
+        if max(xs) <= min(xs) or max(ys) <= min(ys):
+            return None
+        return (min(xs), min(ys), max(xs), max(ys))
+    except Exception:
+        return None
+
+
 def collect_existing_ground_bboxes_mm(root_comp):
     """World-space XY bounding boxes of existing assemblies near the ground.
 
@@ -171,23 +288,11 @@ def collect_existing_ground_bboxes_mm(root_comp):
         seen.add(key)
         boxes.append(rect)
 
-    def _rect_from_bounding_box(bb):
-        try:
-            z0 = bb.minPoint.z * 10.0
-            if z0 > GENERATION_AVOID_Z_LIMIT_MM:
-                return None
-            return (
-                bb.minPoint.x * 10.0, bb.minPoint.y * 10.0,
-                bb.maxPoint.x * 10.0, bb.maxPoint.y * 10.0,
-            )
-        except Exception:
-            return None
-
     try:
         for index in range(root_comp.occurrences.count):
             occurrence = root_comp.occurrences.item(index)
             try:
-                _append_rect(_rect_from_bounding_box(occurrence.boundingBox))
+                _append_rect(_world_rect_from_occurrence_mm(occurrence))
             except Exception:
                 continue
     except Exception:
@@ -198,7 +303,7 @@ def collect_existing_ground_bboxes_mm(root_comp):
             try:
                 if not body.isSolid:
                     continue
-                _append_rect(_rect_from_bounding_box(body.boundingBox))
+                _append_rect(_xy_rect_from_bbox_cm(body.boundingBox))
             except Exception:
                 continue
     except Exception:
@@ -219,11 +324,12 @@ def avoid_existing_at_origin(root_comp, origin_x_mm, origin_y_mm, footprint_mm):
     ``footprint_mm``: (min_x, max_x, min_y, max_y) of new content in design
     coordinates relative to the spawn origin. Returns (x, y, info-dict).
     """
-    info = {"shifted": False, "slots": 0}
+    info = {"shifted": False, "slots": 0, "existingCount": 0}
     if not footprint_mm:
         return origin_x_mm, origin_y_mm, info
     try:
         existing = collect_existing_ground_bboxes_mm(root_comp)
+        info["existingCount"] = len(existing)
         if not existing:
             return origin_x_mm, origin_y_mm, info
         width = max(float(footprint_mm[1]) - float(footprint_mm[0]), 1.0)

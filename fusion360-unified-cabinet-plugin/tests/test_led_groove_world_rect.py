@@ -55,6 +55,7 @@ def _load_adapter():
 
         geometry_ops.mm_to_cm = mm_to_cm
         geometry_ops.sanitize_token = sanitize_token
+        geometry_ops.entity_board_id = lambda _entity: ""
         geometry_ops.avoid_existing_at_origin = _noop
         geometry_ops.capture_position_snapshot = _noop
         geometry_ops.move_body_by_mm = _noop

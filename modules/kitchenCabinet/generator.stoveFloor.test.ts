@@ -40,8 +40,8 @@ function assertStovePair(belowType: "drawer" | "down_flap" | "left_door" | "righ
   const result = generateKitchenCabinetGeometry(stoveState(belowType));
   assert.deepEqual(result.errors, [], `${belowType}: ${result.errors.join("; ")}`);
 
-  const full = result.boards.find((board) => board.id === "stove-column-stove-zone-bottom");
-  const half = result.boards.find((board) => board.id === "stove-column-stove-zone-stove-half-divider");
+  const full = result.boards.find((board) => board.id === "SH_stove-zone");
+  const half = result.boards.find((board) => board.id === "SHD_stove-zone");
   assert.ok(full, `${belowType}: stove full-depth shelf missing`);
   assert.equal(full.type, "full_depth_shelf");
   assert.ok(half, `${belowType}: stove half divider missing`);
@@ -74,8 +74,8 @@ function assertStovePair(belowType: "drawer" | "down_flap" | "left_door" | "righ
   assert.equal(result.slotRequests.filter((slot) => slot.boardId === full.id).length, 2);
   assert.equal(result.slotRequests.filter((slot) => slot.boardId === half.id).length, 2);
 
-  const leftPanel = result.boards.find((board) => board.id.endsWith("-stove-side-panel-left"));
-  const rightPanel = result.boards.find((board) => board.id.endsWith("-stove-side-panel-right"));
+  const leftPanel = result.boards.find((board) => board.id === "SSP_L_stove-zone" || board.id.endsWith("-stove-side-panel-left"));
+  const rightPanel = result.boards.find((board) => board.id === "SSP_R_stove-zone" || board.id.endsWith("-stove-side-panel-right"));
   assert.ok(leftPanel, `${belowType}: left stove side panel missing`);
   assert.ok(rightPanel, `${belowType}: right stove side panel missing`);
   for (const panel of [leftPanel, rightPanel]) {
@@ -107,8 +107,8 @@ for (const type of ["drawer", "down_flap", "left_door", "right_door", "double_do
 {
   const result = generateKitchenCabinetGeometry(stoveState());
   assert.deepEqual(result.errors, [], result.errors.join("; "));
-  assert.equal(result.boards.some((board) => board.id.includes("stove-half-divider")), false);
-  const extension = result.boards.find((board) => board.id === "stove-column-stove-zone-bottom-full-extension");
+  assert.equal(result.boards.some((board) => board.id.includes("stove-half-divider") || board.id.startsWith("SHD_")), false);
+  const extension = result.boards.find((board) => board.id === "AFX_stove-zone" || board.id === "stove-column-stove-zone-bottom-full-extension");
   const b3 = result.boards.find((board) => board.id === "B3");
   assert.ok(extension, "lone bottom stove rear full-depth extension missing");
   assert.ok(b3, "B3 missing");
@@ -138,6 +138,50 @@ for (const type of ["drawer", "down_flap", "left_door", "right_door", "double_do
     result.errors.some((error) => error.includes("Stove zone stove-not-top must be the top zone")),
     result.errors.join("; "),
   );
+}
+
+{
+  const twoCol = (extendLeft: boolean): KitchenLayoutState => ({
+    globalSettings: {
+      length: 1400,
+      depth: 500,
+      height: 880,
+      materialThickness: CPT,
+      frontThickness: 16,
+      frontClearance: CLEARANCE,
+      bottomClearanceHeight: 55,
+      bottomClearanceStyle: "style_1",
+      ledGroove: true,
+    },
+    columns: [
+      {
+        id: "stove-col",
+        width: 700,
+        columnType: "stove",
+        zones: [{
+          id: "stove-zone",
+          height: 825,
+          zoneType: "stove",
+          leftSidePanelOptions: { panelType: "carcass", frontVisible: false, bchNotchEnabled: true, grooveVisible: true, extendT2T3B4ToOuterFace: extendLeft, strengtheningStripEnabled: false },
+        }],
+      },
+      {
+        id: "drawer-col",
+        width: 700,
+        columnType: "drawer",
+        zones: [{ id: "drawer-zone", height: 825, zoneType: "drawer" }],
+      },
+    ],
+    wheelAvoidances: [],
+  });
+  const extended = generateKitchenCabinetGeometry(twoCol(true));
+  const stopped = generateKitchenCabinetGeometry(twoCol(false));
+  const t2On = extended.boards.find((board) => board.type === "T2");
+  const t2Off = stopped.boards.find((board) => board.type === "T2");
+  const leftV = extended.vPanels[0];
+  assert.ok(t2On && t2Off && leftV, "T2 and left V required");
+  assert.equal(t2On.x0, 0, "extend on: T2 must reach the left outer face");
+  assert.ok(t2Off.x0 >= leftV.x1 - 0.01, "extend off: T2 must stop at the stove outer V inner face");
 }
 
 console.log("kitchen stove full + half floor tests passed");

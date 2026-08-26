@@ -108,23 +108,48 @@ def _board_ids_from_result(result: Optional[Dict[str, Any]]) -> set:
     return ids
 
 
+def _panel_board_token(panel) -> str:
+    for attr in ("boardId", "sourceBoardId", "localBoardId"):
+        value = getattr(panel, attr, None)
+        if value:
+            return str(value)
+    panel_id = str(getattr(panel, "panelId", "") or "")
+    return extract_board_suffix(panel_id)
+
+
+def _body_name_has_board_id(body_name: str, board_ids: set) -> bool:
+    text = str(body_name or "")
+    if not text:
+        return False
+    for board_id in board_ids:
+        token = str(board_id)
+        if not token:
+            continue
+        if (
+            text == token
+            or text.endswith("-" + token)
+            or text.endswith("_" + token)
+            or token in text
+        ):
+            return True
+    return False
+
+
 def _filter_fusion_panels(all_panels, board_ids: set, case_key: str):
     """Keep only panels that belong to this generator result (avoid leftover cabinets)."""
     filtered = []
     for panel in all_panels or []:
         panel_id = str(getattr(panel, "panelId", "") or "")
         suffix = extract_board_suffix(panel_id)
+        token = _panel_board_token(panel)
         body = str(getattr(panel, "bodyName", "") or "")
-        if suffix in board_ids or panel_id in board_ids:
+        if token in board_ids or suffix in board_ids or panel_id in board_ids:
             filtered.append(panel)
             continue
-        if case_key == "kitchen" and "KITCHEN_" in body:
-            if any(bid in body for bid in board_ids):
-                filtered.append(panel)
-        elif case_key == "general_tall" and (body.startswith("GT_") or "generalTall." in panel_id):
-            if suffix in board_ids:
-                filtered.append(panel)
-        elif case_key == "lounge" and suffix in board_ids:
+        if case_key == "general_tall" and "generalTall." in panel_id and suffix in board_ids:
+            filtered.append(panel)
+            continue
+        if _body_name_has_board_id(body, board_ids):
             filtered.append(panel)
     return filtered
 

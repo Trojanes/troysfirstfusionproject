@@ -160,6 +160,59 @@ def _metadata_refs(body):
             yield ref
 
 
+def _occurrence_path_from_body(body):
+    """Best-effort occurrence index path for an assembly body. ``[]`` if at root."""
+    occurrence = getattr(body, "assemblyContext", None) if body is not None else None
+    if occurrence is None:
+        return []
+    try:
+        raw = getattr(occurrence, "occurrencePath", None)
+        if raw is None:
+            return []
+        try:
+            count = int(raw.count or 0)
+        except Exception:
+            count = len(raw) if hasattr(raw, "__len__") else 0
+        path = []
+        for index in range(count):
+            try:
+                item = raw.item(index) if hasattr(raw, "item") else raw[index]
+            except Exception:
+                item = None
+            if item is None:
+                continue
+            try:
+                path.append(int(getattr(item, "index", index)))
+            except Exception:
+                path.append(index)
+        return path
+    except Exception:
+        return []
+
+
+def keys_for_assembly_body(body):
+    """SourceRef keys that a LAY_FLAT copy of ``body`` may carry."""
+    keys = set()
+    if body is None:
+        return keys
+    for entity in _attribute_entities(body):
+        try:
+            token = _text(getattr(entity, "entityToken", "") or "")
+        except Exception:
+            token = ""
+        if token:
+            keys.add("token:{}".format(token))
+        name = _text(getattr(entity, "name", "") or "")
+        path = _occurrence_path_from_body(entity)
+        if name:
+            keys.add(key({
+                "entityToken": "",
+                "occurrencePath": path,
+                "bodyName": name,
+            }))
+    return keys
+
+
 def from_lay_flat_body(body):
     """Read canonical lineage across proxy/native attribute stores."""
     if body is None:

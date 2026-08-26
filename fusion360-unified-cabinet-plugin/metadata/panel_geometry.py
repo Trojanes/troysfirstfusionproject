@@ -651,6 +651,37 @@ def _face_outer_loop_2d(face, body, thickness_axis, coordinate_mode="body"):
     return _concat_points(segments), segments, has_arc
 
 
+def _face_inner_loops_2d(face, body, thickness_axis, coordinate_mode="body"):
+    """Inner loops of a floor face — rebate ring holes, not the outer opening."""
+    _outer, inners = _loops_of_face(face)
+    rings = []
+    has_arc_any = False
+    for loop in inners:
+        segments, has_arc = _loop_segments_2d(
+            loop, body, thickness_axis, coordinate_mode=coordinate_mode
+        )
+        points = _concat_points(segments)
+        if len(points) < 3:
+            continue
+        rings.append(points)
+        has_arc_any = has_arc_any or bool(has_arc)
+    return rings, has_arc_any
+
+
+def _rebate_holes_inside_outer(outer, inners):
+    """Keep floor inner rings that are a real hole inside the rebate outer."""
+    outer_area = abs(_polygon_area(outer) or 0.0)
+    if outer_area < 1.0:
+        return []
+    kept = []
+    for ring in inners or []:
+        area = abs(_polygon_area(ring) or 0.0)
+        if area < 1.0 or area >= outer_area * 0.98:
+            continue
+        kept.append(ring)
+    return kept
+
+
 def _circle_feature_fields(segments, body, thickness_axis, coordinate_mode="body"):
     if len(segments) == 1 and segments[0].get("isCircle"):
         center2d, radius_mm = _circle_center_radius_2d(
@@ -802,6 +833,11 @@ def extract_features(
         )
         if len(points) < 2:
             continue
+        inner_rings, inner_has_arc = _face_inner_loops_2d(
+            face, body, thickness_axis, coordinate_mode=coordinate_mode
+        )
+        inner_rings = _rebate_holes_inside_outer(points, inner_rings)
+        has_arc = bool(has_arc or inner_has_arc)
         # Prefer wall-adjacency / inner-loop topology over nearest-surface:
         # hinge cups are often deeper than half the panel.
         open_debug = {}
@@ -826,11 +862,19 @@ def extract_features(
             "openDecision": open_debug,
             "floorOffsetMm": round(float(offset), 3),
         }
+        if inner_rings:
+            feature["innerPoints"] = inner_rings
         feature.update(
             _circle_feature_fields(
                 segments, body, thickness_axis, coordinate_mode=coordinate_mode
             )
         )
+        if feature.get("kind") == FEATURE_KIND_GROOVE and feature.get("widthMm") is None:
+            width = groove_opening_width_mm(points)
+            if width is None:
+                width = groove_width_from_segments(segments, points)
+            if width is not None:
+                feature["widthMm"] = width
         if not _is_duplicate_feature(feature, features):
             features.append(feature)
 
@@ -1030,6 +1074,33 @@ def groove_opening_width_mm(points):
     return round(short, 3)
 
 
+def groove_width_from_segments(segments, points=None):
+    """Shortest 3D edge length (mm) when the 2D opening collapsed to a line."""
+    lengths = []
+    for segment in segments or []:
+        if not isinstance(segment, dict):
+            continue
+        edge = segment.get("edge")
+        try:
+            length_mm = float(edge.length) * 10.0
+        except Exception:
+            continue
+        if length_mm > 1e-6:
+            lengths.append(length_mm)
+    if not lengths:
+        return None
+    short = min(lengths)
+    if points:
+        ring = [list(point[:2]) for point in points if len(point) >= 2]
+        if len(ring) >= 2:
+            xs = [float(point[0]) for point in ring]
+            ys = [float(point[1]) for point in ring]
+            long_span = max(max(xs) - min(xs), max(ys) - min(ys))
+            if long_span > 1e-6 and short >= long_span * 0.5:
+                return None
+    return round(short, 3)
+
+
 def _public_feature(feature):
     payload = {
         "featureId": feature.get("featureId"),
@@ -1048,6 +1119,19 @@ def _public_feature(feature):
             [round(x, 3), round(y, 3)] for (x, y) in (feature.get("points") or [])
         ],
     }
+    holes = feature.get("innerPoints") or feature.get("holes") or []
+    hole_rings = []
+    for ring in holes:
+        pts = []
+        for point in ring or []:
+            if isinstance(point, dict):
+                pts.append([round(float(point.get("x") or 0.0), 3), round(float(point.get("y") or 0.0), 3)])
+            elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                pts.append([round(float(point[0]), 3), round(float(point[1]), 3)])
+        if len(pts) >= 3:
+            hole_rings.append(pts)
+    if hole_rings:
+        payload["holes"] = hole_rings
     kind = str(feature.get("kind") or "").strip().lower()
     if kind == FEATURE_KIND_GROOVE:
         width = feature.get("widthMm")

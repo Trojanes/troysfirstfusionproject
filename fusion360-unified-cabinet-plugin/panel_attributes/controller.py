@@ -12,6 +12,7 @@ panel_source_ref = importlib.reload(panel_source_ref)
 attribute_state_service = importlib.reload(attribute_state_service)
 
 import door_face_orientation
+import grain_direction
 import metadata_inspector
 import milling_surface_propagation
 import tag_metadata_editor
@@ -39,6 +40,7 @@ from panel_search_service import collect_all_tags, collect_defined_panels, resol
 
 
 door_face_orientation = importlib.reload(door_face_orientation)
+grain_direction = importlib.reload(grain_direction)
 metadata_inspector = importlib.reload(metadata_inspector)
 milling_surface_propagation = importlib.reload(milling_surface_propagation)
 tag_metadata_editor = importlib.reload(tag_metadata_editor)
@@ -76,6 +78,38 @@ def _pump_fusion_events():
         adsk.doEvents()
     except Exception:
         pass
+
+
+def _read_grain_along_from_body(body):
+    """Return (grainAlongMm or '', error)."""
+    metadata, read_error = tag_metadata_editor._read_body_metadata_raw(body)
+    if read_error:
+        return "", read_error
+    return attribute_state_service.grain_along_mm_value(metadata), None
+
+
+def _write_grain_along_on_body(body, grain_mm):
+    """Write classification.grainAlongMm onto a Fusion body.
+
+    Also stamps outline/dimension grain so Lay Flat cache goes stale.
+    Returns (apply_result, error).
+    """
+    metadata, read_error = tag_metadata_editor._read_body_metadata_raw(body)
+    if read_error:
+        return None, read_error
+    base = tag_metadata_editor._bootstrap_body_metadata(body, metadata)
+    patched, result = tag_metadata_editor.apply_grain_along_to_metadata(base, grain_mm)
+    dims = patched.get("dimensions")
+    if isinstance(dims, dict):
+        dims["grainAlongMm"] = grain_mm
+    cache = patched.get("nestingFlatOutline")
+    if isinstance(cache, dict):
+        cache["grainAlongMm"] = grain_mm
+        outline = cache.get("outline")
+        if isinstance(outline, dict):
+            outline["grainAlongMm"] = grain_mm
+    tag_metadata_editor._write_body_metadata(body, patched)
+    return result, None
 
 
 def _strip_temp_bodies_for_json(value):
@@ -1205,6 +1239,8 @@ class PanelAttributesController:
                     check["cuttingFace"],
                     allow_parts_in_part=allow_parts_in_part,
                     reflected_source=reflected,
+                    grain_along_mm=(dimensions or {}).get("grainAlongMm")
+                    or (outline or {}).get("grainAlongMm"),
                 )
                 working = tag_metadata_editor._bootstrap_body_metadata(body, metadata)
                 working[nesting_outline_cache.CACHE_KEY] = cache_record
@@ -3086,6 +3122,15 @@ class PanelAttributesController:
         double_side_n = int(result.get("doubleSideCount") or 0)
         if double_side_n:
             message += " Double-sided HALF blocked: {}.".format(double_side_n)
+        outline_n = sum(
+            1
+            for item in failed
+            if "bottom_outline_notched" in (item.get("reasons") or [])
+        )
+        if outline_n:
+            message += " Colour outer notched by edge-open feature: {}.".format(
+                outline_n
+            )
         if not ok:
             message += " Failed: {}.".format(int(result.get("failedCount") or 0))
             if selected_count:
@@ -3123,6 +3168,12 @@ class PanelAttributesController:
                     "halfStatus": item.get("halfStatus") or "",
                     "topHalfCount": int(item.get("topHalfCount") or 0),
                     "bottomHalfCount": int(item.get("bottomHalfCount") or 0),
+                    "bottomOutlineNotched": bool(
+                        item.get("bottomOutlineNotched")
+                    ),
+                    "bottomOutlineNotchReason": str(
+                        item.get("bottomOutlineNotchReason") or ""
+                    ),
                 }
                 for item in failed[:80]
             ],
@@ -4215,10 +4266,10 @@ class PanelAttributesController:
         overwrite = bool((payload or {}).get("overwrite"))
 
         zone_filter = str((payload or {}).get("zoneFilter") or "all").strip().lower() or "all"
-        # Nesting/light scan is enough: classification + identity for write path.
-        # Full face-overlay scan was the dominant cost (and was run twice).
+        # Light scan (no face overlay) but keep unmarked solids — imported /
+        # copied boards often have no module attrs and were previously dropped.
         records, counts, diagnostics = metadata_inspector.scan_panel_metadata(
-            root, zone_filter=zone_filter, detail="nesting"
+            root, zone_filter=zone_filter, detail="thickness"
         )
         updated = 0
         skipped = 0
@@ -4327,8 +4378,26 @@ class PanelAttributesController:
                     if isinstance(record.get("metadata"), dict)
                     else {}
                 )
+            if not isinstance(existing, dict):
+                existing = {}
+            existing = dict(existing)
+            identity = dict(existing.get("identity") or {})
+            if not str(identity.get("panelId") or "").strip():
+                identity["panelId"] = str(
+                    record.get("panelId")
+                    or metadata_inspector._unmarked_panel_id(
+                        record.get("componentName"), record.get("bodyName")
+                    )
+                )
+                identity["sourceBoardId"] = str(
+                    record.get("sourceBoardId")
+                    or record.get("bodyName")
+                    or record.get("componentName")
+                    or identity["panelId"]
+                )
+                identity["runId"] = identity.get("runId") or "thickness"
+                existing["identity"] = identity
             if isinstance(record.get("derivedTags"), dict):
-                existing = dict(existing)
                 existing["derivedTags"] = dict(record.get("derivedTags") or {})
             board_state = attribute_state_service.board_type_state(existing)
             if bool(board_state.get("locked")):
@@ -4378,7 +4447,7 @@ class PanelAttributesController:
         # No second full scan — records above already reflect writes for the UI list.
         if isinstance(diagnostics, dict):
             diagnostics = dict(diagnostics)
-            diagnostics["scanDetail"] = "nesting"
+            diagnostics["scanDetail"] = "thickness"
             diagnostics["rescanAfterWrite"] = False
         return "panelAttributesResult", {
             "ok": True,
@@ -4390,7 +4459,7 @@ class PanelAttributesController:
             "counts": counts,
             "diagnostics": diagnostics or {},
             "zoneFilter": zone_filter,
-            "scanDetail": "nesting",
+            "scanDetail": "thickness",
             "rules": rules_payload.get("rules") or [],
             "toleranceMm": rules_payload.get("toleranceMm"),
             "warnings": warnings[:40],
@@ -5107,6 +5176,105 @@ class PanelAttributesController:
             ),
         }
 
+    def apply_grain_to_selection(self, payload, _palette):
+        """Write grainAlongMm from UI 横/竖 (relative to world Z) onto selected bodies."""
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "applyGrainToSelection",
+                "errors": ["No active Fusion design."],
+            }
+
+        try:
+            orientation = grain_direction.normalize_orientation(
+                (payload or {}).get("orientation")
+            )
+        except ValueError as ex:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "applyGrainToSelection",
+                "errors": [str(ex)],
+            }
+
+        selected_entities = self._selected_entities()
+        if not selected_entities:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "applyGrainToSelection",
+                "errors": ["Select a body, or a face/edge belonging to a body."],
+                "orientation": orientation,
+            }
+
+        bodies, expand_warnings = metadata_inspector.bodies_from_selected_entities(
+            selected_entities, root
+        )
+        updated = 0
+        skipped_errors = 0
+        warnings = list(expand_warnings or [])
+        updated_names = []
+        applied = []
+        errors = []
+
+        for body in bodies:
+            name = str(getattr(body, "name", "") or "") or "body"
+            try:
+                if orientation == grain_direction.ORIENT_NONE:
+                    grain_mm = ""
+                    detail = None
+                else:
+                    grain_mm, detail = grain_direction.grain_along_mm_for_body(
+                        body, orientation
+                    )
+                metadata, read_error = tag_metadata_editor._read_body_metadata_raw(body)
+                if read_error:
+                    skipped_errors += 1
+                    errors.append("{}: {}".format(name, read_error))
+                    continue
+                base = tag_metadata_editor._bootstrap_body_metadata(body, metadata)
+                patched, result = tag_metadata_editor.apply_grain_along_to_metadata(
+                    base, grain_mm
+                )
+                tag_metadata_editor._write_body_metadata(body, patched)
+                updated += 1
+                updated_names.append(name)
+                item = {
+                    "bodyName": name,
+                    "grainAlongMm": grain_mm if grain_mm != "" else None,
+                    "changed": bool((result or {}).get("changed")),
+                }
+                if isinstance(detail, dict):
+                    item["faceEdgesMm"] = detail.get("faceEdgesMm")
+                    item["thicknessMm"] = detail.get("thicknessMm")
+                applied.append(item)
+            except Exception as ex:
+                skipped_errors += 1
+                errors.append("{}: {}".format(name, ex))
+
+        if not bodies:
+            warnings.append("No solid panel bodies found under the current selection.")
+
+        ok = updated > 0
+        if orientation == grain_direction.ORIENT_NONE:
+            summary = "cleared grainAlongMm on {}".format(updated)
+        else:
+            summary = "wrote grainAlongMm from {} on {}".format(orientation, updated)
+        if skipped_errors:
+            summary += ", errors {}".format(skipped_errors)
+        return "panelAttributesResult", {
+            "ok": ok if bodies else False,
+            "action": "applyGrainToSelection",
+            "orientation": orientation,
+            "updatedCount": updated,
+            "skippedErrorCount": skipped_errors,
+            "bodyCount": len(bodies),
+            "updatedBodies": updated_names[:40],
+            "applied": applied[:40],
+            "warnings": warnings[:20],
+            "errors": errors[:20] if (errors and not updated) else (errors[:10] if errors else []),
+            "message": "Wood grain: {}.".format(summary),
+        }
+
     def propagate_milling_from_hinge_cups(self, _payload, _palette):
         """Propagate MILLING back-face from hinge-cup panels to coplanar neighbors."""
         root = self.fusion.get_root_component()
@@ -5246,7 +5414,7 @@ class PanelAttributesController:
                 milling,
                 non_milling,
                 source="manual",
-                lock=True,
+                lock=False,
                 force=True,
             )
 
@@ -5395,7 +5563,7 @@ class PanelAttributesController:
                     milling,
                     non_milling,
                     source="manual",
-                    lock=True,
+                    lock=False,
                     force=True,
                 )
             ),
@@ -5447,7 +5615,7 @@ class PanelAttributesController:
                 milling,
                 non_milling,
                 source="manual",
-                lock=True,
+                lock=False,
                 force=True,
             )
 
@@ -5799,6 +5967,354 @@ class PanelAttributesController:
             "message": message,
         }
 
+    def rotate_grain_90(self, _payload, _palette):
+        """Swap grainAlongMm 90° (横↔竖) on the selected pair only.
+
+        LAY_FLAT selection → write that copy + its exact original.
+        Original selection → write that body + matching LAY_FLAT copy(ies).
+        Does not scan/resolve every LAY_FLAT board in the design.
+        """
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "rotateGrain90",
+                "errors": ["No active Fusion design."],
+            }
+
+        selected_entities = self._selected_entities()
+        if not selected_entities:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "rotateGrain90",
+                "errors": ["Select a body or face first (not a whole assembly)."],
+            }
+
+        bodies = []
+        warnings = []
+        seen = set()
+        ignored_bulk = 0
+        for entity in selected_entities:
+            kind = metadata_inspector._entity_kind(entity)
+            if kind not in ("face", "body", "edge"):
+                ignored_bulk += 1
+                continue
+            body, _source = metadata_inspector._selection_owner_body(entity)
+            if not body:
+                warnings.append("Could not resolve body from selected {}.".format(kind))
+                continue
+            if metadata_inspector._is_assembly_zone(body):
+                warnings.append("Skipped work-zone helper body.")
+                continue
+            if metadata_inspector._is_nested_instance(body) and not (
+                metadata_inspector._is_lay_flat_workpiece(body)
+            ):
+                warnings.append("Skipped Nesting layout copy (not Lay Flat).")
+                continue
+            key = metadata_inspector._body_key(body)
+            if key in seen:
+                continue
+            seen.add(key)
+            bodies.append(body)
+
+        if ignored_bulk and not bodies:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "rotateGrain90",
+                "errors": [
+                    "Select a panel body or face. Whole assemblies are ignored "
+                    "so this stays fast (O(selection), not O(all boards))."
+                ],
+                "warnings": warnings[:20],
+            }
+        if not bodies:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "rotateGrain90",
+                "errors": ["No solid panel body found under the current selection."],
+                "warnings": warnings[:20],
+            }
+        if ignored_bulk:
+            warnings.append(
+                "Ignored {} assembly/component pick(s); only face/body/edge are rotated."
+                .format(ignored_bulk)
+            )
+
+        updated = []
+        source_updated = []
+        skipped = []
+        source_for_lay_flat = {}
+        written_keys = set()
+        paired_lay_flats = []
+
+        def _write_grain(body, grain_mm, dest):
+            key = metadata_inspector._body_key(body)
+            if key in written_keys:
+                return True
+            result, error = _write_grain_along_on_body(body, grain_mm)
+            name = str(getattr(body, "name", "") or "") or "body"
+            if error:
+                skipped.append({"bodyName": name, "reason": str(error)})
+                return False
+            written_keys.add(key)
+            dest.append({
+                "bodyName": name,
+                "grainAlongMm": grain_mm,
+                "changed": bool((result or {}).get("changed")),
+            })
+            return True
+
+        for body in bodies:
+            name = str(getattr(body, "name", "") or "") or "body"
+            is_lay_flat = False
+            try:
+                is_lay_flat = bool(metadata_inspector._is_lay_flat_workpiece(body))
+            except Exception:
+                is_lay_flat = False
+
+            source_body = None
+            lay_flat_targets = []
+            if is_lay_flat:
+                canonical_ref = panel_source_ref.from_lay_flat_body(body)
+                lineage_key = panel_source_ref.key(canonical_ref)
+                if not lineage_key:
+                    skipped.append({
+                        "bodyName": name,
+                        "reason": "missing exact source lineage",
+                    })
+                    continue
+                resolved, _fields, resolution = (
+                    panel_body_resolver.resolve_source_bodies_for_lay_flat(
+                        root,
+                        body,
+                        index=None,
+                        allow_panel_id_fallback=False,
+                    )
+                )
+                if len(resolved) != 1:
+                    skipped.append({
+                        "bodyName": name,
+                        "sourceKey": lineage_key,
+                        "reason": "exact source lineage did not resolve ({})".format(
+                            resolution or "none"
+                        ),
+                    })
+                    continue
+                source_body = resolved[0]
+                lay_flat_targets = [body]
+                source_for_lay_flat[metadata_inspector._body_key(body)] = source_body
+            else:
+                source_body = body
+                lay_flat_targets = list(
+                    panel_body_resolver.find_lay_flat_bodies_for_source(root, body)
+                )
+                for lay_flat_body in lay_flat_targets:
+                    source_for_lay_flat[
+                        metadata_inspector._body_key(lay_flat_body)
+                    ] = source_body
+                if not lay_flat_targets:
+                    warnings.append(
+                        "{}: no matching LAY_FLAT copy (run Lay Flat first)."
+                        .format(name)
+                    )
+
+            measure_body = source_body if source_body is not None else body
+            current, read_error = _read_grain_along_from_body(measure_body)
+            if (not current) and source_body is not None and source_body is not body:
+                current, read_error = _read_grain_along_from_body(body)
+            if read_error and not current:
+                skipped.append({"bodyName": name, "reason": str(read_error)})
+                continue
+            if current == "":
+                skipped.append({
+                    "bodyName": name,
+                    "reason": "No grainAlongMm to rotate 90°. Set wood grain in Tag Edit first.",
+                })
+                continue
+
+            try:
+                dx, dy, dz = grain_direction.body_bbox_spans_mm(measure_body)
+                new_mm = grain_direction.swapped_grain_along_mm(dx, dy, dz, current)
+            except ValueError as ex:
+                skipped.append({"bodyName": name, "reason": str(ex)})
+                continue
+
+            if abs(float(new_mm) - float(current)) <= 1e-3:
+                warnings.append(
+                    "{}: square face (both edges {} mm) — grain 90° is a no-op."
+                    .format(name, current)
+                )
+                skipped.append({
+                    "bodyName": name,
+                    "reason": "square face ({} mm)".format(current),
+                    "grainAlongMm": current,
+                })
+                continue
+
+            if is_lay_flat:
+                _write_grain(source_body, new_mm, source_updated)
+                _write_grain(body, new_mm, updated)
+            else:
+                _write_grain(body, new_mm, updated)
+                for lay_flat_body in lay_flat_targets:
+                    _write_grain(lay_flat_body, new_mm, updated)
+            paired_lay_flats.extend(lay_flat_targets)
+
+        ok = bool(updated or source_updated)
+
+        geometry_rotated = []
+        geometry_failed = []
+        analyze_targets = []
+        analyze_seen = set()
+
+        def _queue_analyze(body):
+            if body is None:
+                return
+            key = metadata_inspector._body_key(body)
+            if key in analyze_seen:
+                return
+            analyze_seen.add(key)
+            analyze_targets.append(body)
+
+        def _geometry_rotate_lay_flat(body):
+            result = nesting_lay_flat_fusion.rotate_lay_flat_body_in_plane(
+                body, degrees=-90.0
+            )
+            if result.get("ok"):
+                geometry_rotated.append(result)
+                _queue_analyze(body)
+            else:
+                geometry_failed.append(result)
+                warnings.append(
+                    "{}: {}".format(
+                        result.get("bodyName") or "body",
+                        result.get("reason") or "grain_rotate_failed",
+                    )
+                )
+
+        if ok:
+            for lay_flat_body in paired_lay_flats:
+                _geometry_rotate_lay_flat(lay_flat_body)
+
+        classification_restored = []
+        for lay_flat_body in analyze_targets:
+            lay_flat_key = metadata_inspector._body_key(lay_flat_body)
+            source_body = source_for_lay_flat.get(lay_flat_key)
+            if source_body is None:
+                resolved, _fields, _resolution = (
+                    panel_body_resolver.resolve_source_bodies_for_lay_flat(
+                        root,
+                        lay_flat_body,
+                        index=None,
+                        allow_panel_id_fallback=False,
+                    )
+                )
+                source_body = resolved[0] if len(resolved) == 1 else None
+            if source_body is None:
+                warnings.append(
+                    "{}: exact source lineage unavailable for classification restore".format(
+                        str(getattr(lay_flat_body, "name", "") or "body")
+                    )
+                )
+                continue
+            restore = nesting_lay_flat_fusion.sync_lay_flat_classification_from_source(
+                lay_flat_body, source_body
+            )
+            if restore.get("ok") and restore.get("changed"):
+                classification_restored.append(restore)
+            elif not restore.get("ok"):
+                warnings.append(
+                    "{}: classification restore {}".format(
+                        restore.get("bodyName") or "body",
+                        restore.get("reason") or "failed",
+                    )
+                )
+
+        analyze_summary = {
+            "analyzedCount": 0,
+            "skippedFreshCount": 0,
+            "failedCount": 0,
+            "bodyCount": 0,
+            "failed": [],
+        }
+        if ok and analyze_targets:
+            try:
+                analyze_result = nesting_lay_flat_analyze.analyze_lay_flat_bodies(
+                    analyze_targets,
+                    force=True,
+                    wait_callback=_pump_fusion_events,
+                )
+                analyze_summary = {
+                    "analyzedCount": int(analyze_result.get("analyzedCount") or 0),
+                    "skippedFreshCount": int(
+                        analyze_result.get("skippedFreshCount") or 0
+                    ),
+                    "failedCount": int(analyze_result.get("failedCount") or 0),
+                    "bodyCount": int(analyze_result.get("bodyCount") or 0),
+                    "failed": list(analyze_result.get("failed") or [])[:40],
+                }
+                warnings = warnings + list(analyze_result.get("warnings") or [])
+            except Exception as ex:
+                warnings.append("Analyze after grain rotate failed: {}".format(ex))
+                analyze_summary["failedCount"] = len(analyze_targets)
+                analyze_summary["bodyCount"] = len(analyze_targets)
+        elif ok and not analyze_targets:
+            warnings.append(
+                "Wrote grainAlongMm but no LAY_FLAT body found to rotate/Analyze. "
+                "Run Lay Flat first, then rotate grain again."
+            )
+
+        skipped_count = len(skipped) + len(geometry_failed)
+        message = (
+            "Rotate grain 90°: wrote {} selected · {} source · "
+            "geometry {} · skipped {}."
+            .format(
+                len(updated),
+                len(source_updated),
+                len(geometry_rotated),
+                skipped_count,
+            )
+        )
+        if ok:
+            message += " Analyze: built {} · failed {} / {}.".format(
+                int(analyze_summary.get("analyzedCount") or 0),
+                int(analyze_summary.get("failedCount") or 0),
+                int(analyze_summary.get("bodyCount") or 0),
+            )
+            if classification_restored:
+                message += " Restored tags on {} body(ies).".format(
+                    len(classification_restored)
+                )
+            if int(analyze_summary.get("failedCount") or 0) or geometry_failed:
+                ok = False
+        return "panelAttributesResult", {
+            "ok": ok,
+            "action": "rotateGrain90",
+            "bodyCount": len(bodies),
+            "updatedCount": len(updated),
+            "sourceUpdatedCount": len(source_updated),
+            "geometryRotatedCount": len(geometry_rotated),
+            "geometryFailedCount": len(geometry_failed),
+            "classificationRestoredCount": len(classification_restored),
+            "skippedCount": skipped_count,
+            "analyzedCount": int(analyze_summary.get("analyzedCount") or 0),
+            "analyzeFailedCount": int(analyze_summary.get("failedCount") or 0),
+            "analyzeBodyCount": int(analyze_summary.get("bodyCount") or 0),
+            "analyzeFailed": analyze_summary.get("failed") or [],
+            "geometryRotated": geometry_rotated[:40],
+            "geometryFailed": geometry_failed[:40],
+            "classificationRestored": classification_restored[:40],
+            "updated": updated[:40],
+            "sourceUpdated": source_updated[:40],
+            "skipped": skipped[:40],
+            "warnings": warnings[:40],
+            "errors": [] if ok else [
+                message if (skipped_count or analyze_summary.get("failedCount"))
+                else "No wood grain was rotated 90°."
+            ],
+            "message": message,
+        }
+
     def make_selected_faces_colour(self, _payload, _palette):
         """Fast explicit override: selected broad face becomes the colour side.
 
@@ -5883,7 +6399,7 @@ class PanelAttributesController:
                     milling,
                     colour,
                     source="manual",
-                    lock=True,
+                    lock=False,
                     force=True,
                 )
             ),

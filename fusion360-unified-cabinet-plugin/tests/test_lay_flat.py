@@ -77,6 +77,29 @@ class LayFlatTests(unittest.TestCase):
             layout["placements"][1]["targetX"],
         )
 
+    def test_grain_does_not_split_color_columns(self):
+        items = [
+            {
+                "id": "a",
+                "boardTypeTag": "door",
+                "colorTag": "oak",
+                "widthMm": 720,
+                "depthMm": 450,
+                "grainAlongMm": 720,
+            },
+            {
+                "id": "b",
+                "boardTypeTag": "door",
+                "colorTag": "oak",
+                "widthMm": 800,
+                "depthMm": 400,
+            },
+        ]
+        layout = column_layout(items, group_by_color=True)
+        self.assertEqual(len(layout["groups"]), 1)
+        self.assertEqual(layout["groups"][0]["colorTag"], "oak")
+        self.assertEqual(layout["groups"][0]["count"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

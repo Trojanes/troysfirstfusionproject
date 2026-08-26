@@ -531,7 +531,7 @@ function assertAdapterContract() {
   if (!source.includes("Build each run in LOCAL identity first")) {
     findings.push({ severity: "error", code: "adapter_order", detail: "local-identity-before-pose contract missing" });
   }
-  if (!/ADAPTER_BUILD = \"2026-07-3\d-u-shape-ohc-\d+\"/.test(source)) {
+  if (!/ADAPTER_BUILD = \"20\d{2}-\d{2}-\d{2}-u-shape-ohc-\d+\"/.test(source)) {
     findings.push({ severity: "warn", code: "adapter_build", detail: "unexpected adapter build tag" });
   }
   if (!source.includes("def measure_u_shape_assembly(") || !source.includes("def write_u_shape_fusion_measure_log(")) {

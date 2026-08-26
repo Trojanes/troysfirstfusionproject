@@ -20,6 +20,7 @@ from panel_geometry import (  # noqa: E402
     bounds_of,
     classify_cut_type,
     feature_kind_from_loop,
+    groove_width_from_segments,
     plane_axes_for,
     polyline_to_path,
     project_local_to_2d,
@@ -217,6 +218,28 @@ class PanelGeometryPureTests(unittest.TestCase):
             FEATURE_KIND_POCKET,
         )
 
+    def test_groove_width_from_collapsed_segments(self):
+        class Edge:
+            def __init__(self, length_cm):
+                self.length = length_cm
+
+        segments = [
+            {"edge": Edge(40.0)},
+            {"edge": Edge(0.8)},
+            {"edge": Edge(40.0)},
+            {"edge": Edge(0.8)},
+        ]
+        self.assertEqual(
+            groove_width_from_segments(segments, points=[(0, 0), (400, 0)]),
+            8.0,
+        )
+        self.assertIsNone(
+            groove_width_from_segments(
+                [{"edge": Edge(40.0)}, {"edge": Edge(40.0)}],
+                points=[(0, 0), (400, 0)],
+            )
+        )
+
     def test_polyline_to_path(self):
         path = polyline_to_path([(0, 0), (10, 0), (10, 5)], close=True)
         self.assertEqual(path, "M 0 0 L 10 0 L 10 5 Z")
@@ -275,6 +298,26 @@ class PanelGeometryPureTests(unittest.TestCase):
         )
         self.assertIsNone(public["center2d"])
         self.assertEqual(public["openSurfaceIs"], "A")
+
+    def test_public_feature_exports_rebate_holes(self):
+        from panel_geometry import _public_feature, _rebate_holes_inside_outer
+
+        hole = [(20, 20), (80, 20), (80, 60), (20, 60)]
+        feature = {
+            "featureId": "FEAT-01",
+            "cutType": CUT_TYPE_HALF,
+            "kind": FEATURE_KIND_POCKET,
+            "depthMm": 9,
+            "points": [(10, 10), (90, 10), (90, 70), (10, 70)],
+            "innerPoints": [hole],
+            "openSurfaceIs": "A",
+        }
+        public = _public_feature(feature)
+        self.assertEqual(public["holes"], [[[20.0, 20.0], [80.0, 20.0], [80.0, 60.0], [20.0, 60.0]]])
+        self.assertEqual(
+            _rebate_holes_inside_outer(feature["points"], [hole, feature["points"]]),
+            [hole],
+        )
 
     def test_duplicate_filter_only_merges_same_through_opening(self):
         from panel_geometry import _is_duplicate_feature

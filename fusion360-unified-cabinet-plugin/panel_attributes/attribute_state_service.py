@@ -3,10 +3,11 @@
 This module is deliberately Fusion-free.  It accepts/returns metadata dicts so
 all controller write paths can share the same precedence and migration rules.
 
-Canonical state (same shape for all three Nesting attributes):
+Canonical state (same shape for Nesting attributes):
 * classification.boardType:  {value, source, locked}
 * classification.color:      {value, source, locked}
 * classification.cuttingFace:{value: MILLING|EITHER|"", source, locked}
+* classification.grainAlongMm:{value: mm|"", source, locked}  # optional; face-edge length along grain, never H/V words
 
 Face-level millingSurface roles remain geometry detail under faceRegistry /
 face attributes. Writing those roles should also sync classification.cuttingFace.
@@ -69,6 +70,20 @@ def _clean_cutting_face(value):
     if text in ("", "UNASSIGNED", "UNKNOWN", "UNDEFINED", "NONE", "N/A"):
         return ""
     return ""
+
+
+def _clean_grain_mm(value):
+    if isinstance(value, dict):
+        value = value.get("value")
+    if value in (None, ""):
+        return ""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if number <= 1e-6:
+        return ""
+    return round(number, 2)
 
 
 def is_undefined(value):
@@ -303,6 +318,22 @@ def migrate_metadata(metadata, inplace=False):
                 cutting["source"] = face_state.get("source")
         classification["cuttingFace"] = cutting
 
+    grain = classification.get("grainAlongMm")
+    if isinstance(grain, (int, float)) and not isinstance(grain, bool):
+        grain = {
+            "value": _clean_grain_mm(grain),
+            "source": "legacy",
+            "locked": False,
+        }
+        classification["grainAlongMm"] = grain
+    elif not isinstance(grain, dict):
+        grain = {"value": "", "source": "default", "locked": False}
+        classification["grainAlongMm"] = grain
+    else:
+        grain = _ensure_field_state(grain)
+        grain["value"] = _clean_grain_mm(grain.get("value"))
+        classification["grainAlongMm"] = grain
+
     if not _clean_cutting_face(cutting.get("value")):
         recovered = derive_cutting_face_from_registry(working)
         if recovered:
@@ -371,6 +402,15 @@ def normalize_mirrors(metadata):
     else:
         _ensure_dict(working, "derivedTags").pop("requiredFaceUp", None)
         _ensure_dict(working, "typedTags").pop("requiredFaceUp", None)
+
+    grain = classification.get("grainAlongMm") if isinstance(classification.get("grainAlongMm"), dict) else {}
+    grain_mm = _clean_grain_mm(grain.get("value"))
+    if grain_mm != "":
+        _ensure_dict(working, "derivedTags")["grainAlongMm"] = grain_mm
+        _ensure_dict(working, "typedTags")["grainAlongMm"] = grain_mm
+    else:
+        _ensure_dict(working, "derivedTags").pop("grainAlongMm", None)
+        _ensure_dict(working, "typedTags").pop("grainAlongMm", None)
     return working
 
 
@@ -387,6 +427,25 @@ def color_state(metadata):
 def cutting_face_state(metadata):
     migrated = migrate_metadata(metadata)
     return dict((migrated.get("classification") or {}).get("cuttingFace") or {})
+
+
+def grain_along_state(metadata):
+    migrated = migrate_metadata(metadata)
+    return dict((migrated.get("classification") or {}).get("grainAlongMm") or {})
+
+
+def read_grain_along_mm(metadata):
+    """Read grainAlongMm from already-canonical metadata. Empty string if unset."""
+    classification = metadata.get("classification") if isinstance(metadata, dict) else {}
+    state = classification.get("grainAlongMm") if isinstance(classification, dict) else None
+    if isinstance(state, dict):
+        return _clean_grain_mm(state.get("value"))
+    return _clean_grain_mm(state)
+
+
+def grain_along_mm_value(metadata):
+    """Numeric face-edge length or empty string. Never horizontal/vertical."""
+    return read_grain_along_mm(migrate_metadata(metadata))
 
 
 def face_up_state(metadata):
@@ -457,11 +516,11 @@ def apply_color(metadata, color_tag, source="manual", lock=None, force=False):
     return working, {"changed": changed, "status": "changed" if changed else "unchanged", "reason": None}
 
 
-def apply_cutting_face(metadata, value, source="geometry", lock=None, force=False):
-    """Apply MILLING / EITHER cutting-face constraint; same shape as board/color."""
+def apply_grain_along_mm(metadata, value_mm, source="manual", lock=None, force=False):
+    """Apply optional grain-aligned face-edge length (mm). Empty clears it."""
     working = migrate_metadata(metadata)
-    cleaned = _clean_cutting_face(value)
-    current = ((working.get("classification") or {}).get("cuttingFace") or {})
+    cleaned = _clean_grain_mm(value_mm)
+    current = ((working.get("classification") or {}).get("grainAlongMm") or {})
     allowed, reason = _can_apply(current, source, force=force)
     if not allowed:
         return working, {
@@ -474,6 +533,36 @@ def apply_cutting_face(metadata, value, source="geometry", lock=None, force=Fals
         "value": cleaned,
         "source": _clean(source) or "default",
         "locked": manual if lock is None else bool(lock),
+    }
+    changed = dict(current) != next_state
+    _ensure_dict(working, "classification")["grainAlongMm"] = next_state
+    working = normalize_mirrors(working)
+    return working, {
+        "changed": changed,
+        "status": "changed" if changed else "unchanged",
+        "reason": None,
+        "grainAlongMm": cleaned,
+    }
+
+
+def apply_cutting_face(metadata, value, source="geometry", lock=None, force=False):
+    """Apply MILLING / EITHER cutting-face. Face-up is never locked."""
+    working = migrate_metadata(metadata)
+    cleaned = _clean_cutting_face(value)
+    current = ((working.get("classification") or {}).get("cuttingFace") or {})
+    unlocked = dict(current)
+    unlocked["locked"] = False
+    allowed, reason = _can_apply(unlocked, source, force=force)
+    if not allowed:
+        return working, {
+            "changed": False,
+            "status": "unchanged",
+            "reason": reason,
+        }
+    next_state = {
+        "value": cleaned,
+        "source": _clean(source) or "default",
+        "locked": False,
     }
     changed = dict(current) != next_state
     _ensure_dict(working, "classification")["cuttingFace"] = next_state
@@ -495,8 +584,8 @@ def apply_cutting_face(metadata, value, source="geometry", lock=None, force=Fals
 
 
 def can_apply_face_up(metadata, source="geometry", force=False):
-    state = cutting_face_state(metadata)
-    return _can_apply(state, source, force=force)
+    """Face-up / milling roles are always writable."""
+    return True, None
 
 
 def mark_face_up(metadata, source="geometry", lock=None, value=None):

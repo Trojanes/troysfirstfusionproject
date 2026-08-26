@@ -11,11 +11,21 @@ import adsk.fusion
 
 try:
     from nesting import collision_validate
+    from nesting.in_plane_orient import (
+        grain_angle_deg,
+        grain_mm_from_metadata,
+        in_plane_rotation_deg,
+    )
     from nesting.layout import grouped_row_layout
     from nesting.sheet_pack import sheet_pack_layout
     from nesting.workpiece_names import nesting_workpiece_name
 except Exception:
     import collision_validate
+    from in_plane_orient import (
+        grain_angle_deg,
+        grain_mm_from_metadata,
+        in_plane_rotation_deg,
+    )
     from layout import grouped_row_layout
     from sheet_pack import sheet_pack_layout
     from workpiece_names import nesting_workpiece_name
@@ -563,7 +573,7 @@ def resolve_prepare_outline(temp_body, metadata, dimensions, allow_parts_in_part
     if svg_points:
         metadata_holes = _metadata_full_holes(meta) if allow_parts_in_part else []
         # Align metadata outline into the flattened bbox frame (min corner 0,0,
-        # longest side already along +X from prepare_flat_copy).
+        # grain edge or longest side already along +X from prepare_flat_copy).
         normalized, bounds = nesting_outline.normalize_polygon_to_origin(svg_points)
         if metadata_holes:
             metadata_holes = nesting_outline.translate_ring_set(
@@ -633,9 +643,12 @@ def prepare_flat_copy(
     if reflected:
         temp_manager.transform(temp_body, _mirror_x_matrix())
     dims = _bbox_dimensions_mm(temp_body)
-    # Deterministic in-plane orientation: longest bounding direction along +X.
-    if dims["depthMm"] > dims["widthMm"] + 1e-6:
-        temp_manager.transform(temp_body, _z_rotation_matrix(-90.0))
+    grain_mm = grain_mm_from_metadata(metadata)
+    rotation = in_plane_rotation_deg(
+        dims["widthMm"], dims["depthMm"], grain_along_mm=grain_mm
+    )
+    if abs(rotation) > 1e-6:
+        temp_manager.transform(temp_body, _z_rotation_matrix(rotation))
         dims = _bbox_dimensions_mm(temp_body)
     if isinstance(outline_override, dict) and outline_override.get("points"):
         outline = dict(outline_override)
@@ -649,6 +662,21 @@ def prepare_flat_copy(
     if isinstance(outline, dict):
         outline = dict(outline)
         outline["reflectedSource"] = bool(reflected)
+        if grain_mm != "":
+            outline["grainAlongMm"] = grain_mm
+            angle = grain_angle_deg(
+                dims["widthMm"], dims["depthMm"], grain_mm, rotation_deg=0.0
+            )
+            if angle is not None:
+                outline["grainAngleDeg"] = angle
+    if grain_mm != "":
+        dims = dict(dims)
+        dims["grainAlongMm"] = grain_mm
+        angle = grain_angle_deg(
+            dims["widthMm"], dims["depthMm"], grain_mm, rotation_deg=0.0
+        )
+        if angle is not None:
+            dims["grainAngleDeg"] = angle
     return temp_body, dims, outline
 
 

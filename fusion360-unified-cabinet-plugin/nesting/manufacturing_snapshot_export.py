@@ -13,6 +13,9 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
+# Last-resort slot width when an edge-open groove collapsed to a line.
+DEFAULT_EDGE_OPEN_GROOVE_WIDTH_MM = 8.0
+
 try:
     from nesting.workpiece_names import (
         display_workpiece_name,
@@ -295,6 +298,7 @@ def _build_workpiece(record, index, used_ids=None):
                 blind_faces.add(item["sourceFace"])
 
     features = _dedupe_through_features(features)
+    features = _dedupe_through_matching_bores(features)
     _enrich_feature_intents(features, metadata, record)
 
     invalid_blind_faces = {
@@ -412,7 +416,7 @@ def _build_workpiece(record, index, used_ids=None):
             "quality": "tessellated",
             "toleranceMm": 0.1,
             "outerProfile": {"closed": True, "points": points},
-            "innerProfiles": [],
+            "innerProfiles": _inner_profiles_from_features(features),
             "nestingPolygon": points,
         },
         "faces": faces,
@@ -748,7 +752,7 @@ def _convert_feature(feature, index, default_face, token_face, thickness_mm=0.0)
         canonical_kind = "bore"
     elif kind == "groove":
         centerline, width = _groove_centerline(points)
-        width = _number(feature.get("widthMm")) or width
+        width = _resolved_groove_width(feature, width, thickness_mm)
         # Through elongated openings (lock cutouts, etc.) are cutouts, not grooves.
         if through:
             if len(points) >= 3 and _polygon_area_abs(points) > 0.0001:
@@ -759,6 +763,8 @@ def _convert_feature(feature, index, default_face, token_face, thickness_mm=0.0)
                 profile_points = _through_profile_fallback(
                     centerline, width, intent, feature
                 )
+            if len(profile_points) < 3:
+                profile_points = _edge_open_groove_profile(points, width)
             profile_points = _maybe_lock_stadium_profile(
                 profile_points, intent, feature
             )
@@ -766,14 +772,8 @@ def _convert_feature(feature, index, default_face, token_face, thickness_mm=0.0)
                 geometry = {"profile": {"closed": True, "points": profile_points}}
                 canonical_kind = "throughProfile"
             else:
-                return [], [
-                    (
-                        "groove_geometry",
-                        "{} through opening requires a closed profile.".format(
-                            feature_id
-                        ),
-                    )
-                ]
+                # Unrecoverable through slot: drop rather than block the job.
+                return [], []
         elif len(centerline) >= 2 and width > 0:
             # Keep the CAD opening polygon so shop UI can draw the full outline
             # instead of only a centreline stroke.
@@ -789,14 +789,14 @@ def _convert_feature(feature, index, default_face, token_face, thickness_mm=0.0)
             geometry = {"profile": {"closed": True, "points": points}}
             canonical_kind = "pocket"
         else:
-            return [], [
-                (
-                    "groove_geometry",
-                    "{} requires a centreline and width, or a closed profile.".format(
-                        feature_id
-                    ),
-                )
-            ]
+            # Edge-open / collapsed slots: recover a closed rectangle.
+            fallback = _edge_open_groove_profile(points, width)
+            if len(fallback) >= 3 and _polygon_area_abs(fallback) > 0.0001:
+                geometry = {"profile": {"closed": True, "points": fallback}}
+                canonical_kind = "pocket"
+            else:
+                # Unrecoverable slot: drop rather than block the rest of the job.
+                return [], []
     else:
         if len(points) < 3:
             return [], [("profile_geometry", "{} requires a closed profile.".format(feature_id))]
@@ -805,6 +805,9 @@ def _convert_feature(feature, index, default_face, token_face, thickness_mm=0.0)
         )
         geometry = {"profile": {"closed": True, "points": profile_points}}
         canonical_kind = "throughProfile" if through else "pocket"
+        hole_profiles = _normalized_hole_profiles(feature)
+        if hole_profiles and not through:
+            geometry["holes"] = hole_profiles
 
     payload = {
         "featureId": feature_id,
@@ -824,15 +827,74 @@ def _groove_centerline(points):
     """Derive groove centreline + width from a closed 2D outline.
 
     Prefer a simplified rectangle (4 corners). Tessellated or capsule-like
-    channels fall back to a principal-axis (PCA) strip.
+    channels fall back to a principal-axis (PCA) strip. A 2-point extract
+    (edge-open floor projected to a line) is already a centreline; width
+    comes from feature.widthMm or a later AABB fatten.
     """
     ring = [list(point[:2]) for point in (points or []) if len(point) >= 2]
+    if len(ring) == 2:
+        return [_rounded_point(ring[0]), _rounded_point(ring[1])], 0.0
     if len(ring) < 3:
         return [], 0.0
     simplified = _simplify_collinear(ring, max_deviation_mm=0.15)
     if len(simplified) == 4:
         return _groove_centerline_from_quad(simplified)
     return _groove_centerline_from_pca(ring)
+
+
+def _resolved_groove_width(feature, derived_width=0.0, thickness_mm=0.0):
+    """Width from metadata, derived outline, or a last-resort default."""
+    width = _number((feature or {}).get("widthMm")) or _number(derived_width)
+    if width > 0:
+        return width
+    thick = _number(thickness_mm)
+    if thick > 0:
+        return min(DEFAULT_EDGE_OPEN_GROOVE_WIDTH_MM, thick)
+    return DEFAULT_EDGE_OPEN_GROOVE_WIDTH_MM
+
+
+def _edge_open_groove_profile(points, width_mm=0.0):
+    """Closed rectangle for a collapsed or edge-open groove.
+
+    Edge-open floors often extract as two points or a zero-area ring.
+    Recover a millable AABB when both spans are positive, otherwise fatten
+    the long axis by ``width_mm``.
+    """
+    ring = [list(point[:2]) for point in (points or []) if len(point) >= 2]
+    if len(ring) < 2:
+        return []
+    xs = [_number(point[0]) for point in ring]
+    ys = [_number(point[1]) for point in ring]
+    min_x, max_x = min(xs), max(xs)
+    min_y, max_y = min(ys), max(ys)
+    span_x = max_x - min_x
+    span_y = max_y - min_y
+    if span_x > 0.0001 and span_y > 0.0001:
+        return [
+            _rounded_point([min_x, min_y]),
+            _rounded_point([max_x, min_y]),
+            _rounded_point([max_x, max_y]),
+            _rounded_point([min_x, max_y]),
+        ]
+    width = _number(width_mm)
+    if width <= 0:
+        return []
+    half = width * 0.5
+    if span_x >= span_y:
+        mid = 0.5 * (min_y + max_y)
+        return [
+            _rounded_point([min_x, mid - half]),
+            _rounded_point([max_x, mid - half]),
+            _rounded_point([max_x, mid + half]),
+            _rounded_point([min_x, mid + half]),
+        ]
+    mid = 0.5 * (min_x + max_x)
+    return [
+        _rounded_point([mid - half, min_y]),
+        _rounded_point([mid + half, min_y]),
+        _rounded_point([mid + half, max_y]),
+        _rounded_point([mid - half, max_y]),
+    ]
 
 
 def _groove_centerline_from_quad(points):
@@ -1020,6 +1082,39 @@ def _polygon_area_abs(points):
     return abs(area) * 0.5
 
 
+def _grain_from_metadata(metadata):
+    try:
+        from nesting.in_plane_orient import grain_angle_deg, grain_mm_from_metadata
+    except Exception:
+        from in_plane_orient import grain_angle_deg, grain_mm_from_metadata
+    grain = grain_mm_from_metadata(metadata)
+    if grain == "":
+        return "", None
+    outline = {}
+    if isinstance(metadata, dict):
+        cached = metadata.get("nestingFlatOutline")
+        if isinstance(cached, dict) and isinstance(cached.get("outline"), dict):
+            outline = cached.get("outline") or {}
+        dims = metadata.get("dimensions") if isinstance(metadata.get("dimensions"), dict) else {}
+    else:
+        dims = {}
+    if outline.get("grainAngleDeg") is not None:
+        try:
+            return grain, int(outline.get("grainAngleDeg"))
+        except (TypeError, ValueError):
+            pass
+    if dims.get("grainAngleDeg") is not None:
+        try:
+            return grain, int(dims.get("grainAngleDeg"))
+        except (TypeError, ValueError):
+            pass
+    width = _number(dims.get("widthMm") or outline.get("widthMm"))
+    depth = _number(dims.get("depthMm") or outline.get("depthMm"))
+    if width > 0 and depth > 0:
+        return grain, grain_angle_deg(width, depth, grain, rotation_deg=0.0)
+    return grain, 0
+
+
 def _build_material_payload(material_id, thickness, board_type, color, metadata):
     attrs = metadata.get("defaultAttributes") if isinstance(metadata, dict) else None
     if not isinstance(attrs, dict):
@@ -1037,6 +1132,11 @@ def _build_material_payload(material_id, thickness, board_type, color, metadata)
         payload["colorName"] = color_name
     if surface_mode:
         payload["surfaceMode"] = surface_mode
+    grain_mm, grain_angle = _grain_from_metadata(metadata)
+    if grain_mm != "":
+        payload["grainAlongMm"] = grain_mm
+        if grain_angle is not None:
+            payload["grainAngleDeg"] = grain_angle
     return payload
 
 
@@ -1175,6 +1275,98 @@ def _dedupe_through_features(features):
         if not duplicate:
             kept.append(item)
     return kept
+
+
+def _normalized_hole_profiles(feature):
+    holes = []
+    raw = feature.get("holes") or feature.get("innerPoints") or []
+    if not isinstance(raw, list):
+        return []
+    for ring in raw:
+        if isinstance(ring, dict):
+            ring = ring.get("points") or []
+        points = _normalize_closed_points(ring)
+        if len(points) >= 3 and _polygon_area_abs(points) > 0.0001:
+            holes.append({"closed": True, "points": points})
+    return holes
+
+
+def _bore_center_diameter(item):
+    geometry = item.get("geometry") if isinstance(item, dict) else None
+    if not isinstance(geometry, dict):
+        return None
+    center = geometry.get("center")
+    diameter = _number(geometry.get("diameterMm"))
+    if (
+        not isinstance(center, (list, tuple))
+        or len(center) < 2
+        or diameter <= 0
+    ):
+        return None
+    return (_number(center[0]), _number(center[1]), diameter)
+
+
+def _profile_aabb_span(points):
+    xs = [_number(point[0]) for point in points]
+    ys = [_number(point[1]) for point in points]
+    if not xs or not ys:
+        return 0.0
+    return max(max(xs) - min(xs), max(ys) - min(ys))
+
+
+def _through_matches_bore(item, bore):
+    bore_cd = _bore_center_diameter(bore)
+    centroid = _feature_geometry_centroid(item)
+    if bore_cd is None or centroid is None:
+        return False
+    bx, by, diameter = bore_cd
+    if abs(centroid[0] - bx) > 1.5 or abs(centroid[1] - by) > 1.5:
+        return False
+    span = _profile_aabb_span(_feature_profile_points(item))
+    return abs(span - diameter) <= 2.0
+
+
+def _dedupe_through_matching_bores(features):
+    """Drop tessellated throughProfile that is the same opening as a through bore."""
+    bores = [
+        item
+        for item in features or []
+        if item.get("through") and item.get("kind") == "bore"
+    ]
+    if not bores:
+        return list(features or [])
+    kept = []
+    for item in features or []:
+        if (
+            item.get("through")
+            and item.get("kind") == "throughProfile"
+            and any(_through_matches_bore(item, bore) for bore in bores)
+        ):
+            continue
+        kept.append(item)
+    return kept
+
+
+def _inner_profiles_from_features(features):
+    """Nesting holes: through closed profiles, not circular bores."""
+    profiles = []
+    seen = set()
+    for item in features or []:
+        if not item.get("through") or item.get("kind") != "throughProfile":
+            continue
+        points = _feature_profile_points(item)
+        if len(points) < 3 or _polygon_area_abs(points) <= 0.0001:
+            continue
+        key = (
+            round(_number(points[0][0]), 1),
+            round(_number(points[0][1]), 1),
+            round(_polygon_area_abs(points), 1),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        profiles.append({"closed": True, "points": points})
+    return profiles
 
 
 def _collect_declared_cuts(metadata, record):

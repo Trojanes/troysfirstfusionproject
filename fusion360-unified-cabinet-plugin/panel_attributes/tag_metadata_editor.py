@@ -134,6 +134,20 @@ def apply_door_color_to_metadata(metadata, color_name, surface_mode):
     )
 
 
+def apply_grain_along_to_metadata(metadata, grain_along_mm):
+    """Write or clear classification.grainAlongMm (numeric mm only)."""
+    updated = copy.deepcopy(metadata) if isinstance(metadata, dict) else {}
+    updated.setdefault("schemaVersion", 1)
+    updated, result = attribute_state_service.apply_grain_along_mm(
+        updated,
+        grain_along_mm,
+        source="manual",
+        lock=True,
+        force=True,
+    )
+    return updated, result
+
+
 def _safe_face_token(face):
     try:
         return str(getattr(face, "entityToken", "") or "")
@@ -260,8 +274,7 @@ def apply_surface_roles(body, face_a, role_a, face_b, role_b,
     if face_a is None or face_b is None:
         raise ValueError("Both broad faces are required.")
     source_name = str(source or "").strip().lower()
-    # Manual override always locks definite MILLING/NON_MILLING (never leaves EITHER).
-    definite = bool(lock) or source_name == "manual"
+    definite = source_name == "manual" or bool(lock)
     role_a, role_b = normalize_complementary_surface_roles(
         role_a, role_b, face_a, face_b, require_definite=definite
     )
@@ -270,14 +283,9 @@ def apply_surface_roles(body, face_a, role_a, face_b, role_b,
     if read_error:
         raise ValueError(read_error)
     metadata = _bootstrap_body_metadata(body, existing)
-    allowed, reason = attribute_state_service.can_apply_face_up(
-        metadata, source=source, force=force
-    )
-    if not allowed:
-        raise ValueError(reason or "face_up_write_rejected")
     registry = _ensure_dict(metadata, "faceRegistry")
 
-    locked = bool(lock or source_name == "manual")
+    locked = False
     old_a, _old_a_error = read_face_metadata(face_a) if read_face_metadata else (None, None)
     old_b, _old_b_error = read_face_metadata(face_b) if read_face_metadata else (None, None)
     try:

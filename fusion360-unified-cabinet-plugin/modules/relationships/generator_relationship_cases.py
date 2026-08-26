@@ -100,13 +100,13 @@ GENERATOR_RELATIONSHIP_SCENARIOS: List[Dict[str, Any]] = [
             {
                 "caseId": "kt_b1_strip_gap",
                 "panelAId": "B1",
-                "panelBId": "left-side-strengthening-strip-k-zone-left-door",
+                "panelBId": "SS_L_k-zone-left-door",
                 "expectedGeometryType": "gap_parallel",
             },
             {
                 "caseId": "kt_t1_strip_edge",
                 "panelAId": "T1-1",
-                "panelBId": "left-side-strengthening-strip-k-zone-left-door",
+                "panelBId": "SS_L_k-zone-left-door",
                 "expectedGeometryType": "edge_to_surface",
             },
         ],

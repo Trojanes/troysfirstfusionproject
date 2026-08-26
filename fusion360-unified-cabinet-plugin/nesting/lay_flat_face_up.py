@@ -1,7 +1,9 @@
 """Post-Lay Flat manufacturing check.
 
-MILLING must face +Z and HALF features may open on +Z only.  This module is
-read-only; controller orchestration owns exact-source write-back and repair.
+MILLING must face +Z and HALF features may open on +Z only.  Colour / −Z
+outer must not be the groove-eaten U: an edge-open HALF or FULL sitting
+outside that outer fails Check Faces Up (not auto-flipped).  This module
+is read-only; controller orchestration owns exact-source write-back and repair.
 """
 
 from __future__ import annotations
@@ -274,16 +276,25 @@ def evaluate_body_faces_up(body, min_dot=None):
         reasons.append("double_side_unsupported")
     elif half_status == HALF_BOTTOM:
         reasons.append("feature_face_not_machining")
+    if half.get("bottomOutlineNotched"):
+        reasons.append("bottom_outline_notched")
     # Geometry evidence is authoritative.  A bottom-only HALF can be repaired
     # transactionally by swapping roles and flipping this disposable copy.
+    # Colour-outer bites are not flipped: the groove floor may still be +Z.
     check["ok"] = bool(check.get("ok")) and not reasons
     check["reasons"] = list(dict.fromkeys(reasons))
     check["halfStatus"] = half_status
     check["topHalfCount"] = int(half.get("topHalfCount") or 0)
     check["bottomHalfCount"] = int(half.get("bottomHalfCount") or 0)
     check["unknownHalfCount"] = int(half.get("unknownHalfCount") or 0)
+    check["bottomOutlineNotched"] = bool(half.get("bottomOutlineNotched"))
+    check["bottomOutlineNotchReason"] = str(
+        half.get("bottomOutlineNotchReason") or ""
+    )
     check["autoFixRecommended"] = bool(
-        half.get("ok") and half_status == HALF_BOTTOM
+        half.get("ok")
+        and half_status == HALF_BOTTOM
+        and not half.get("bottomOutlineNotched")
     )
     check["halfInspection"] = half
     return check
@@ -428,6 +439,10 @@ def check_bodies(bodies, min_dot=None):
             "topHalfCount": int(result.get("topHalfCount") or 0),
             "bottomHalfCount": int(result.get("bottomHalfCount") or 0),
             "unknownHalfCount": int(result.get("unknownHalfCount") or 0),
+            "bottomOutlineNotched": bool(result.get("bottomOutlineNotched")),
+            "bottomOutlineNotchReason": str(
+                result.get("bottomOutlineNotchReason") or ""
+            ),
             "autoFixRecommended": bool(result.get("autoFixRecommended")),
         }
         # Keep face refs only in-process for optional selection.

@@ -81,7 +81,10 @@ function applianceFloorRelationships(boards: BoardGeometry[]): RelationshipDecla
     }
   }
   for (const support of boards.filter((board) => board.type === "underside_support")) {
-    const floorId = support.id.replace(/-underside-support-\d+$/, "-appliance-floor");
+    const usMatch = support.id.match(/^US_(.+)_(\d+)$/);
+    const floorId = usMatch
+      ? `AF_${usMatch[1]}`
+      : support.id.replace(/-underside-support-\d+$/, "-appliance-floor");
     if (!boardIds.has(floorId)) continue;
     decls.push({
       declarationId: `kt_${support.id}_${floorId}_underside`,

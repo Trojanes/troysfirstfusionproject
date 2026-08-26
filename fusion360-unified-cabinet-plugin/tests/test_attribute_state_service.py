@@ -119,19 +119,19 @@ class AttributeStateServiceTests(unittest.TestCase):
             automatic["classification"]["boardType"]["locked"]
         )
 
-    def test_manual_face_up_lock_blocks_geometry(self):
+    def test_face_up_is_never_locked(self):
         manual = state.mark_face_up(
             legacy_meta(), source="manual", lock=True, value="MILLING"
         )
         allowed, reason = state.can_apply_face_up(
             manual, source="hinge_cups", force=True
         )
-        self.assertFalse(allowed)
-        self.assertEqual(reason, "manual_locked")
-        self.assertTrue(
+        self.assertTrue(allowed)
+        self.assertIsNone(reason)
+        self.assertFalse(
             manual["classification"]["cuttingFace"]["locked"]
         )
-        self.assertTrue(
+        self.assertFalse(
             manual["faceRegistry"]["faceUpState"]["locked"]
         )
 
@@ -230,24 +230,21 @@ class AttributeStateServiceTests(unittest.TestCase):
             updated["faceRegistry"]["faceUpState"]["source"], "geometry"
         )
 
-    def test_manual_cutting_face_lock_blocks_geometry(self):
-        manual, _ = state.apply_cutting_face(
+    def test_manual_cutting_face_does_not_lock(self):
+        manual, result = state.apply_cutting_face(
             legacy_meta(), "MILLING", source="manual", lock=True
         )
-        blocked, result = state.apply_cutting_face(
+        self.assertTrue(result["changed"])
+        self.assertFalse(manual["classification"]["cuttingFace"]["locked"])
+        overwritten, result = state.apply_cutting_face(
             manual, "EITHER", source="hinge_cups", force=True
-        )
-        self.assertEqual(result["reason"], "manual_locked")
-        self.assertEqual(
-            blocked["classification"]["cuttingFace"]["value"], "MILLING"
-        )
-        unlocked = state.reset_to_auto(blocked, "cuttingFace")
-        changed, result = state.apply_cutting_face(
-            unlocked, "EITHER", source="geometry", force=True
         )
         self.assertTrue(result["changed"])
         self.assertEqual(
-            changed["classification"]["cuttingFace"]["value"], "EITHER"
+            overwritten["classification"]["cuttingFace"]["value"], "EITHER"
+        )
+        self.assertFalse(
+            overwritten["classification"]["cuttingFace"]["locked"]
         )
 
     def test_cutting_face_from_surface_roles(self):

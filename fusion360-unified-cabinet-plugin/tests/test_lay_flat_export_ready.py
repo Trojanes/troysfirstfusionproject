@@ -6,7 +6,10 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "nesting"))
 
-from lay_flat_analyze import ANALYZED_STATE  # noqa: E402
+from lay_flat_analyze import (  # noqa: E402
+    ANALYZED_STATE,
+    supplement_features_from_evidence_rings,
+)
 from lay_flat_export_ready import evaluate_metadata  # noqa: E402
 from outline_cache import CACHE_SCHEMA  # noqa: E402
 
@@ -158,6 +161,28 @@ class LayFlatExportReadyTests(unittest.TestCase):
         result = evaluate_metadata(meta, geometry_signature="sig-1")
         self.assertTrue(result["ready"])
 
+    def test_supplemented_rebate_through_is_export_ready(self):
+        rebate = [[10, 10], [90, 10], [90, 70], [10, 70], [10, 10]]
+        through = [[20, 20], [80, 20], [80, 60], [20, 60], [20, 20]]
+        features = supplement_features_from_evidence_rings(
+            [{
+                "featureId": "F1",
+                "cutType": "HALF",
+                "kind": "pocket",
+                "points": rebate,
+                "openSurfaceIs": "A",
+                "depthMm": 9,
+            }],
+            [
+                {"role": "feature", "source": "flatBody", "cutType": "HALF", "points": through},
+                {"role": "feature", "source": "flatBodyFloor", "cutType": "HALF", "points": rebate},
+            ],
+            18,
+        )
+        meta = _ready_metadata(features=features)
+        result = evaluate_metadata(meta, geometry_signature="sig-1")
+        self.assertTrue(result["ready"], result["reasons"])
+
     def test_groove_ok_with_quad_and_width(self):
         meta = _ready_metadata(
             features=[
@@ -189,8 +214,57 @@ class LayFlatExportReadyTests(unittest.TestCase):
             ]
         )
         result = evaluate_metadata(meta, geometry_signature="sig-1")
-        self.assertFalse(result["ready"])
-        self.assertIn("groove_geometry", result["reasons"])
+        # Edge-open line fattened to a default-width pocket; does not block.
+        self.assertTrue(result["ready"], result["reasons"])
+
+    def test_empty_groove_does_not_block_ready(self):
+        meta = _ready_metadata(
+            features=[
+                {
+                    "featureId": "G1",
+                    "kind": "groove",
+                    "cutType": "HALF",
+                    "openSurfaceIs": "A",
+                    "depthMm": 8.0,
+                    "points": [],
+                }
+            ]
+        )
+        result = evaluate_metadata(meta, geometry_signature="sig-1")
+        self.assertTrue(result["ready"], result["reasons"])
+
+    def test_edge_open_line_groove_with_width_is_ready(self):
+        meta = _ready_metadata(
+            features=[
+                {
+                    "featureId": "G1",
+                    "kind": "groove",
+                    "cutType": "HALF",
+                    "openSurfaceIs": "A",
+                    "depthMm": 8.0,
+                    "widthMm": 8.0,
+                    "points": [[0, 0], [400, 0]],
+                }
+            ]
+        )
+        result = evaluate_metadata(meta, geometry_signature="sig-1")
+        self.assertTrue(result["ready"], result["reasons"])
+
+    def test_edge_open_diagonal_groove_is_ready_as_pocket(self):
+        meta = _ready_metadata(
+            features=[
+                {
+                    "featureId": "G1",
+                    "kind": "groove",
+                    "cutType": "HALF",
+                    "openSurfaceIs": "A",
+                    "depthMm": 8.0,
+                    "points": [[0, 0], [400, 8]],
+                }
+            ]
+        )
+        result = evaluate_metadata(meta, geometry_signature="sig-1")
+        self.assertTrue(result["ready"], result["reasons"])
 
     def test_tessellated_rectangular_groove_is_ready(self):
         meta = _ready_metadata(

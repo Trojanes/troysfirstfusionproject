@@ -83,6 +83,42 @@ class OutlineCacheTests(unittest.TestCase):
             "missing",
         )
 
+    def test_grain_change_makes_cache_stale(self):
+        outline = {
+            "points": [[0, 0], [100, 0], [100, 50], [0, 50], [0, 0]],
+            "source": "flatBody",
+            "pointCount": 4,
+        }
+        cached = build_cache_record(
+            outline,
+            {"widthMm": 100, "depthMm": 50},
+            "sig-a",
+            "A",
+            grain_along_mm="",
+        )
+        metadata = {
+            "nestingFlatOutline": cached,
+            "classification": {
+                "grainAlongMm": {"value": 720, "source": "manual", "locked": True}
+            },
+        }
+        self.assertEqual(
+            outline_cache_status(metadata, "sig-a", "A", False),
+            "stale",
+        )
+        cached_grain = build_cache_record(
+            outline,
+            {"widthMm": 720, "depthMm": 450},
+            "sig-a",
+            "A",
+            grain_along_mm=720,
+        )
+        metadata["nestingFlatOutline"] = cached_grain
+        self.assertEqual(
+            outline_cache_status(metadata, "sig-a", "A", False),
+            "fresh",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

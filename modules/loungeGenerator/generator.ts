@@ -21,14 +21,6 @@ function withRelationshipDeclarations(result: LoungeGeometryResult): LoungeGeome
   };
 }
 
-function lSupportOuter(length: number, profileHeight: number): number[][] {
-  const safeLength = Math.max(0, length);
-  const safeHeight = Math.max(0, profileHeight);
-  const returnDepth = Math.min(100, safeLength);
-  const topDropZ = Math.max(0, safeHeight - 100);
-  return [[0, 0], [0, safeHeight], [safeLength, safeHeight], [safeLength, topDropZ], [returnDepth, topDropZ], [returnDepth, 0], [0, 0]];
-}
-
 function num(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
@@ -66,7 +58,7 @@ function normalizeSettings(input: Partial<LoungeSettings>): LoungeSettings {
       depth: num(input.middleCabinet?.depth, 350),
       height: num(input.middleCabinet?.height, 500),
       startHeight: num(input.middleCabinet?.startHeight, 300),
-      doorPanelThickness: num(input.middleCabinet?.doorPanelThickness, 15),
+      doorPanelThickness: num(input.middleCabinet?.doorPanelThickness, 16),
       doorClearance: num(input.middleCabinet?.doorClearance, 2),
       doorLockStyle: input.middleCabinet?.doorLockStyle === "NONE" ? "NONE" : "RAZOR_ROUNDED",
       lockSideDistance: num(input.middleCabinet?.lockSideDistance, 30),
@@ -79,10 +71,16 @@ function normalizeSettings(input: Partial<LoungeSettings>): LoungeSettings {
 }
 
 export function loungeLBounds(state: LoungeSettings): LoungeBounds2D {
+  // L box sits on the front of one main end so the two I-boxes meet at 90°.
   if (state.lPosition === "LEFT") {
-    return { x0: 0, x1: state.lWidth, y0: 0, y1: state.lDepth };
+    return { x0: 0, x1: state.lWidth, y0: state.mainDepth, y1: state.mainDepth + state.lDepth };
   }
-  return { x0: state.mainWidth - state.lWidth, x1: state.mainWidth, y0: 0, y1: state.lDepth };
+  return {
+    x0: state.mainWidth - state.lWidth,
+    x1: state.mainWidth,
+    y0: state.mainDepth,
+    y1: state.mainDepth + state.lDepth,
+  };
 }
 
 export function loungeMainVisibleBounds(state: LoungeSettings): LoungeBounds2D {
@@ -187,11 +185,194 @@ function addTopPanel(
 
 function loungeWarnings(state: LoungeSettings): string[] {
   const warnings: string[] = [];
+  const ppt = Math.max(1, state.partitionPanelThickness);
   if (!(state.lWidth < state.mainWidth)) warnings.push("L Width should be less than Main Width for a valid L footprint.");
   if (state.style !== "L_SHAPE") warnings.push("Only L-Shaped Lounge is implemented in this phase.");
   if (state.lFrontAccess !== "NONE") warnings.push("Drawer/Flap access is a UI placeholder and does not affect geometry yet.");
-  if (state.wheelAvoidanceEnabled) warnings.push("Wheel arch avoidance is a UI placeholder in the Lounge phase 1 geometry.");
+  if (state.wheelAvoidanceEnabled) {
+    if (!(state.avoidanceDepth < Math.min(state.mainDepth, state.lDepth))) {
+      warnings.push("Avoidance Depth must be less than both Main Depth and L Depth.");
+    }
+    if (!(state.avoidanceHeight < state.height - ppt)) {
+      warnings.push("Avoidance Height must be less than Height - PPT.");
+    }
+  }
   return warnings;
+}
+
+function sidePanelOuter(
+  sideDepth: number,
+  panelHeight: number,
+  cutout: "none" | "rear" | "front",
+  AD: number,
+  AH: number,
+): number[][] {
+  if (cutout === "rear" && AD > 0 && AH > 0 && AD < sideDepth && AH < panelHeight) {
+    return [[AD, 0], [sideDepth, 0], [sideDepth, panelHeight], [0, panelHeight], [0, AH], [AD, AH], [AD, 0]];
+  }
+  if (cutout === "front" && AD > 0 && AH > 0 && AD < sideDepth && AH < panelHeight) {
+    return [
+      [0, 0], [sideDepth - AD, 0], [sideDepth - AD, AH], [sideDepth, AH],
+      [sideDepth, panelHeight], [0, panelHeight], [0, 0],
+    ];
+  }
+  return [[0, 0], [sideDepth, 0], [sideDepth, panelHeight], [0, panelHeight], [0, 0]];
+}
+
+function addAxisAlignedIBox(
+  panels: LoungePanel[],
+  openings: LoungeOpening[],
+  lids: LoungeLid[],
+  state: LoungeSettings,
+  ppt: number,
+  panelHeight: number,
+  prefix: "main" | "l",
+  label: "Main" | "L",
+  bounds: LoungeBounds2D,
+  innerSide: "left" | "right",
+  cutoutEnd: "none" | "rear" | "front",
+): void {
+  const W = Math.max(0, bounds.x1 - bounds.x0);
+  const D = Math.max(0, bounds.y1 - bounds.y0);
+  const AD = Math.max(0, state.avoidanceDepth);
+  const AH = Math.max(0, state.avoidanceHeight);
+  const sideDepth = Math.max(0, D - ppt);
+  const hasCutout = cutoutEnd !== "none"
+    && AD > 0 && AD < D && AH > 0 && AH < panelHeight;
+  const end = hasCutout ? cutoutEnd : "none";
+  const leftCut = innerSide === "left" ? end : "none";
+  const rightCut = innerSide === "right" ? end : "none";
+  const note = hasCutout ? "Inner-corner wheel avoidance cutout applied." : undefined;
+
+  panels.push({
+    id: `${prefix}_front`,
+    name: `${label} Front`,
+    kind: "front_panel",
+    profilePlane: "XZ",
+    width: W,
+    height: panelHeight,
+    depth: ppt,
+    thickness: ppt,
+    placement: {
+      x0: bounds.x0,
+      x1: bounds.x1,
+      y0: Math.max(bounds.y0, bounds.y1 - ppt),
+      y1: bounds.y1,
+      z0: 0,
+      z1: panelHeight,
+    },
+    outer: [[0, 0], [W, 0], [W, panelHeight], [0, panelHeight], [0, 0]],
+  });
+
+  const leftId = prefix === "l"
+    ? (innerSide === "left" ? "l_inner_side" : "l_side")
+    : "main_left_side";
+  const rightId = prefix === "l"
+    ? (innerSide === "right" ? "l_inner_side" : "l_side")
+    : "main_right_side";
+  const leftName = prefix === "l"
+    ? (innerSide === "left" ? "L Inner Side" : "L Side")
+    : "Main Left Side";
+  const rightName = prefix === "l"
+    ? (innerSide === "right" ? "L Inner Side" : "L Side")
+    : "Main Right Side";
+
+  panels.push({
+    id: leftId,
+    name: leftName,
+    kind: "side_panel",
+    profilePlane: "YZ",
+    width: sideDepth,
+    height: panelHeight,
+    depth: ppt,
+    thickness: ppt,
+    note: leftCut !== "none" ? note : undefined,
+    placement: {
+      x0: bounds.x0,
+      x1: bounds.x0 + ppt,
+      y0: bounds.y0,
+      y1: bounds.y0 + sideDepth,
+      z0: 0,
+      z1: panelHeight,
+    },
+    outer: sidePanelOuter(sideDepth, panelHeight, leftCut, AD, AH),
+  });
+  panels.push({
+    id: rightId,
+    name: rightName,
+    kind: "side_panel",
+    profilePlane: "YZ",
+    width: sideDepth,
+    height: panelHeight,
+    depth: ppt,
+    thickness: ppt,
+    note: rightCut !== "none" ? note : undefined,
+    placement: {
+      x0: bounds.x1 - ppt,
+      x1: bounds.x1,
+      y0: bounds.y0,
+      y1: bounds.y0 + sideDepth,
+      z0: 0,
+      z1: panelHeight,
+    },
+    outer: sidePanelOuter(sideDepth, panelHeight, rightCut, AD, AH),
+  });
+
+  addTopPanel(panels, openings, lids, `${prefix}_top`, `${label} Top`, W, D, ppt, bounds, state.height, state.topLidEnabled);
+
+  if (!hasCutout || !(AH > ppt)) return;
+  const coverW = Math.min(AD, W);
+  if (end === "front") {
+    const x0 = innerSide === "right" ? bounds.x1 - coverW : bounds.x0;
+    const x1 = innerSide === "right" ? bounds.x1 : bounds.x0 + coverW;
+    panels.push({
+      id: `${prefix === "main" ? "M" : "L"}_AT`,
+      name: `${label} Avoidance Top`,
+      kind: "avoidance_top",
+      profilePlane: "XY",
+      width: coverW,
+      depth: AD,
+      thickness: ppt,
+      placement: { x0, x1, y0: bounds.y1 - AD, y1: bounds.y1, z0: AH - ppt, z1: AH },
+      outer: [[0, 0], [coverW, 0], [coverW, AD], [0, AD], [0, 0]],
+    });
+    panels.push({
+      id: `${prefix === "main" ? "M" : "L"}_AF`,
+      name: `${label} Avoidance Front`,
+      kind: "avoidance_front",
+      profilePlane: "XZ",
+      width: coverW,
+      height: AH - ppt,
+      thickness: ppt,
+      placement: { x0, x1, y0: bounds.y1 - AD, y1: bounds.y1 - AD + ppt, z0: 0, z1: AH - ppt },
+      outer: [[0, 0], [coverW, 0], [coverW, AH - ppt], [0, AH - ppt], [0, 0]],
+    });
+    return;
+  }
+  const x0 = innerSide === "left" ? bounds.x0 : bounds.x1 - coverW;
+  const x1 = innerSide === "left" ? bounds.x0 + coverW : bounds.x1;
+  panels.push({
+    id: `${prefix === "main" ? "M" : "L"}_AT`,
+    name: `${label} Avoidance Top`,
+    kind: "avoidance_top",
+    profilePlane: "XY",
+    width: coverW,
+    depth: AD,
+    thickness: ppt,
+    placement: { x0, x1, y0: bounds.y0, y1: bounds.y0 + AD, z0: AH - ppt, z1: AH },
+    outer: [[0, 0], [coverW, 0], [coverW, AD], [0, AD], [0, 0]],
+  });
+  panels.push({
+    id: `${prefix === "main" ? "M" : "L"}_AF`,
+    name: `${label} Avoidance Front`,
+    kind: "avoidance_front",
+    profilePlane: "XZ",
+    width: coverW,
+    height: AH - ppt,
+    thickness: ppt,
+    placement: { x0, x1, y0: bounds.y0 + AD - ppt, y1: bounds.y0 + AD, z0: 0, z1: AH - ppt },
+    outer: [[0, 0], [coverW, 0], [coverW, AH - ppt], [0, AH - ppt], [0, 0]],
+  });
 }
 
 function parallelWarnings(state: LoungeSettings): string[] {
@@ -275,7 +456,7 @@ function addParallelSection(
   addTopPanel(panels, openings, lids, `${prefix}_top`, `${label} Top`, SW, D, ppt, { x0: xStart, x1: xEnd, y0: 0, y1: D }, state.height, state.topLidEnabled);
 
   panels.push({
-    id: `${prefix}_support_strip`,
+    id: `${prefix}_SS`,
     name: `${label} Support Strip`,
     kind: "support_strip",
     profilePlane: "YZ",
@@ -296,7 +477,7 @@ function addParallelAvoidanceCovers(panels: LoungePanel[], state: LoungeSettings
   const AH = Math.max(0, state.avoidanceHeight);
   if (!(AD > 0 && AH > ppt)) return;
   panels.push({
-    id: "parallel_avoidance_top",
+    id: "PA_TOP",
     name: "Parallel Avoidance Top",
     kind: "avoidance_top",
     profilePlane: "XY",
@@ -307,7 +488,7 @@ function addParallelAvoidanceCovers(panels: LoungePanel[], state: LoungeSettings
     outer: [[0, 0], [TW, 0], [TW, AD], [0, AD], [0, 0]],
   });
   panels.push({
-    id: "parallel_avoidance_front",
+    id: "PA_FRONT",
     name: "Parallel Avoidance Front",
     kind: "avoidance_front",
     profilePlane: "XZ",
@@ -341,7 +522,7 @@ function addMiddleCabinet(panels: LoungePanel[], state: LoungeSettings): void {
   const doorHeight = Math.max(0, CH - 2 * dc - 2 * dpt);
 
   panels.push({
-    id: "middle_cabinet_bottom",
+    id: "MC_BOT",
     name: "Middle Cabinet Bottom",
     kind: "cabinet_bottom",
     profilePlane: "XY",
@@ -352,14 +533,14 @@ function addMiddleCabinet(panels: LoungePanel[], state: LoungeSettings): void {
     outer: [[0, 0], [CW, 0], [CW, CD], [0, CD], [0, 0]],
   });
   panels.push({
-    id: "middle_cabinet_top",
+    id: "MC_TOP",
     name: "Middle Cabinet Top",
     kind: "cabinet_top",
     profilePlane: "XY",
     width: CW,
     depth: CD,
     thickness: dpt,
-    note: "Razor Rounded Lock bases mount on the underside of this panel (Kitchen module rules).",
+    note: "Cabinet top only. Razor lock bases mount on the mid-shelf underside.",
     placement: { x0, x1: x0 + CW, y0, y1: state.depth, z0: CSH + CH - dpt, z1: CSH + CH },
     outer: [[0, 0], [CW, 0], [CW, CD], [0, CD], [0, 0]],
   });
@@ -369,7 +550,7 @@ function addMiddleCabinet(panels: LoungePanel[], state: LoungeSettings): void {
   const grooveY0 = (CH - dpt) / 2 - dpt - 0.5;
   const grooveRect = { x0: grooveX0, y0: grooveY0, x1: CD, y1: grooveY0 + dpt + 1, depth: dpt / 2 };
   panels.push({
-    id: "middle_cabinet_left",
+    id: "MC_L",
     name: "Middle Cabinet Left",
     kind: "cabinet_side",
     profilePlane: "YZ",
@@ -379,10 +560,10 @@ function addMiddleCabinet(panels: LoungePanel[], state: LoungeSettings): void {
     placement: { x0, x1: x0 + dpt, y0, y1: state.depth, z0: CSH + dpt, z1: CSH + dpt + sideHeight },
     outer: [[0, 0], [CD, 0], [CD, sideHeight], [0, sideHeight], [0, 0]],
     // Inner face of the left side is world X+, which is the local flat top face.
-    grooves: [{ id: "middle_cabinet_left_groove", ...grooveRect, face: "top" }],
+    grooves: [{ id: "MC_L_GR", ...grooveRect, face: "top" }],
   });
   panels.push({
-    id: "middle_cabinet_right",
+    id: "MC_R",
     name: "Middle Cabinet Right",
     kind: "cabinet_side",
     profilePlane: "YZ",
@@ -392,18 +573,18 @@ function addMiddleCabinet(panels: LoungePanel[], state: LoungeSettings): void {
     placement: { x0: x0 + CW - dpt, x1: x0 + CW, y0, y1: state.depth, z0: CSH + dpt, z1: CSH + dpt + sideHeight },
     outer: [[0, 0], [CD, 0], [CD, sideHeight], [0, sideHeight], [0, 0]],
     // Inner face of the right side is world X-, which is the local flat bottom face.
-    grooves: [{ id: "middle_cabinet_right_groove", ...grooveRect, face: "bottom" }],
+    grooves: [{ id: "MC_R_GR", ...grooveRect, face: "bottom" }],
   });
   const dividerZ0 = CSH + (CH - dpt) / 2;
   panels.push({
-    id: "middle_cabinet_mid_divider",
+    id: "MC_MID",
     name: "Middle Cabinet Mid Horizontal Divider",
     kind: "cabinet_divider",
     profilePlane: "XY",
     width: dividerBodyWidth,
     depth: dividerDepth,
     thickness: dpt,
-    note: "Tongues on both sides, rear half of the divider depth.",
+    note: "Tongues on both sides, rear half of the divider depth. Razor lock bases mount on this underside.",
     placement: { x0: x0 + dpt, x1: x0 + CW - dpt, y0: y0 + dpt, y1: state.depth, z0: dividerZ0, z1: dividerZ0 + dpt },
     outer: [
       [0, 0],
@@ -419,20 +600,22 @@ function addMiddleCabinet(panels: LoungePanel[], state: LoungeSettings): void {
   });
   const LOCK_WIDTH = 55;
   const LOCK_HEIGHT = 15.5;
-  const lockSideDistance = Math.max(0, mc.lockSideDistance);
-  // Kitchen Razor rule: lock center sits 30.5mm below the underside of the panel above (cabinet top).
-  // Door z0 is CSH + dc + dpt, so the local Y subtracts both dc and the top/bottom dpt inset.
-  const lockCenterY = CH - dc - 2 * dpt - 30.5;
+  // lockSideDistance is from the meeting edge; +35mm toward each door's outer side.
+  const lockSideDistance = Math.max(0, mc.lockSideDistance) + 35;
+  // Kitchen Razor rule: lock center is 30.5mm below the host panel underside.
+  // Mid-cab host is the mid shelf (MC_MID) bottom face, not the cabinet top.
+  // Door z0 = CSH + dc + dpt; mid-shelf z0 = CSH + (CH - dpt) / 2.
+  const lockCenterY = (CH - dpt) / 2 - dc - dpt - 30.5;
   const hingeSide = Math.max(0, mc.hingeSideDistance);
   const hingeEdge = Math.max(0, mc.hingeCupCenterFromEdge);
   const cupDiameter = Math.max(1, mc.hingeCupDiameter);
   const cupDepth = Math.min(Math.max(0.5, mc.hingeCupDepth), dpt);
   const doorCuts = (doorId: string, isLeftDoor: boolean) => {
-    // Hinges on the outer vertical edge; doors hinge off the cabinet side panels.
+    // Hinges on the outer vertical edge (side panels), interior door face (local top = y1).
     const hingeCenterX = isLeftDoor ? hingeEdge : doorWidth - hingeEdge;
     const hingeHoles = [
-      { id: `${doorId}_hinge_bottom`, centerX: hingeCenterX, centerY: hingeSide, diameter: cupDiameter, depth: cupDepth, face: "bottom" as const },
-      { id: `${doorId}_hinge_top`, centerX: hingeCenterX, centerY: doorHeight - hingeSide, diameter: cupDiameter, depth: cupDepth, face: "bottom" as const },
+      { id: `${doorId}_hinge_bottom`, centerX: hingeCenterX, centerY: hingeSide, diameter: cupDiameter, depth: cupDepth, face: "top" as const },
+      { id: `${doorId}_hinge_top`, centerX: hingeCenterX, centerY: doorHeight - hingeSide, diameter: cupDiameter, depth: cupDepth, face: "top" as const },
     ];
     if (mc.doorLockStyle === "NONE") return { hingeHoles, lockCutouts: [] };
     const lockCenterX = isLeftDoor ? doorWidth - lockSideDistance : lockSideDistance;
@@ -451,9 +634,9 @@ function addMiddleCabinet(panels: LoungePanel[], state: LoungeSettings): void {
       }],
     };
   };
-  const leftDoorCuts = doorCuts("middle_cabinet_left_door", true);
+  const leftDoorCuts = doorCuts("MC_L_DR", true);
   panels.push({
-    id: "middle_cabinet_left_door",
+    id: "MC_L_DR",
     name: "Middle Cabinet Left Door",
     kind: "cabinet_door",
     profilePlane: "XZ",
@@ -465,9 +648,9 @@ function addMiddleCabinet(panels: LoungePanel[], state: LoungeSettings): void {
     hingeHoles: leftDoorCuts.hingeHoles,
     lockCutouts: leftDoorCuts.lockCutouts,
   });
-  const rightDoorCuts = doorCuts("middle_cabinet_right_door", false);
+  const rightDoorCuts = doorCuts("MC_R_DR", false);
   panels.push({
-    id: "middle_cabinet_right_door",
+    id: "MC_R_DR",
     name: "Middle Cabinet Right Door",
     kind: "cabinet_door",
     profilePlane: "XZ",
@@ -560,7 +743,7 @@ function generateIShapeGeometry(state: LoungeSettings): LoungeGeometryResult {
 
   if (hasCutout && AH > ppt) {
     panels.push({
-      id: "i_avoidance_top",
+      id: "I_AT",
       name: "I Avoidance Top",
       kind: "avoidance_top",
       profilePlane: "XY",
@@ -571,7 +754,7 @@ function generateIShapeGeometry(state: LoungeSettings): LoungeGeometryResult {
       outer: [[0, 0], [W, 0], [W, AD], [0, AD], [0, 0]],
     });
     panels.push({
-      id: "i_avoidance_front",
+      id: "I_AF",
       name: "I Avoidance Front",
       kind: "avoidance_front",
       profilePlane: "XZ",
@@ -634,133 +817,25 @@ export function generateLoungeGeometry(input: Partial<LoungeSettings>): LoungeGe
   const panels: LoungePanel[] = [];
   const openings: LoungeOpening[] = [];
   const lids: LoungeLid[] = [];
+  const AD = Math.max(0, state.avoidanceDepth);
+  const AH = Math.max(0, state.avoidanceHeight);
+  const hasCutout = state.wheelAvoidanceEnabled === true
+    && AD > 0 && AD < Math.min(state.mainDepth, state.lDepth)
+    && AH > 0 && AH < panelHeight;
+  const mainInner = state.lPosition === "LEFT" ? "left" : "right";
+  const lInner = state.lPosition === "LEFT" ? "right" : "left";
 
-  panels.push({
-    id: "main_front",
-    name: "Main Front",
-    kind: "front_panel",
-    profilePlane: "XZ",
-    width: mainVisibleBounds.x1 - mainVisibleBounds.x0,
-    height: panelHeight,
-    depth: ppt,
-    thickness: ppt,
-    placement: {
-      x0: mainVisibleBounds.x0,
-      x1: mainVisibleBounds.x1,
-      y0: Math.max(0, state.mainDepth - ppt),
-      y1: state.mainDepth,
-      z0: 0,
-      z1: panelHeight,
-    },
-    outer: [[0, 0], [mainVisibleBounds.x1 - mainVisibleBounds.x0, 0], [mainVisibleBounds.x1 - mainVisibleBounds.x0, panelHeight], [0, panelHeight], [0, 0]],
-  });
-  addTopPanel(panels, openings, lids, "main_top", "Main Top", mainVisibleBounds.x1 - mainVisibleBounds.x0, mainVisibleBounds.y1 - mainVisibleBounds.y0, ppt, mainVisibleBounds, state.height, state.topLidEnabled);
-  panels.push({
-    id: "main_left_l_piece",
-    name: "Main Left L Piece",
-    kind: "l_support_profile",
-    profilePlane: "YZ",
-    length: Math.max(0, state.mainDepth - ppt),
-    verticalLegWidth: 100,
-    horizontalLegWidth: 100,
-    thickness: ppt,
-    placement: {
-      x0: mainVisibleBounds.x0,
-      x1: mainVisibleBounds.x0 + ppt,
-      y0: ppt,
-      y1: state.mainDepth,
-      z0: 0,
-      z1: panelHeight,
-    },
-    outer: lSupportOuter(state.mainDepth - ppt, panelHeight),
-  });
-  panels.push({
-    id: "main_right_l_piece",
-    name: "Main Right L Piece",
-    kind: "l_support_profile",
-    profilePlane: "YZ",
-    length: Math.max(0, state.mainDepth - ppt),
-    verticalLegWidth: 100,
-    horizontalLegWidth: 100,
-    thickness: ppt,
-    mirrored: true,
-    placement: {
-      x0: mainVisibleBounds.x1 - ppt,
-      x1: mainVisibleBounds.x1,
-      y0: ppt,
-      y1: state.mainDepth,
-      z0: 0,
-      z1: panelHeight,
-    },
-    outer: lSupportOuter(state.mainDepth - ppt, panelHeight),
-  });
-  const lFrontX0 = state.lPosition === "LEFT" ? lBounds.x0 + ppt : lBounds.x0;
-  const lFrontX1 = state.lPosition === "LEFT" ? lBounds.x1 : lBounds.x1 - ppt;
-  panels.push({
-    id: "l_front",
-    name: "L Front",
-    kind: "front_panel",
-    profilePlane: "XZ",
-    width: Math.max(0, state.lWidth - ppt),
-    height: panelHeight,
-    depth: ppt,
-    thickness: ppt,
-    note: "Width reduced by one PPT for future drawer/flap access logic.",
-    placement: {
-      x0: lFrontX0 + ppt,
-      x1: lFrontX1 + ppt,
-      y0: Math.max(0, state.lDepth - ppt),
-      y1: state.lDepth,
-      z0: 0,
-      z1: panelHeight,
-    },
-    outer: [[0, 0], [Math.max(0, state.lWidth - ppt), 0], [Math.max(0, state.lWidth - ppt), panelHeight], [0, panelHeight], [0, 0]],
-  });
-  const lSideX0 = state.lPosition === "LEFT" ? lBounds.x0 : lBounds.x1 - ppt;
-  const lSideX1 = state.lPosition === "LEFT" ? lBounds.x0 + ppt : lBounds.x1;
-  const lSideShift = Math.max(0, state.lWidth - ppt);
-  panels.push({
-    id: "l_side",
-    name: "L Side",
-    kind: "side_panel",
-    profilePlane: "YZ",
-    width: state.lDepth,
-    height: panelHeight,
-    depth: ppt,
-    thickness: ppt,
-    placement: {
-      x0: lSideX0 - lSideShift,
-      x1: lSideX1 - lSideShift,
-      y0: 0,
-      y1: state.lDepth,
-      z0: 0,
-      z1: panelHeight,
-    },
-    outer: [[0, 0], [state.lDepth, 0], [state.lDepth, panelHeight], [0, panelHeight], [0, 0]],
-  });
-  panels.push({
-    id: "l_side_strip",
-    name: "L Side Strip",
-    kind: "side_panel",
-    profilePlane: "YZ",
-    width: state.lDepth,
-    height: Math.min(100, panelHeight),
-    depth: ppt,
-    thickness: ppt,
-    placement: {
-      x0: lSideX0,
-      x1: lSideX1,
-      y0: 0,
-      y1: Math.max(0, state.lDepth - ppt),
-      z0: Math.max(0, panelHeight - 100),
-      z1: panelHeight,
-    },
-    outer: [[0, 0], [Math.max(0, state.lDepth - ppt), 0], [Math.max(0, state.lDepth - ppt), Math.min(100, panelHeight)], [0, Math.min(100, panelHeight)], [0, 0]],
-  });
-  addTopPanel(panels, openings, lids, "l_top", "L Top", state.lWidth, state.lDepth, ppt, lBounds, state.height, state.topLidEnabled);
+  addAxisAlignedIBox(
+    panels, openings, lids, state, ppt, panelHeight,
+    "main", "Main", mainVisibleBounds, mainInner, hasCutout ? "front" : "none",
+  );
+  addAxisAlignedIBox(
+    panels, openings, lids, state, ppt, panelHeight,
+    "l", "L", lBounds, lInner, hasCutout ? "rear" : "none",
+  );
 
   return withRelationshipDeclarations({
-    meta: { module: "lounge", style: state.style, phase: "ui_geometry_svg_only" },
+    meta: { module: "lounge", style: state.style, phase: "l_shape_two_box_v1" },
     state,
     footprint: {
       main: mainBounds,

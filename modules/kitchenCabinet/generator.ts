@@ -119,6 +119,12 @@ function intersects(a0: number, a1: number, b0: number, b1: number): boolean {
   return a0 < b1 && b0 < a1;
 }
 
+function zonePartId(kind: string, zoneId: string, extra?: string | number): string {
+  if (kind === "US") return `US_${zoneId}_${extra}`;
+  if (kind === "FP") return `FP_${zoneId}${extra || ""}`;
+  return `${kind}_${zoneId}`;
+}
+
 function board(
   id: string,
   name: string,
@@ -380,8 +386,16 @@ function applySideFrontVisibility(
   frontRepairMaxZ: number,
   cabinetHeight: number,
 ): Array<[number, number]> {
+  if (profile.length < 2) return profile;
   const frontVisible = Boolean(options?.frontVisible);
-  if (!frontVisible || profile.length < 2) return profile;
+  const keepBchNotch = options?.bchNotchEnabled !== false;
+  if (!frontVisible) {
+    if (keepBchNotch) return profile;
+    return trimClosedProfile(profile.map(([y, z]) => [
+      z <= frontRepairMaxZ + 0.001 && y >= -0.001 && y <= frontRepairMaxY + 0.001 ? 0 : y,
+      z,
+    ]));
+  }
   const notchlessTop = profile.map(([y, z]) => [
     z >= cabinetHeight - frontRepairMaxZ - 0.001 && y >= -0.001 && y <= frontRepairMaxY + 0.001 ? -fpt : y,
     z >= cabinetHeight - frontRepairMaxZ - 0.001 && y >= -0.001 && y <= frontRepairMaxY + 0.001 ? cabinetHeight : z,
@@ -390,7 +404,7 @@ function applySideFrontVisibility(
     Math.abs(y) <= 0.001 && z >= frontRepairMaxZ - 0.001 && z < cabinetHeight - 0.001 ? -fpt : y,
     z,
   ]);
-  if (options?.bchNotchEnabled !== false) return trimClosedProfile(extended);
+  if (keepBchNotch) return trimClosedProfile(extended);
   return trimClosedProfile(extended.map(([y, z]) => [
     z <= frontRepairMaxZ + 0.001 && y >= -0.001 && y <= frontRepairMaxY + 0.001 ? -fpt : y,
     z,
@@ -527,11 +541,14 @@ function removeUnsupportedEdgeStoveVPanelNotches(
   state: KitchenLayoutState,
   constants: KitchenGeometryConstants,
 ): void {
+  const refs = sideReferences(state);
   const lastColumnIndex = state.columns.length - 1;
   const stoveAtLeftEdge = zones.some((zone) => zone.zoneType === "stove" && zone.columnIndex === 0);
   const stoveAtRightEdge = zones.some((zone) => zone.zoneType === "stove" && zone.columnIndex === lastColumnIndex);
-  if (stoveAtLeftEdge && vPanels[0]) rebuildStoveEdgeOuterVPanel(vPanels[0], state, constants);
-  if (stoveAtRightEdge && vPanels[vPanels.length - 1]) {
+  if (stoveAtLeftEdge && vPanels[0] && refs.left.options.extendT2T3B4ToOuterFace === false) {
+    rebuildStoveEdgeOuterVPanel(vPanels[0], state, constants);
+  }
+  if (stoveAtRightEdge && vPanels[vPanels.length - 1] && refs.right.options.extendT2T3B4ToOuterFace === false) {
     rebuildStoveEdgeOuterVPanel(vPanels[vPanels.length - 1], state, constants);
   }
 }
@@ -616,11 +633,15 @@ function generateBaseBoards(state: KitchenLayoutState, vPanels: VPanelGeometry[]
   const frontStopX1 = refs.right.options.frontVisible ? refs.right.innerX : cw;
   const stoveAtLeftEdge = zones.some((zone) => zone.zoneType === "stove" && zone.columnIndex === 0);
   const stoveAtRightEdge = zones.some((zone) => zone.zoneType === "stove" && zone.columnIndex === columns.length - 1);
-  // Stove-edge outer V has no strip receivers — keep T2/T3/B4 off that skin thickness.
-  let rearSupportX0 = refs.left.options.frontVisible && !refs.left.options.extendT2T3B4ToOuterFace ? refs.left.innerX : 0;
-  let rearSupportX1 = refs.right.options.frontVisible && !refs.right.options.extendT2T3B4ToOuterFace ? refs.right.innerX : cw;
-  if (stoveAtLeftEdge && vPanels[0]) rearSupportX0 = Math.max(rearSupportX0, vPanels[0].x1);
-  if (stoveAtRightEdge && vPanels.length) rearSupportX1 = Math.min(rearSupportX1, vPanels[vPanels.length - 1].x0);
+  let rearSupportX0 = refs.left.options.extendT2T3B4ToOuterFace === false ? refs.left.innerX : 0;
+  let rearSupportX1 = refs.right.options.extendT2T3B4ToOuterFace === false ? refs.right.innerX : cw;
+  // Stove-edge outer V has no strip receivers unless the user extends T2/T3/B4 onto that skin.
+  if (stoveAtLeftEdge && vPanels[0] && refs.left.options.extendT2T3B4ToOuterFace === false) {
+    rearSupportX0 = Math.max(rearSupportX0, vPanels[0].x1);
+  }
+  if (stoveAtRightEdge && vPanels.length && refs.right.options.extendT2T3B4ToOuterFace === false) {
+    rearSupportX1 = Math.min(rearSupportX1, vPanels[vPanels.length - 1].x0);
+  }
   const wheelAvoidances = validWheelAvoidances(state, cd, ch);
 
   if (g.bottomClearanceStyle === "style_2") {
@@ -707,7 +728,7 @@ function generateBaseBoards(state: KitchenLayoutState, vPanels: VPanelGeometry[]
       continue;
     }
     boards.push(board(
-      `${avoidance.id}-avoidance-top`,
+      `${avoidance.id}-AT`,
       "Wheel avoidance top",
       "avoidance_top",
       "avoidance_support",
@@ -740,7 +761,7 @@ function generateBaseBoards(state: KitchenLayoutState, vPanels: VPanelGeometry[]
     const frontZ1 = Math.max(0, avoidance.height - cpt);
     if (frontZ1 > 0) {
       boards.push(board(
-        `${avoidance.id}-avoidance-front`,
+        `${avoidance.id}-AF`,
         "Wheel avoidance front",
         "avoidance_front",
         "avoidance_support",
@@ -845,7 +866,7 @@ function addApplianceFloorForColumn(
   const floorY0 = constants.supportStripWidth;
   const floorY1 = cd - cpt;
   const floorSpan = floorY1 - floorY0;
-  const floorId = `${column.id}-${zone.id}-appliance-floor`;
+  const floorId = zonePartId("AF", zone.id);
 
   if (String(g.bottomClearanceStyle || "style_1") !== "style_1") {
     errors.push(`Appliance floor in ${zone.id} requires Style 1 bottom clearance.`);
@@ -919,7 +940,7 @@ function addApplianceFloorForColumn(
     const y1 = centerY + cpt / 2;
     if (y0 < floorY0 + 1 || y1 > floorY1 - 1) return;
     boards.push(board(
-      `${column.id}-${zone.id}-underside-support-${index + 1}`,
+      zonePartId("US", zone.id, index + 1),
       `Appliance underside support ${index + 1}`,
       "underside_support",
       "bottom_system",
@@ -939,7 +960,7 @@ function addApplianceFloorForColumn(
     ));
   });
 
-  if (!boards.some((item) => item.type === "underside_support" && item.id.startsWith(`${column.id}-${zone.id}-underside-support`))) {
+  if (!boards.some((item) => item.type === "underside_support" && (item.id.startsWith(`US_${zone.id}_`) || item.id.startsWith(`${column.id}-${zone.id}-underside-support`)))) {
     warnings.push(`Appliance floor ${floorId}: underside supports skipped (floor span too short).`);
   }
 }
@@ -968,7 +989,7 @@ function generateFunctionalBoards(
         // front portion and this rear extension completes one full-depth deck.
         addFunctionalBoard(
           boards,
-          `${column.id}-${zone.id}-bottom-full-extension`,
+          zonePartId("AFX", zone.id),
           "full_depth_shelf",
           column,
           zone.z0 + cpt / 2,
@@ -979,14 +1000,14 @@ function generateFunctionalBoards(
           { y0: constants.supportStripWidth, y1: cd },
         );
       } else if (type) {
-        addFunctionalBoard(boards, `${column.id}-${zone.id}-bottom`, type, column, zone.z0, cpt, cd, constants);
+        addFunctionalBoard(boards, zonePartId(type === "drawer_divider" ? "DD" : "SH", zone.id), type, column, zone.z0, cpt, cd, constants);
       }
       if (zone.zoneType === "stove" && belowZone && isFrontPanelZone(belowZone.zoneType)) {
         // Full shelf is centered on zone.z0. The half-depth drawer divider
         // touches its lower face: half.z1 === full.z0.
         addFunctionalBoard(
           boards,
-          `${column.id}-${zone.id}-stove-half-divider`,
+          zonePartId("SHD", zone.id),
           "drawer_divider",
           column,
           zone.z0 - cpt,
@@ -1019,7 +1040,7 @@ function generateFunctionalBoards(
           warnings.push(`Door shelf skipped in ${zone.id}: shelf top Z ${shelfTopZ} is outside zone range ${zone.z0}-${zone.z1}.`);
         } else {
           const centerZ = shelfTopZ - cpt / 2;
-          addFunctionalBoard(boards, `${zone.id}-door-shelf`, "door_shelf", column, centerZ, cpt, cd, constants, ["Shelf top height is user input; centerZ = shelfTopZ - CPT/2."]);
+          addFunctionalBoard(boards, zonePartId("DS", zone.id), "door_shelf", column, centerZ, cpt, cd, constants, ["Shelf top height is user input; centerZ = shelfTopZ - CPT/2."]);
         }
       }
     });
@@ -1069,7 +1090,7 @@ function generateStoveSidePanels(
       const rightX0 = frontX1 - STOVE_SIDE_PANEL_WIDTH;
       boards.push(
         board(
-          `${column.id}-${zone.id}-stove-side-panel-left`,
+          zonePartId("SSP_L", zone.id),
           "Stove left side panel",
           "stove_side_panel",
           "stove_front",
@@ -1078,7 +1099,7 @@ function generateStoveSidePanels(
           "Y",
           { x0: frontX0, x1: leftX1, y0: -fpt, y1: 0, z0: splitZ, z1: topZ },
           [{
-            id: `${column.id}-${zone.id}-stove-side-panel-left-inner-top-notch`,
+            id: `${zonePartId("SSP_L", zone.id)}-inner-top-notch`,
             x0: leftX1 - STOVE_SIDE_PANEL_TOP_NOTCH_X,
             x1: leftX1,
             z0: topZ - STOVE_SIDE_PANEL_TOP_NOTCH_Z,
@@ -1088,7 +1109,7 @@ function generateStoveSidePanels(
           ["Front-plane stove panel; inner top corner notch faces the column centerline."],
         ),
         board(
-          `${column.id}-${zone.id}-stove-side-panel-right`,
+          zonePartId("SSP_R", zone.id),
           "Stove right side panel",
           "stove_side_panel",
           "stove_front",
@@ -1097,7 +1118,7 @@ function generateStoveSidePanels(
           "Y",
           { x0: rightX0, x1: frontX1, y0: -fpt, y1: 0, z0: splitZ, z1: topZ },
           [{
-            id: `${column.id}-${zone.id}-stove-side-panel-right-inner-top-notch`,
+            id: `${zonePartId("SSP_R", zone.id)}-inner-top-notch`,
             x0: rightX0,
             x1: rightX0 + STOVE_SIDE_PANEL_TOP_NOTCH_X,
             z0: topZ - STOVE_SIDE_PANEL_TOP_NOTCH_Z,
@@ -1194,7 +1215,7 @@ function addSideStrengtheningStrips(boards: BoardGeometry[], columns: ComputedKi
     const x0 = side === "left" ? refs.left.innerX : refs.right.innerX - cpt;
     const x1 = side === "left" ? refs.left.innerX + cpt : refs.right.innerX;
     boards.push(board(
-      `${side}-side-strengthening-strip-${zone.id}`,
+      zonePartId(side === "left" ? "SS_L" : "SS_R", zone.id),
       `${side === "left" ? "Left" : "Right"} side strengthening strip`,
       "side_strengthening_strip",
       "support_strip",
@@ -1219,10 +1240,18 @@ function applySideStrengtheningStripShelfJoinery(boards: BoardGeometry[], cpt: n
   const clearance = 1;
   const halfClearance = clearance / 2;
   for (const strip of boards.filter((item) => item.type === "side_strengthening_strip")) {
-    const side = strip.id.startsWith("left-") ? "left" : strip.id.startsWith("right-") ? "right" : null;
+    const side = strip.id.startsWith("SS_L_") || strip.id.startsWith("left-")
+      ? "left"
+      : strip.id.startsWith("SS_R_") || strip.id.startsWith("right-")
+        ? "right"
+        : null;
     if (!side) continue;
-    const zoneId = strip.id.replace(/^left-side-strengthening-strip-/, "").replace(/^right-side-strengthening-strip-/, "");
-    const shelf = boards.find((item) => item.id === `${zoneId}-door-shelf`);
+    const zoneId = strip.id
+      .replace(/^SS_L_/, "")
+      .replace(/^SS_R_/, "")
+      .replace(/^left-side-strengthening-strip-/, "")
+      .replace(/^right-side-strengthening-strip-/, "");
+    const shelf = boards.find((item) => item.id === zonePartId("DS", zoneId) || item.id === `${zoneId}-door-shelf`);
     if (!shelf) continue;
     const shelfBodyX0 = shelf.profileXY?.[0]?.[0] ?? shelf.x0;
     const shelfBodyX1 = shelf.profileXY?.[1]?.[0] ?? shelf.x1;
@@ -1811,7 +1840,7 @@ function buildFrontPanels(columns: ComputedKitchenColumn[], zones: ComputedKitch
           continue;
         }
         const panel: FrontPanelGeometry = {
-          id: `${zone.id}-front-panel${leaf.idSuffix}`,
+          id: zonePartId("FP", zone.id, leaf.idSuffix),
           columnId: zone.columnId,
           zoneId: zone.id,
           type: leaf.type,

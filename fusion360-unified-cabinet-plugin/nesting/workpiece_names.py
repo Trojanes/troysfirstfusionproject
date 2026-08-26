@@ -4,8 +4,10 @@ Identity and display names are deliberately separate:
 
 * ``runLabel`` / ``caseName`` identifies one generator run.
 * ``panelId`` identifies a manufacturing record (descriptive, not always unique).
-* ``assemblyName`` and ``componentName`` form the shop label
-  ``assembly-component``.
+* ``assemblyName`` and ``boardId`` form the shop / Fusion label
+  ``assembly-boardId`` (e.g. ``Island-V1``, ``OHC-BP``).
+* Legacy child names (``GT_B3``, ``K_V2``, ``OH_BP``) are stripped back to
+  the board id before joining so shop labels do not stack prefixes.
 
 Fusion generators, Lay Flat/Nesting and manufacturing export all use this module
 so their browser and package names cannot drift independently.
@@ -19,6 +21,22 @@ import re
 _ISO_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}T", re.IGNORECASE)
 _MILLIS_RE = re.compile(r"^\d{10,}$")
 _SHORT_CODE_RE = re.compile(r"^[A-Za-z]{1,8}\d+[A-Za-z0-9_-]*$")
+_LEGACY_CHILD_PREFIXES = (
+    "GT_FP_",
+    "UOH_LEFT_",
+    "UOH_BACK_",
+    "UOH_RIGHT_",
+    "UOH_",
+    "LOUNGE_ASM_",
+    "LOUNGE_FLAT_",
+    "LOUNGE_",
+    "KITCHEN_",
+    "GT_",
+    "OH_",
+    "SC_",
+    "K_",
+    "L_",
+)
 
 
 def sanitize_name_part(value, fallback=""):
@@ -93,11 +111,53 @@ def strip_instance_suffix(value):
     return text if at < 0 else text[:at]
 
 
+def strip_legacy_module_prefix(value):
+    """Strip generator child prefixes so ``GT_B3`` / ``OH_BP`` become board ids."""
+    text = sanitize_name_part(value)
+    if not text:
+        return ""
+    if text.upper().startswith("KITCHEN_"):
+        return short_part_from_body(text) or text
+    upper = text.upper()
+    for prefix in _LEGACY_CHILD_PREFIXES:
+        if prefix == "KITCHEN_":
+            continue
+        if upper.startswith(prefix):
+            rest = text[len(prefix) :].strip(" ._")
+            return rest or text
+    return text
+
+
+def component_already_qualified(assembly_name, component_name):
+    """True when component is already ``{assembly}-{board}``."""
+    assembly = sanitize_name_part(assembly_name)
+    component = sanitize_name_part(component_name)
+    if not assembly or not component:
+        return False
+    prefix = assembly + "-"
+    return component.startswith(prefix) or component.lower().startswith(prefix.lower())
+
+
+def board_component_label(assembly_name, board_id, fallback_assembly="Assembly"):
+    """Fusion child / body / shop label: ``{assembly}-{boardId}``."""
+    assembly = sanitize_name_part(assembly_name) or sanitize_name_part(
+        fallback_assembly, fallback="Assembly"
+    )
+    board = sanitize_name_part(board_id, fallback="board")
+    if not board:
+        return (assembly or "board")[:76]
+    if component_already_qualified(assembly, board):
+        return board[:76]
+    joined = join_group_part(assembly, board)
+    return (joined or board)[:76]
+
+
 def short_part_from_body(body_name):
     """Derive a readable board code from a module body name.
 
     ``KITCHEN_vPanel_V2`` → ``V2``
     ``KITCHEN_frontPanel_k-zone-left-door`` → ``k-zone-left-door``
+    ``GT-B3`` / ``Island-V1`` → ``B3`` / ``V1``
     """
     text = sanitize_name_part(body_name)
     if not text:
@@ -110,6 +170,14 @@ def short_part_from_body(body_name):
             panel_id = rest[index + 1 :].strip(" ._")
             return (panel_id or rest[:index])[:48]
         return rest[:48]
+    stripped = strip_legacy_module_prefix(text)
+    if stripped and stripped != text:
+        return stripped[:48]
+    if "-" in text and not is_blob_label(text):
+        _left, right = text.split("-", 1)
+        right = right.strip(" ._")
+        if right and not _SHORT_CODE_RE.match(text):
+            return right[:48]
     if _SHORT_CODE_RE.match(text) and len(text) <= 48:
         return text
     return text[:48]
@@ -202,6 +270,13 @@ def resolve_shop_label(
     )
 
     if not assembly_invalid and not component_invalid and not same_container:
+        if component_already_qualified(assembly, component):
+            return component[:120].rstrip(" ._")
+        part = strip_legacy_module_prefix(component)
+        if part and part != component:
+            joined = join_group_part(assembly, part)
+            if joined:
+                return joined[:120].rstrip(" ._")
         joined = join_group_part(assembly, component)
         if joined:
             return joined[:120].rstrip(" ._")

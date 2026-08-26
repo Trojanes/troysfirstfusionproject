@@ -153,6 +153,12 @@ def _slim_metadata_for_lay_flat(
         "MILLING",
         allow_parts_in_part=False,
         reflected_source=bool((outline or {}).get("reflectedSource")),
+        grain_along_mm=(
+            (dimensions or {}).get("grainAlongMm")
+            if isinstance(dimensions, dict)
+            else None
+        )
+        or ((outline or {}).get("grainAlongMm") if isinstance(outline, dict) else None),
     )
     slim = {
         "schemaVersion": src.get("schemaVersion", 1),
@@ -1393,6 +1399,57 @@ def flip_lay_flat_body_thickness(body):
         "bodyName": body_name,
         "rotatedDeg": 180,
         "axis": "X",
+        "attributesRestored": int(restored or 0),
+    }
+
+
+def rotate_lay_flat_body_in_plane(body, degrees=-90.0):
+    """Rotate a LAY_FLAT body about world +Z through its center.
+
+    Used after grain 90° swap so the new grainAlongMm edge stays along +X.
+    """
+    native = _native_body(body)
+    if native is None:
+        return {"ok": False, "reason": "missing_body"}
+    try:
+        component = getattr(native, "parentComponent", None)
+    except Exception:
+        component = None
+    if component is None:
+        return {
+            "ok": False,
+            "bodyName": str(getattr(native, "name", "") or ""),
+            "reason": "missing_parent_component",
+        }
+
+    body_name = str(getattr(native, "name", "") or "")
+    angle = float(degrees)
+    attr_snapshot = _snapshot_body_attributes(native)
+    try:
+        center = _body_center_point_cm(native)
+        rotate = adsk.core.Matrix3D.create()
+        rotate.setToRotation(
+            math.radians(angle),
+            adsk.core.Vector3D.create(0.0, 0.0, 1.0),
+            center,
+        )
+        _move_body_transform(component, native, rotate, "LAY_FLAT_GRAIN_Z_")
+        restored = _restore_body_attributes(native, attr_snapshot)
+    except Exception as ex:
+        try:
+            _restore_body_attributes(native, attr_snapshot)
+        except Exception:
+            pass
+        return {
+            "ok": False,
+            "bodyName": body_name,
+            "reason": "grain_rotate_failed:{}".format(ex),
+        }
+    return {
+        "ok": True,
+        "bodyName": body_name,
+        "rotatedDeg": angle,
+        "axis": "Z",
         "attributesRestored": int(restored or 0),
     }
 
