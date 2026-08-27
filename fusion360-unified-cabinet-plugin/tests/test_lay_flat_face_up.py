@@ -121,7 +121,7 @@ class LayFlatFaceUpTests(unittest.TestCase):
         self.assertFalse(result["autoFixRecommended"])
         self.assertIn("double_side_unsupported", result["reasons"])
 
-    def test_colour_outer_notch_fails_without_auto_flip(self):
+    def test_colour_outer_notch_is_bottom_half_and_auto_fixed(self):
         top = object()
         bottom = object()
         with mock.patch.object(
@@ -147,14 +147,54 @@ class LayFlatFaceUpTests(unittest.TestCase):
                 "bottomHalfCount": 0,
                 "unknownHalfCount": 0,
                 "bottomOutlineNotched": True,
-                "bottomOutlineNotchReason": "feature_outside_colour_outer",
+                "bottomOutlineNotchReason": "colour_outer_smaller_than_milling",
             },
         ):
             result = face_up_mod.evaluate_body_faces_up(object())
         self.assertFalse(result["ok"])
+        self.assertTrue(result["autoFixRecommended"])
+        self.assertTrue(result["bottomOutlineNotched"])
+        self.assertIn("feature_face_not_machining", result["reasons"])
+        self.assertEqual(result["halfStatus"], "bottomHalf")
+        self.assertEqual(
+            result.get("orientationOverride"), "colour_outer_smaller_than_milling"
+        )
+
+    def test_top_rebate_passes_when_floor_votes_intact_underside(self):
+        top = object()
+        bottom = object()
+        with mock.patch.object(
+            face_up_mod, "_fast_broad_faces", return_value=(top, bottom)
+        ), mock.patch.object(
+            face_up_mod,
+            "face_world_plane",
+            side_effect=[
+                ([0, 0, 1], [0, 0, 1]),
+                ([0, 0, -1], [0, 0, 0]),
+            ],
+        ), mock.patch.object(
+            face_up_mod,
+            "_assign_milling_and_colour",
+            return_value=(top, bottom, [0, 0, 1], [0, 0, -1], "role"),
+        ), mock.patch.object(
+            face_up_mod,
+            "inspect_half_openings",
+            return_value={
+                "ok": True,
+                "status": "bottomHalf",
+                "topHalfCount": 0,
+                "bottomHalfCount": 1,
+                "unknownHalfCount": 0,
+                "bottomOutlineNotched": False,
+                "topOutlineNotched": True,
+                "topOutlineNotchReason": "rebate_on_plus_z",
+            },
+        ):
+            result = face_up_mod.evaluate_body_faces_up(object())
+        self.assertTrue(result["ok"])
         self.assertFalse(result["autoFixRecommended"])
-        self.assertIn("bottom_outline_notched", result["reasons"])
         self.assertEqual(result["halfStatus"], "topHalf")
+        self.assertEqual(result.get("orientationOverride"), "rebate_on_plus_z")
 
 
 if __name__ == "__main__":

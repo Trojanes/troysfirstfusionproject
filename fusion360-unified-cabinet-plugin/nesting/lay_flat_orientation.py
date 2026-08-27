@@ -6,10 +6,9 @@ Contract:
 * world -Z is colour / underside B;
 * HALF features may open on A only for single-sided manufacturing;
 * HALF features on both sides are unsupported;
-* colour / −Z outer must stay the full panel. An edge-open HALF or FULL
-  that has been eaten into the underside outer (U/C bite) is a fail.
-  Floor ``openSurfaceIs`` alone is not enough: a top-side groove can
-  still notch the colour loop.
+* a small edge-open lock may walk the colour BRep loop; face.area is
+  the gate. The smaller skin is the rebate / 半槽. If it is −Z, flip;
+  if it is +Z, pass even when floor topology votes the intact face.
 
 This module is read-only.  Role writes and geometry flips belong to the
 controller transaction so a failed repair can be rolled back safely.
@@ -115,6 +114,41 @@ def classify_half_openings(features):
     }
 
 
+def refine_half_orientation(half):
+    """Use the smaller skin as the 半槽 side; ignore floor votes on the intact face.
+
+    Overlay rebates shrink one broad face. Topology often still votes the
+    intact remnant, so ``openSurfaceIs`` points the wrong way. A lock nick
+    does not delete 10% of a skin — the area flags are the gate.
+
+    * smaller −Z → HALF_BOTTOM (Check Faces Up flips and rewrites milling)
+    * smaller +Z → HALF_TOP (already machining-up; Analyze must pass)
+    """
+    if not isinstance(half, dict):
+        return half
+    status = str(half.get("status") or "")
+    if status == HALF_DOUBLE:
+        return half
+    refined = dict(half)
+    if half.get("bottomOutlineNotched") and status in (HALF_TOP, HALF_NONE, ""):
+        refined["status"] = HALF_BOTTOM
+        refined["bottomHalfCount"] = max(int(half.get("bottomHalfCount") or 0), 1)
+        refined["topHalfCount"] = 0
+        refined["orientationOverride"] = str(
+            half.get("bottomOutlineNotchReason") or "colour_outer_smaller_than_milling"
+        )
+        return refined
+    if half.get("topOutlineNotched") and status in (HALF_BOTTOM, HALF_NONE, ""):
+        refined["status"] = HALF_TOP
+        refined["topHalfCount"] = max(int(half.get("topHalfCount") or 0), 1)
+        refined["bottomHalfCount"] = 0
+        refined["orientationOverride"] = str(
+            half.get("topOutlineNotchReason") or "rebate_on_plus_z"
+        )
+        return refined
+    return half
+
+
 def _point_to_segment_mm(point, start, end):
     px, py = float(point[0]), float(point[1])
     x0, y0 = float(start[0]), float(start[1])
@@ -192,33 +226,34 @@ def _face_area(face):
 
 
 def classify_bottom_outline_notch(bottom_outer, top_outer, features, bottom_face=None, top_face=None):
-    """Detect colour-outer bites that floor ``openSurfaceIs`` misses.
+    """Fail only when the colour *skin* is a large eaten U, not a lock bite.
 
-    A top-only HALF still fails when its 2D ring (or a FULL) sits in the
-    bite of a notched underside outer, or when that outer is much smaller
-    than the machining-face outer.
+    Door lock / through edge-open features make the BRep colour loop walk
+    into a small notch (sometimes a broken/small ring). Those rings then
+    look "much smaller" than the milling outer. That is legal hardware.
+    When both Fusion faces exist, their ``face.area`` is authoritative —
+    a lock nicks the loop, it does not delete 10% of the colour skin.
+    ``features`` is kept for callers and tests; it does not fail the gate.
     """
-    bitten = []
-    for feature in features or []:
-        points = _feature_ring_points(feature)
-        if feature_bites_outer(points, bottom_outer):
-            bitten.append(feature)
-    area_notched = bottom_outer_more_notched(bottom_outer, top_outer)
-    if not area_notched and bottom_face is not None and top_face is not None:
-        bottom_area = _face_area(bottom_face)
-        top_area = _face_area(top_face)
-        if bottom_area > 1e-9 and top_area > 1e-9:
-            area_notched = bottom_area < top_area * BOTTOM_OUTLINE_AREA_RATIO
-    notched = bool(bitten) or bool(area_notched)
-    reason = ""
-    if bitten:
-        reason = "feature_outside_colour_outer"
-    elif area_notched:
-        reason = "colour_outer_smaller_than_milling"
+    _ = features
+    bottom_area = _face_area(bottom_face)
+    top_area = _face_area(top_face)
+    if bottom_area > 1e-9 and top_area > 1e-9:
+        bottom_notched = bottom_area < top_area * BOTTOM_OUTLINE_AREA_RATIO
+        top_notched = top_area < bottom_area * BOTTOM_OUTLINE_AREA_RATIO
+    else:
+        bottom_notched = bottom_outer_more_notched(bottom_outer, top_outer)
+        top_notched = bottom_outer_more_notched(top_outer, bottom_outer)
     return {
-        "bottomOutlineNotched": notched,
-        "bottomOutlineNotchReason": reason,
-        "bottomOutlineNotchCount": len(bitten),
+        "bottomOutlineNotched": bool(bottom_notched),
+        "bottomOutlineNotchReason": (
+            "colour_outer_smaller_than_milling" if bottom_notched else ""
+        ),
+        "bottomOutlineNotchCount": 0,
+        "topOutlineNotched": bool(top_notched),
+        "topOutlineNotchReason": (
+            "rebate_on_plus_z" if top_notched else ""
+        ),
     }
 
 
@@ -347,4 +382,4 @@ def inspect_half_openings(body):
             **faces,
         }
     )
-    return result
+    return refine_half_orientation(result)

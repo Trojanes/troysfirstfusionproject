@@ -3119,6 +3119,17 @@ class PanelAttributesController:
                 len(auto_fixed),
                 sum(1 for item in auto_fixed if item.get("sourceUpdated")),
             )
+        if auto_fix_failed:
+            message += " Auto-fix failed {}: {}.".format(
+                len(auto_fix_failed),
+                "; ".join(
+                    "{} ({})".format(
+                        item.get("bodyName") or "body",
+                        item.get("reason") or "unknown",
+                    )
+                    for item in auto_fix_failed[:3]
+                ),
+            )
         double_side_n = int(result.get("doubleSideCount") or 0)
         if double_side_n:
             message += " Double-sided HALF blocked: {}.".format(double_side_n)
@@ -3173,6 +3184,9 @@ class PanelAttributesController:
                     ),
                     "bottomOutlineNotchReason": str(
                         item.get("bottomOutlineNotchReason") or ""
+                    ),
+                    "orientationOverride": str(
+                        item.get("orientationOverride") or ""
                     ),
                 }
                 for item in failed[:80]

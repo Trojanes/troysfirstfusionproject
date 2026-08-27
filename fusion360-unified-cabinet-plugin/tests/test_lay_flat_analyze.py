@@ -12,6 +12,7 @@ from lay_flat_analyze import (  # noqa: E402
     _translate_points,
     analyze_lay_flat_body,
     cache_is_fresh,
+    canonicalize_half_openings_for_plus_z,
     feature_evidence_complete,
     feature_ring_evidence_count,
     milling_side_faces,
@@ -221,6 +222,68 @@ class LayFlatAnalyzeTests(unittest.TestCase):
         self.assertTrue(cache_is_fresh(meta, "sig-1"))
         meta["lifecycle"]["state"] = "lay_flat"
         self.assertFalse(cache_is_fresh(meta, "sig-1"))
+
+    def test_canonicalize_rewrites_false_b_when_rebate_is_plus_z(self):
+        features = [
+            {
+                "featureId": "P1",
+                "kind": "pocket",
+                "cutType": "HALF",
+                "openSurfaceIs": "B",
+                "depthMm": 2.0,
+            },
+            {
+                "featureId": "L1",
+                "kind": "pocket",
+                "cutType": "FULL",
+                "openSurfaceIs": "B",
+            },
+        ]
+        rewritten = canonicalize_half_openings_for_plus_z(
+            features,
+            {
+                "topOutlineNotched": True,
+                "halfStatus": "topHalf",
+            },
+        )
+        self.assertEqual(rewritten[0]["openSurfaceIs"], "A")
+        self.assertEqual(rewritten[0]["openSurfaceCanonicalized"], "rebate_on_plus_z")
+        self.assertEqual(rewritten[1]["openSurfaceIs"], "B")
+        self.assertTrue(
+            cache_is_fresh(
+                {
+                    "lifecycle": {"state": ANALYZED_STATE},
+                    "nestingFlatOutline": {
+                        "schemaVersion": CACHE_SCHEMA,
+                        "geometrySignature": "sig-1",
+                        "widthMm": 1,
+                        "depthMm": 1,
+                        "halfOpeningStatus": "topHalf",
+                        "bottomHalfCount": 0,
+                        "outline": {
+                            "source": "flatBody",
+                            "points": [[0, 0], [1, 0], [1, 1]],
+                        },
+                    },
+                    "features": rewritten,
+                },
+                "sig-1",
+            )
+        )
+
+    def test_canonicalize_leaves_true_b_when_skins_match(self):
+        features = [
+            {
+                "featureId": "P1",
+                "kind": "pocket",
+                "cutType": "HALF",
+                "openSurfaceIs": "B",
+            }
+        ]
+        rewritten = canonicalize_half_openings_for_plus_z(
+            features, {"topOutlineNotched": False, "halfStatus": "bottomHalf"}
+        )
+        self.assertEqual(rewritten[0]["openSurfaceIs"], "B")
 
     def test_analyze_has_no_geometry_flip_dependency(self):
         self.assertFalse(hasattr(analyze_mod, "flip_lay_flat_body_thickness"))

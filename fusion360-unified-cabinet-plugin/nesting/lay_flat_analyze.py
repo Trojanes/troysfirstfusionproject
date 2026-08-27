@@ -752,6 +752,39 @@ def feature_evidence_complete(features, expected_count):
     return expected >= 0 and len(features or []) >= expected
 
 
+def canonicalize_half_openings_for_plus_z(features, face_check):
+    """Persist HALF as A when the smaller skin is already +Z.
+
+    Floor topology often votes the intact underside after an overlay rebate
+    is flipped up. Check Faces Up treats that as topHalf; Export Ready still
+    reads ``openSurfaceIs``. Rewrite B → A only for that area gate.
+    """
+    check = face_check if isinstance(face_check, dict) else {}
+    if not check.get("topOutlineNotched"):
+        return list(features or [])
+    if str(check.get("halfStatus") or "") == "doubleSide":
+        return list(features or [])
+    out = []
+    for feature in features or []:
+        if not isinstance(feature, dict):
+            out.append(feature)
+            continue
+        cut_type = str(feature.get("cutType") or "").strip().upper()
+        through = cut_type == "FULL" or bool(feature.get("through"))
+        if through or cut_type != "HALF":
+            out.append(feature)
+            continue
+        which = str(feature.get("openSurfaceIs") or "").strip().upper()
+        if which != "B":
+            out.append(feature)
+            continue
+        rewritten = dict(feature)
+        rewritten["openSurfaceIs"] = "A"
+        rewritten["openSurfaceCanonicalized"] = "rebate_on_plus_z"
+        out.append(rewritten)
+    return out
+
+
 def features_are_canonical_single_side(features):
     """True when every blind feature has canonical machining opening A."""
     if not isinstance(features, list):
@@ -953,6 +986,7 @@ def analyze_lay_flat_body(body, force=False, tint_ctx=None):
             "bodyName": body_name,
             "reason": feature_error,
         }
+    features = canonicalize_half_openings_for_plus_z(features, face_check)
     expected_feature_count = _brep_feature_ring_count(body)
     if not feature_evidence_complete(features, expected_feature_count):
         return {

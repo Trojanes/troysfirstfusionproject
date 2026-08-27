@@ -1,9 +1,10 @@
 """Post-Lay Flat manufacturing check.
 
-MILLING must face +Z and HALF features may open on +Z only.  Colour / −Z
-outer must not be the groove-eaten U: an edge-open HALF or FULL sitting
-outside that outer fails Check Faces Up (not auto-flipped).  This module
-is read-only; controller orchestration owns exact-source write-back and repair.
+MILLING must face +Z and HALF features may open on +Z only.  A lock nick
+does not fail the colour-area gate.  A colour skin that is materially
+smaller than the milling face is a bottom rebate and is auto-flipped.
+This module is read-only; controller orchestration owns exact-source
+write-back and repair.
 """
 
 from __future__ import annotations
@@ -74,6 +75,7 @@ try:
         HALF_BOTTOM,
         HALF_DOUBLE,
         inspect_half_openings,
+        refine_half_orientation,
     )
 except Exception:
     try:
@@ -81,11 +83,13 @@ except Exception:
             HALF_BOTTOM,
             HALF_DOUBLE,
             inspect_half_openings,
+            refine_half_orientation,
         )
     except Exception:
         HALF_BOTTOM = "bottomHalf"
         HALF_DOUBLE = "doubleSide"
         inspect_half_openings = None
+        refine_half_orientation = None
 
 
 def evaluate_face_up_normals(
@@ -268,6 +272,8 @@ def evaluate_body_faces_up(body, min_dot=None):
             "status": "unresolved",
             "reason": "half_inspector_unavailable",
         }
+    if callable(refine_half_orientation):
+        half = refine_half_orientation(half) or half
     half_status = str(half.get("status") or "unresolved")
     reasons = list(check.get("reasons") or [])
     if not half.get("ok"):
@@ -276,11 +282,6 @@ def evaluate_body_faces_up(body, min_dot=None):
         reasons.append("double_side_unsupported")
     elif half_status == HALF_BOTTOM:
         reasons.append("feature_face_not_machining")
-    if half.get("bottomOutlineNotched"):
-        reasons.append("bottom_outline_notched")
-    # Geometry evidence is authoritative.  A bottom-only HALF can be repaired
-    # transactionally by swapping roles and flipping this disposable copy.
-    # Colour-outer bites are not flipped: the groove floor may still be +Z.
     check["ok"] = bool(check.get("ok")) and not reasons
     check["reasons"] = list(dict.fromkeys(reasons))
     check["halfStatus"] = half_status
@@ -291,10 +292,13 @@ def evaluate_body_faces_up(body, min_dot=None):
     check["bottomOutlineNotchReason"] = str(
         half.get("bottomOutlineNotchReason") or ""
     )
+    check["topOutlineNotched"] = bool(half.get("topOutlineNotched"))
+    check["topOutlineNotchReason"] = str(half.get("topOutlineNotchReason") or "")
+    check["orientationOverride"] = str(half.get("orientationOverride") or "")
+    # Bottom-only HALF (including colour-skin rebate voted as top by
+    # topology) is repaired by swapping roles and flipping this copy.
     check["autoFixRecommended"] = bool(
-        half.get("ok")
-        and half_status == HALF_BOTTOM
-        and not half.get("bottomOutlineNotched")
+        half.get("ok") and half_status == HALF_BOTTOM
     )
     check["halfInspection"] = half
     return check
@@ -443,6 +447,9 @@ def check_bodies(bodies, min_dot=None):
             "bottomOutlineNotchReason": str(
                 result.get("bottomOutlineNotchReason") or ""
             ),
+            "topOutlineNotched": bool(result.get("topOutlineNotched")),
+            "topOutlineNotchReason": str(result.get("topOutlineNotchReason") or ""),
+            "orientationOverride": str(result.get("orientationOverride") or ""),
             "autoFixRecommended": bool(result.get("autoFixRecommended")),
         }
         # Keep face refs only in-process for optional selection.
