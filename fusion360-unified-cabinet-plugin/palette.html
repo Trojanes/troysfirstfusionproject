@@ -2477,7 +2477,10 @@
             <div class="actions">
               <button class="primary" id="ohGenerateBtn" data-i18n="oh.gen">生成数据</button>
               <button class="ghost" id="ohCreateFusionBodiesBtn" disabled data-i18n="oh.createBodies">创建 Fusion 实体</button>
+              <button class="ghost" id="ohLoadSelectedBtn" data-i18n="common.loadSelected" data-i18n-title="common.loadSelected.title">从选中读取</button>
+              <button class="ghost" id="ohApplyTargetBtn" disabled data-i18n="common.applyToTarget" data-i18n-title="common.applyToTarget.title">应用到本体</button>
             </div>
+            <div id="ohEditTargetBanner" class="message ok" hidden></div>
             <div class="actions" style="gap:8px;align-items:flex-end;flex-wrap:wrap;">
               <label style="font-size:12px;"><span data-i18n="common.preset">预设</span>
                 <select id="ohPresetSelect" style="min-width:170px;">
@@ -2701,7 +2704,10 @@
               <button class="primary" id="kitchenGenerateBtn" data-i18n="kitchen.updatePreview">更新预览</button>
               <button class="ghost" id="kitchenCreateFlatBodyBtn" data-i18n="kitchen.flatBodies">生成平面体</button>
               <button class="ghost" id="kitchenCreateFlatTransformBtn" data-i18n="kitchen.assemble">装配实体</button>
+              <button class="ghost" id="kitchenLoadSelectedBtn" data-i18n="common.loadSelected" data-i18n-title="common.loadSelected.title">从选中读取</button>
+              <button class="ghost" id="kitchenApplyTargetBtn" disabled data-i18n="common.applyToTarget" data-i18n-title="common.applyToTarget.title">应用到本体</button>
             </div>
+            <div id="kitchenEditTargetBanner" class="message ok" hidden></div>
             <div class="actions" style="gap:8px;align-items:flex-end;flex-wrap:wrap;">
               <label style="font-size:12px;"><span data-i18n="common.preset">预设</span>
                 <select id="kitchenPresetSelect" style="min-width:170px;">
@@ -3837,6 +3843,12 @@
               <div class="actions" style="margin-top:10px;">
                 <button type="button" class="primary" id="attrApplyGrainBtn" data-i18n="attr.btn.applyGrain">应用到选中板件</button>
               </div>
+              <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;">
+                <input type="checkbox" id="attrShowGrainOverlay" data-grain-overlay-toggle>
+                <span data-i18n="attr.grain.showOverlay">显示木纹方向</span>
+              </label>
+              <div class="attr-section-note" data-i18n="attr.note.grainOverlay">在已设木纹的板上画平行细线（饰面两边）。不改外观、不扫面。写木纹后会保留其它板的线。</div>
+              <div id="attrGrainOverlaySummary" class="message" style="margin-top:8px;" data-i18n="attr.status.grainOverlayIdle">打开开关后，已设木纹的板会显示方向箭头。</div>
             </div>
           </div>
 
@@ -4370,6 +4382,10 @@
             <div class="actions" style="margin-top:10px;">
               <button type="button" class="primary" id="toolpathRotateGrain90Btn" data-i18n="toolpath.btn.rotateGrain">Rotate Grain 90°</button>
             </div>
+            <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:12px;">
+              <input type="checkbox" id="toolpathShowGrainOverlay" data-grain-overlay-toggle>
+              <span data-i18n="attr.grain.showOverlay">显示木纹方向</span>
+            </label>
             <div id="toolpathRotateGrain90Summary" class="message" style="margin-top:8px;">
               Select a body or face, then rotate grain 90°. Original + LAY_FLAT + Analyze.
             </div>
@@ -4450,6 +4466,7 @@
       } catch (ignore) { /* never block error propagation */ }
     });
     let activeModule = "generalTall";
+    let assemblyEditTarget = null;
     const generalTallState = {
       result: null,
       blockedResult: null,
@@ -6625,6 +6642,194 @@
       return runOverheadBench(bench || overheadMainBench, () => {
         const wrap = ohEl("Style1LedGrooveWrap");
         if (wrap) wrap.hidden = false;
+      });
+    }
+
+    function assemblyEditBannerHtml(target) {
+      if (!target) return "";
+      const name = target.assemblyName || target.runLabel || target.module || "";
+      const estimated = target.estimated
+        ? ` <span class="muted">${escapeHtml(t("common.editingTarget.estimated"))}</span>`
+        : "";
+      return `${escapeHtml(tf("common.editingTarget", { name }))}${estimated} <span class="muted">${escapeHtml(t("common.editingTarget.hint"))}</span> <button type="button" class="ghost" id="${target.module === "kitchen" ? "kitchen" : "oh"}ClearEditTargetBtn" data-i18n="common.clearEditTarget">${escapeHtml(t("common.clearEditTarget"))}</button>`;
+    }
+
+    function setAssemblyEditTarget(target) {
+      assemblyEditTarget = target && target.module && (target.runLabel || target.assemblyName)
+        ? {
+            module: target.module,
+            runLabel: String(target.runLabel || ""),
+            assemblyName: target.assemblyName || "",
+            estimated: Boolean(target.estimated),
+            origin: target.origin && typeof target.origin === "object"
+              ? { x: Number(target.origin.x) || 0, y: Number(target.origin.y) || 0, z: Number(target.origin.z) || 0, rotationDeg: Number(target.origin.rotationDeg) || 0 }
+              : { x: 0, y: 0, z: 0, rotationDeg: 0 },
+          }
+        : null;
+      const ohBanner = document.getElementById("ohEditTargetBanner");
+      const kitchenBanner = document.getElementById("kitchenEditTargetBanner");
+      const ohApply = document.getElementById("ohApplyTargetBtn");
+      const kitchenApply = document.getElementById("kitchenApplyTargetBtn");
+      if (ohBanner) {
+        const active = assemblyEditTarget && assemblyEditTarget.module === "overhead";
+        ohBanner.hidden = !active;
+        ohBanner.innerHTML = active ? assemblyEditBannerHtml(assemblyEditTarget) : "";
+        ohBanner.querySelector("#ohClearEditTargetBtn")?.addEventListener("click", () => setAssemblyEditTarget(null));
+      }
+      if (kitchenBanner) {
+        const active = assemblyEditTarget && assemblyEditTarget.module === "kitchen";
+        kitchenBanner.hidden = !active;
+        kitchenBanner.innerHTML = active ? assemblyEditBannerHtml(assemblyEditTarget) : "";
+        kitchenBanner.querySelector("#kitchenClearEditTargetBtn")?.addEventListener("click", () => setAssemblyEditTarget(null));
+      }
+      if (ohApply) ohApply.disabled = !(assemblyEditTarget && assemblyEditTarget.module === "overhead");
+      if (kitchenApply) kitchenApply.disabled = !(assemblyEditTarget && assemblyEditTarget.module === "kitchen");
+    }
+
+    function fillGeneratorOriginInputs(prefix, origin, assemblyName) {
+      const nameInput = document.getElementById(prefix + "AssemblyName");
+      if (nameInput && assemblyName) nameInput.value = assemblyName;
+      const xInput = document.getElementById(prefix + "OriginX");
+      const yInput = document.getElementById(prefix + "OriginY");
+      if (xInput && origin && Number.isFinite(Number(origin.x))) xInput.value = String(Math.round(Number(origin.x) * 10) / 10);
+      if (yInput && origin && Number.isFinite(Number(origin.y))) yInput.value = String(Math.round(Number(origin.y) * 10) / 10);
+    }
+
+    function applyOverheadGeneratorParams(params) {
+      if (!params || typeof params !== "object") return;
+      const values = {
+        Style: params.style,
+        CabinetWidth: params.cabinetWidth,
+        CabinetDepth: params.cabinetDepth,
+        CabinetHeight: params.cabinetHeight,
+        TopClearanceHeight: params.topClearanceHeight,
+        SideThickness: params.featureWidth,
+        FrontPanelThickness: params.frontPanelThickness,
+        Clearance: params.clearance,
+        CarcassColor: params.carcassColorName || params.carcassColor,
+        HingeHoleDiameter: params.hingeHoleDiameter,
+        HingeHoleDepth: params.hingeHoleDepth,
+        HingeFromTop: params.hingeHoleFromTop,
+        HingeFromSide: params.hingeHoleFromSide,
+        RouterDiameter: params.routerDiameter,
+      };
+      Object.entries(values).forEach(([suffix, value]) => {
+        if (value == null) return;
+        const el = ohEl(suffix);
+        if (el) el.value = String(value);
+      });
+      const led = ohEl("Style1LedGroove");
+      if (led) led.checked = params.ledGroove !== false;
+      if (Array.isArray(params.zones) && params.zones.length) {
+        ohState().zones = params.zones.map((zone) => ({
+          id: zone.id,
+          type: zone.type,
+          width: Number(zone.width) || 0,
+        }));
+      }
+      ohState().rangehood = {
+        preset: params.rangehoodPreset || ohState().rangehood?.preset || "NCE",
+        clearHeight: Math.max(1, Number(params.rangehoodClearHeight) || ohState().rangehood?.clearHeight || 75),
+        alignment: params.rangehoodAlignment === "right" ? "right" : "left",
+        edgeOffsetX: Math.max(40, Number(params.rangehoodEdgeOffsetX) || ohState().rangehood?.edgeOffsetX || 40),
+      };
+      ohState().selectedZoneIndex = Math.max(0, Number(params.selectedZoneIndex) || 0);
+      ohState().selectedZoneIndices = [ohState().selectedZoneIndex];
+      ohState().result = null;
+      syncOverheadStyle1LedVisibility(overheadMainBench);
+      renderOverheadUi(null);
+    }
+
+    function loadAssemblyFromSelection() {
+      document.getElementById("statusText").textContent = t("common.loadSelected") + "...";
+      fusionSend("assemblies.loadFromSelection", {});
+    }
+
+    function applyLoadedAssembly(parsed) {
+      if (!parsed?.ok || !parsed.params) {
+        const errors = Array.isArray(parsed?.errors) ? parsed.errors : [t("common.loadSelected")];
+        document.getElementById("statusText").textContent = errors[0] || "Load from selection failed";
+        return;
+      }
+      const moduleName = parsed.module;
+      if (moduleName !== "overhead" && moduleName !== "kitchen") {
+        document.getElementById("statusText").textContent = errorsFromLoad(parsed);
+        return;
+      }
+      showModule(moduleName);
+      if (moduleName === "overhead") {
+        runOverheadBench(overheadMainBench, () => {
+          applyOverheadGeneratorParams(parsed.params);
+          fillGeneratorOriginInputs("oh", parsed.origin, parsed.assemblyName);
+        });
+        setAssemblyEditTarget(parsed);
+        overheadGenerate(overheadMainBench);
+      } else {
+        try {
+          applyKitchenPreset({ version: 1, ...parsed.params });
+        } catch (error) {
+          document.getElementById("statusText").textContent = `Kitchen load failed: ${error.message}`;
+          return;
+        }
+        fillGeneratorOriginInputs("kitchen", parsed.origin, parsed.assemblyName);
+        setAssemblyEditTarget(parsed);
+        kitchenGeneratePreview();
+      }
+      const warn = Array.isArray(parsed.warnings) && parsed.warnings.length ? ` (${parsed.warnings[0]})` : "";
+      const estimated = parsed.estimated ? ` ${t("common.editingTarget.estimated")}` : "";
+      document.getElementById("statusText").textContent = `${tf("common.editingTarget", { name: parsed.assemblyName || parsed.runLabel })}${estimated}${warn}`;
+    }
+
+    function errorsFromLoad(parsed) {
+      return (Array.isArray(parsed?.errors) && parsed.errors[0]) || "Load from selection failed";
+    }
+
+    function overheadApplyTarget() {
+      if (!assemblyEditTarget || assemblyEditTarget.module !== "overhead") {
+        document.getElementById("statusText").textContent = t("common.applyToTarget.title");
+        return;
+      }
+      const params = buildOverheadParams();
+      document.getElementById("statusText").textContent = t("common.applyToTarget") + "...";
+      fusionSend("overhead.updateTarget", {
+        params,
+        target: assemblyEditTarget,
+        replaceRunLabel: assemblyEditTarget.runLabel,
+        assemblyName: assemblyEditTarget.assemblyName,
+        originXMm: assemblyEditTarget.origin?.x,
+        originYMm: assemblyEditTarget.origin?.y,
+        addAsNewCabinet: true,
+        ...generatorNamingPayload(ohId("")),
+      });
+    }
+
+    function kitchenApplyTarget() {
+      if (!assemblyEditTarget || assemblyEditTarget.module !== "kitchen") {
+        document.getElementById("statusText").textContent = t("common.applyToTarget.title");
+        return;
+      }
+      if (!kitchenGeometryIsCurrent()) {
+        kitchenState.pendingFusionAction = "updateTarget";
+        kitchenGeneratePreview();
+        return;
+      }
+      const errors = Array.isArray(kitchenState.geometryResult?.errors) ? kitchenState.geometryResult.errors : [];
+      if (errors.length) {
+        renderMessages("kitchenWarningsPanel", errors, "error");
+        document.getElementById("statusText").textContent = "Fix Kitchen geometry errors before applying to the assembly.";
+        return;
+      }
+      document.getElementById("statusText").textContent = t("common.applyToTarget") + "...";
+      fusionSend("kitchen.updateTarget", {
+        result: kitchenState.geometryResult,
+        params: kitchenSerializableState(),
+        target: assemblyEditTarget,
+        replaceRunLabel: assemblyEditTarget.runLabel,
+        assemblyName: assemblyEditTarget.assemblyName,
+        originXMm: assemblyEditTarget.origin?.x,
+        originYMm: assemblyEditTarget.origin?.y,
+        addAsNewCabinet: true,
+        ...generatorNamingPayload("kitchen"),
       });
     }
 
@@ -10910,6 +11115,7 @@
       document.getElementById("statusText").textContent = "Creating Kitchen Fusion preview from DXF vectors...";
       fusionSend("kitchen.createFusionPreview", {
         result: kitchenState.geometryResult,
+        params: kitchenSerializableState(),
         caseName: runLabel,
         createGrooves: true,
         addAsNewCabinet: kitchenAddAsNewCabinet(),
@@ -10935,6 +11141,7 @@
       document.getElementById("statusText").textContent = "Generating spaced flat Kitchen bodies...";
       fusionSend("kitchen.createFlatBodyPreview", {
         result: kitchenState.geometryResult,
+        params: kitchenSerializableState(),
         caseName: runLabel,
         addAsNewCabinet: kitchenAddAsNewCabinet(),
         ...generatorNamingPayload("kitchen"),
@@ -10954,6 +11161,7 @@
       document.getElementById("statusText").textContent = "Assembling flat Kitchen bodies with grooves cut before transform...";
       fusionSend("kitchen.createFlatTransformPreview", {
         result: kitchenState.geometryResult,
+        params: kitchenSerializableState(),
         caseName: runLabel,
         addAsNewCabinet: kitchenAddAsNewCabinet(),
         ...generatorNamingPayload("kitchen"),
@@ -12011,9 +12219,16 @@
             setOverheadStatusText(
               bench,
               parsed?.ok
-                ? `Overhead Fusion created ${createdBodies} rough bodies${assemblyName} (${skipped} skipped)${faceLine}${ledLine}`
-                : "Overhead Fusion rough body creation failed",
+                ? `${parsed?.action === "overhead.updateTarget" ? "Overhead assembly updated" : "Overhead Fusion created"} ${createdBodies} rough bodies${assemblyName} (${skipped} skipped)${faceLine}${ledLine}`
+                : parsed?.action === "overhead.updateTarget"
+                  ? "Overhead assembly update failed"
+                  : "Overhead Fusion rough body creation failed",
             );
+            if (parsed?.ok && parsed?.action === "overhead.updateTarget" && assemblyEditTarget) {
+              assemblyEditTarget.runLabel = parsed.runLabel || assemblyEditTarget.runLabel;
+              assemblyEditTarget.assemblyName = parsed.assemblyComponentName || assemblyEditTarget.assemblyName;
+              setAssemblyEditTarget(assemblyEditTarget);
+            }
           } else if (action === "uShapeOverheadResult") {
             if (parsed.ok && parsed.result) renderUohResult(parsed.result);
             else {
@@ -12137,6 +12352,8 @@
                 kitchenCreateFlatTransformPreview();
               } else if (pendingAction === "fusion") {
                 kitchenCreateFusionPreview();
+              } else if (pendingAction === "updateTarget") {
+                kitchenApplyTarget();
               }
             } else {
               kitchenState.geometryResult = null;
@@ -12146,12 +12363,16 @@
               document.getElementById("kitchenResultBox").textContent = JSON.stringify(parsed, null, 2);
               document.getElementById("statusText").textContent = "Kitchen geometry generation failed";
             }
+          } else if (action === "assemblyLoadResult") {
+            applyLoadedAssembly(parsed);
           } else if (action === "kitchenFusionResult") {
             const createdBodies = Number(parsed?.createdBodies || 0);
             const cutouts = Array.isArray(parsed?.cutouts) ? parsed.cutouts : [];
             const createdCutouts = cutouts.filter((cutout) => cutout.status === "created").length;
             const assemblyName = parsed?.assemblyComponentName ? ` in ${parsed.assemblyComponentName}` : "";
-            const previewLabel = parsed?.mode === "flat_transform" || parsed?.action === "kitchen.createFlatTransformPreview"
+            const previewLabel = parsed?.action === "kitchen.updateTarget"
+              ? "Kitchen assembly update"
+              : parsed?.mode === "flat_transform" || parsed?.action === "kitchen.createFlatTransformPreview"
               ? "Kitchen flat-body assembly"
               : parsed?.mode === "flat" || parsed?.action === "kitchen.createFlatBodyPreview"
               ? "Kitchen flat bodies"
@@ -12160,6 +12381,11 @@
             document.getElementById("statusText").textContent = parsed?.ok
               ? `${previewLabel}: ${createdBodies} bodies${assemblyName}, ${createdCutouts} cut features`
               : `${previewLabel} failed`;
+            if (parsed?.ok && parsed?.action === "kitchen.updateTarget" && assemblyEditTarget) {
+              assemblyEditTarget.runLabel = parsed.runLabel || assemblyEditTarget.runLabel;
+              assemblyEditTarget.assemblyName = parsed.assemblyComponentName || assemblyEditTarget.assemblyName;
+              setAssemblyEditTarget(assemblyEditTarget);
+            }
           } else if (action === "loungeGeometryResult") {
             if (parsed.ok && parsed.result) {
               renderLoungeGeometryResult(parsed.result);
@@ -12251,6 +12477,8 @@
             document.getElementById("uohResultBox").textContent = String(data || "");
           } else if (action === "kitchenGeometryResult") {
             document.getElementById("kitchenResultBox").textContent = String(data || "");
+          } else if (action === "assemblyLoadResult") {
+            document.getElementById("statusText").textContent = String(data || "Load from selection failed");
           } else if (action === "kitchenFusionResult") {
             document.getElementById("kitchenResultBox").textContent = String(data || "");
           } else if (action === "loungeGeometryResult") {
@@ -12289,6 +12517,8 @@
     });
     document.getElementById("ohGenerateBtn").addEventListener("click", () => overheadGenerate(overheadMainBench));
     document.getElementById("ohCreateFusionBodiesBtn").addEventListener("click", () => overheadCreateFusionRoughBodies(overheadMainBench));
+    document.getElementById("ohLoadSelectedBtn")?.addEventListener("click", loadAssemblyFromSelection);
+    document.getElementById("ohApplyTargetBtn")?.addEventListener("click", overheadApplyTarget);
     ohPresetManager.bind();
     document.getElementById("ohAddZoneBtn").addEventListener("click", () => runOverheadBench(overheadMainBench, addOverheadZone));
     document.getElementById("ohDeleteZoneBtn").addEventListener("click", () => runOverheadBench(overheadMainBench, deleteOverheadZone));
@@ -12324,6 +12554,8 @@
     document.getElementById("kitchenGenerateBtn").addEventListener("click", kitchenGeneratePreview);
     document.getElementById("kitchenCreateFlatBodyBtn").addEventListener("click", kitchenCreateFlatBodyPreview);
     document.getElementById("kitchenCreateFlatTransformBtn").addEventListener("click", kitchenCreateFlatTransformPreview);
+    document.getElementById("kitchenLoadSelectedBtn")?.addEventListener("click", loadAssemblyFromSelection);
+    document.getElementById("kitchenApplyTargetBtn")?.addEventListener("click", kitchenApplyTarget);
     const kitchenCreateFusionBtn = document.getElementById("kitchenCreateFusionBtn");
     if (kitchenCreateFusionBtn) kitchenCreateFusionBtn.addEventListener("click", kitchenCreateFusionPreview);
     kitchenPresetManager.bind();
@@ -12507,6 +12739,7 @@
       overviewColorTag: "__ALL__",
       overviewBoardTypeTag: "__ALL__",
       grainColorTags: [],
+      grainOverlayVisible: false,
       useFusionData: false,
       tagScanResults: [],
       tagScanDraftEdits: {},
@@ -13987,8 +14220,19 @@
           entityToken: record.entityToken || "",
           entityKind: record.entityKind || "body",
           colorTag: tag,
-          metadata: record.metadata || {},
         }));
+    }
+
+    function attrOverviewRecordsForGrainTags(tags) {
+      const seen = new Set();
+      const out = [];
+      (Array.isArray(tags) ? tags : []).forEach((tag) => {
+        const key = String(tag || "").trim();
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        out.push(...attrOverviewRecordsForColor(key));
+      });
+      return out;
     }
 
     function attrRetargetScanColor(fromTag, toTag) {
@@ -14040,11 +14284,15 @@
         summary.className = "message warn";
       }
       setStatusProgress({ phase: hasGrain ? "analyze" : "working", percent: 0 });
+      const nextGrainTags = new Set(panelAttrMock.grainColorTags || []);
+      if (hasGrain) nextGrainTags.add(tag);
+      else nextGrainTags.delete(tag);
       fusionSend("panelAttributes.setColorGrain", {
         colorTag: tag,
         hasGrain: !!hasGrain,
         orientation,
         records: attrOverviewRecordsForColor(tag),
+        catalogRecords: attrOverviewRecordsForGrainTags([...nextGrainTags]),
       });
     }
 
@@ -15474,6 +15722,68 @@
       fusionSend("panelAttributes.applyGrainToSelection", { orientation });
     }
 
+    function attrSyncGrainOverlayToggles(visible) {
+      panelAttrMock.grainOverlayVisible = !!visible;
+      document.querySelectorAll("[data-grain-overlay-toggle]").forEach((el) => {
+        el.checked = !!visible;
+      });
+    }
+
+    function attrApplyGrainOverlayResult(parsed) {
+      if (!parsed || parsed.overlayVisible == null) return;
+      const visible = !!parsed.overlayVisible;
+      attrSyncGrainOverlayToggles(visible);
+      const summary = document.getElementById("attrGrainOverlaySummary");
+      if (!summary) return;
+      if (parsed.action !== "setGrainOverlay" && parsed.action !== "getGrainOverlay") {
+        if (visible) {
+          summary.textContent = tf("attr.status.grainOverlayOn", {
+            count: Number(parsed.overlayDrawnCount || 0),
+          });
+          summary.className = "message ok";
+        }
+        return;
+      }
+      if (!parsed.ok) {
+        summary.textContent = (parsed.errors || [t("attr.status.grainOverlayNeedFusion")]).join(" ");
+        summary.className = "message error";
+        return;
+      }
+      summary.textContent = visible
+        ? tf("attr.status.grainOverlayOn", { count: Number(parsed.overlayDrawnCount || 0) })
+        : t("attr.status.grainOverlayOff");
+      summary.className = "message ok";
+    }
+
+    function attrSetGrainOverlay(visible) {
+      const summary = document.getElementById("attrGrainOverlaySummary");
+      attrSyncGrainOverlayToggles(visible);
+      if (!attrFusionAvailable()) {
+        if (summary) {
+          summary.textContent = t("attr.status.grainOverlayNeedFusion");
+          summary.className = "message error";
+        }
+        attrSyncGrainOverlayToggles(false);
+        return;
+      }
+      if (summary) {
+        summary.textContent = visible
+          ? tf("attr.status.grainOverlayOn", { count: "…" })
+          : t("attr.status.grainOverlayOff");
+        summary.className = "message warn";
+      }
+      fusionSend("panelAttributes.setGrainOverlay", { visible: !!visible });
+    }
+
+    function attrRequestGrainOverlay() {
+      if (!attrFusionAvailable()) return;
+      try {
+        fusionSend("panelAttributes.getGrainOverlay", {});
+      } catch (err) {
+        /* bridge not ready yet */
+      }
+    }
+
     function attrPropagateMillingFromHingeCups() {
       const summary = document.getElementById("attrPropagateMillingSummary");
       const pending = "Propagating MILLING back-face from hinge cups to coplanar panels...";
@@ -16421,6 +16731,23 @@
           action: "applyGrainToSelection",
           details: attrBuildCommandDetails(parsed),
         });
+        attrApplyGrainOverlayResult(parsed);
+        return;
+      }
+      if (parsed.action === "setGrainOverlay" || parsed.action === "getGrainOverlay") {
+        attrApplyGrainOverlayResult(parsed);
+        if (parsed.action === "setGrainOverlay") {
+          attrShowFormMessage(
+            parsed.message
+              || (parsed.ok
+                ? (parsed.overlayVisible
+                  ? tf("attr.status.grainOverlayOn", { count: Number(parsed.overlayDrawnCount || 0) })
+                  : t("attr.status.grainOverlayOff"))
+                : (parsed.errors || [t("attr.status.grainOverlayNeedFusion")]).join(" ")),
+            parsed.ok ? "ok" : "error",
+            { action: parsed.action, details: attrBuildCommandDetails(parsed) },
+          );
+        }
         return;
       }
       if (parsed.action === "replaceColorTag" || parsed.action === "setColorGrain") {
@@ -16447,6 +16774,7 @@
           attrRetargetScanColor(parsed.fromColorTag, parsed.toColorTag);
         }
         attrUpdateOverviewTagListboxes();
+        attrApplyGrainOverlayResult(parsed);
         return;
       }
       if (parsed.action === "propagateMillingFromHingeCups") {
@@ -16825,6 +17153,7 @@
           action: "createLayFlatLayout",
           details: attrBuildCommandDetails(parsed),
         });
+        attrApplyGrainOverlayResult(parsed);
         return;
       }
       if (parsed.action === "checkLayFlatFacesUp") {
@@ -16976,6 +17305,7 @@
           action: "rotateGrain90",
           details: attrBuildCommandDetails(parsed),
         });
+        attrApplyGrainOverlayResult(parsed);
         return;
       }
       if (parsed.action === "getLayFlatTagEditor") {
@@ -17528,6 +17858,9 @@
       document.getElementById("attrApplyColorDoorsBtn").addEventListener("click", () => attrApplyColorToSelection("doors"));
       document.getElementById("attrApplyColorPanelsBtn").addEventListener("click", () => attrApplyColorToSelection("panels"));
       document.getElementById("attrApplyGrainBtn").addEventListener("click", attrApplyGrainToSelection);
+      document.querySelectorAll("[data-grain-overlay-toggle]").forEach((input) => {
+        input.addEventListener("change", () => attrSetGrainOverlay(input.checked));
+      });
       document.getElementById("attrSaveColorPresetBtn").addEventListener("click", attrSaveColorPreset);
       document.getElementById("attrDeleteColorPresetBtn").addEventListener("click", attrDeleteColorPreset);
       document.getElementById("attrPropagateMillingBtn").addEventListener("click", attrPropagateMillingFromHingeCups);
@@ -19247,6 +19580,7 @@
     setTimeout(attrRequestWorkZones, 3000);
     setTimeout(attrRequestThicknessRules, 900);
     setTimeout(attrRequestThicknessRules, 3100);
+    setTimeout(attrRequestGrainOverlay, 1100);
 
     document.querySelectorAll(".attr-page-tab").forEach((tab) => {
       tab.addEventListener("click", () => {
@@ -19264,6 +19598,7 @@
         });
         if (pageId === "attributes") {
           attrLoadFusionPanelList();
+          attrRequestGrainOverlay();
         }
         attrRequestWorkZones();
       });

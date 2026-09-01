@@ -48,7 +48,16 @@ def _json_safe(value, depth=0):
         out = {}
         for key, item in value.items():
             key_text = str(key)
-            if key_text in ("tempBody", "body", "occurrence", "component", "entity"):
+            if key_text in (
+                "tempBody",
+                "body",
+                "occurrence",
+                "component",
+                "entity",
+                "metadata",
+                "nestingFlatOutline",
+                "faceRegistry",
+            ):
                 continue
             out[key_text] = _json_safe(item, depth + 1)
         return out

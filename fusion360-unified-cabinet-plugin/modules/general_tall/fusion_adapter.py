@@ -11,6 +11,16 @@ import adsk.fusion
 from geometry_ops import ATTRIBUTE_GROUP, MODEL_Z_OFFSET_MM, avoid_existing_at_origin, capture_position_snapshot, entity_board_id, is_module_artifact, mm_to_cm, move_body_by_mm, offset_matching_bodies_z_mm, sanitize_token
 
 try:
+    from core.assembly_snapshot import delete_assembly_by_run_label, write_generator_snapshot
+except Exception:
+    import sys
+
+    _plugin_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    if _plugin_root not in sys.path:
+        sys.path.insert(0, _plugin_root)
+    from core.assembly_snapshot import delete_assembly_by_run_label, write_generator_snapshot
+
+try:
     from nesting.workpiece_names import board_component_label, resolve_assembly_name
 except Exception:
     import sys
@@ -4002,6 +4012,8 @@ def create_rough_bodies_from_board_result(
     avoid_existing_origin=True,
     origin_rotation_deg=0.0,
     add_as_new=True,
+    generator_params=None,
+    replace_run_label=None,
 ):
     # None = "auto": place at the generation-zone centre from the saved layout.
     # This also covers callers that predate the origin parameters, because this
@@ -4109,12 +4121,27 @@ def create_rough_bodies_from_board_result(
     # timeline edit. Without this, Fusion recomputes and those poses rewind.
     _capture_position_snapshot(root_comp)
     deleted_previous = {"occurrences": 0, "bodies": 0}
-    if not add_as_new:
+    deleted_target = {"occurrences": 0}
+    if replace_run_label:
+        summary["runLabel"] = str(replace_run_label)
+        deleted_target = delete_assembly_by_run_label(
+            root_comp,
+            module_name,
+            replace_run_label,
+            assembly_name=component_name,
+        )
+        add_as_new = True
+        avoid_existing_origin = False
+        _capture_position_snapshot(root_comp)
+    elif not add_as_new:
         deleted_previous = _delete_previous_module_assemblies(root_comp, module_name)
         _capture_position_snapshot(root_comp)
     summary["addAsNewCabinet"] = bool(add_as_new)
     summary["deletedPrevious"] = deleted_previous
+    summary["deletedTarget"] = deleted_target
+    summary["replacedRunLabel"] = str(replace_run_label) if replace_run_label else ""
     placement_debug["deletedPrevious"] = deleted_previous
+    placement_debug["deletedTarget"] = deleted_target
 
     # Spawn avoidance: shift +X in furniture-sized slots when the target spot
     # already holds generated content.
@@ -4180,6 +4207,28 @@ def create_rough_bodies_from_board_result(
     summary["_containerComponent"] = container
     if container_warning:
         summary["warnings"].append(container_warning)
+    if (
+        container is not root_comp
+        and isinstance(generator_params, dict)
+        and str(module_name) in ("overhead", "kitchen")
+    ):
+        snapshot_ok = write_generator_snapshot(
+            container,
+            str(module_name),
+            generator_params,
+            run_label=summary["runLabel"],
+            assembly_name=assembly_component_name,
+            origin={
+                "x": float(origin_x_mm or 0.0),
+                "y": float(origin_y_mm or 0.0),
+                "z": float(origin_z_mm or 0.0),
+                "rotationDeg": float(origin_rotation_deg or 0.0),
+            },
+        )
+        if not snapshot_ok:
+            summary["warnings"].append("Could not write generatorParams on the assembly; load-from-selection will not work.")
+        else:
+            summary["generatorParamsStored"] = True
     declarations = result.get("relationshipDeclarations") if isinstance(result, dict) else None
     if isinstance(declarations, list) and declarations and container is not root_comp:
         try:

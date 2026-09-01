@@ -226,13 +226,34 @@ class OverheadController:
                 except Exception:
                     origin_y_mm = 0.0
         add_as_new = payload.get("addAsNewCabinet") is not False if isinstance(payload, dict) else True
+        replace_run_label = ""
+        if isinstance(payload, dict):
+            replace_run_label = str(payload.get("replaceRunLabel") or "").strip()
+            target = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+            if not replace_run_label:
+                replace_run_label = str(target.get("runLabel") or "").strip()
+            if replace_run_label:
+                add_as_new = True
+                origin = target.get("origin") if isinstance(target.get("origin"), dict) else {}
+                if origin:
+                    try:
+                        origin_x_mm = float(origin.get("x") if origin.get("x") is not None else origin_x_mm)
+                    except Exception:
+                        pass
+                    try:
+                        origin_y_mm = float(origin.get("y") if origin.get("y") is not None else origin_y_mm)
+                    except Exception:
+                        pass
+                target_name = str(target.get("assemblyName") or "").strip()
+                if target_name and not assembly_name:
+                    assembly_name = target_name
         adapter_module = importlib.reload(board_fusion_adapter)
         rough = adapter_module.create_rough_bodies_from_board_result(
             self.fusion,
             result,
             module_name="overhead",
             body_prefix="OH",
-            run_label=run_label,
+            run_label=replace_run_label or run_label,
             placement_feature_prefix="OH_PLACE_",
             move_feature_prefix="OH_MOVE_",
             align_feature_prefix="OH_ALIGN_",
@@ -243,6 +264,8 @@ class OverheadController:
             origin_x_mm=origin_x_mm,
             origin_y_mm=origin_y_mm,
             add_as_new=add_as_new,
+            generator_params=params if isinstance(params, dict) else None,
+            replace_run_label=replace_run_label or None,
         )
         ok = len(rough.get("errors") or []) == 0
         if ok and self.fusion:
@@ -288,10 +311,40 @@ class OverheadController:
                     "faceInitSummary": rough.get("faceInitSummary", {}),
                     "addAsNewCabinet": rough.get("addAsNewCabinet"),
                     "deletedPrevious": rough.get("deletedPrevious"),
+                    "deletedTarget": rough.get("deletedTarget"),
+                    "replacedRunLabel": rough.get("replacedRunLabel"),
+                    "generatorParamsStored": rough.get("generatorParamsStored"),
                     "originAvoidance": rough.get("originAvoidance"),
                 },
             ),
         )
+
+    def update_target(self, payload, palette):
+        data = payload if isinstance(payload, dict) else {}
+        target = data.get("target") if isinstance(data.get("target"), dict) else {}
+        run_label = str(data.get("replaceRunLabel") or target.get("runLabel") or "").strip()
+        if not run_label:
+            run_label = str(target.get("assemblyName") or data.get("assemblyName") or "").strip()
+        if not run_label:
+            return (
+                "overheadFusionResult",
+                self._with_bench(
+                    data,
+                    {
+                        "ok": False,
+                        "module": "overhead",
+                        "action": "overhead.updateTarget",
+                        "errors": ["No target assembly runLabel. Load a selected overhead first."],
+                    },
+                ),
+            )
+        merged = dict(data)
+        merged["replaceRunLabel"] = run_label
+        merged["addAsNewCabinet"] = True
+        action, result = self.create_fusion_rough_bodies(merged, palette)
+        if isinstance(result, dict):
+            result["action"] = "overhead.updateTarget"
+        return (action, result)
 
     def generate(self, payload, _palette):
         params = payload.get("params") if isinstance(payload, dict) else None

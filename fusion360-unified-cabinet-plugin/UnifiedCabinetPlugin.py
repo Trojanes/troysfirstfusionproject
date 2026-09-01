@@ -47,7 +47,9 @@ def _ensure_paths(plugin_dir):
         os.path.join(plugin_dir, "modules", "kitchen"),
         os.path.join(plugin_dir, "modules", "lounge"),
         os.path.join(plugin_dir, "modules", "small_cabinet"),
+        os.path.join(plugin_dir, "modules", "assemblies"),
         os.path.join(plugin_dir, "modules", "tools"),
+        os.path.join(plugin_dir, "core"),
         os.path.join(plugin_dir, "modules", "hardware"),
         os.path.join(plugin_dir, "modules", "relationships"),
         os.path.join(plugin_dir, "panel_attributes"),
@@ -99,6 +101,7 @@ class UnifiedCabinetPluginApp:
         kitchen_module = importlib.reload(importlib.import_module("modules.kitchen.controller"))
         lounge_module = importlib.reload(importlib.import_module("modules.lounge.controller"))
         small_cabinet_module = importlib.reload(importlib.import_module("modules.small_cabinet.controller"))
+        assemblies_module = importlib.reload(importlib.import_module("modules.assemblies.controller"))
         tools_module = importlib.reload(importlib.import_module("modules.tools.controller"))
         hardware_module = importlib.reload(importlib.import_module("modules.hardware.controller"))
         relationships_module = importlib.reload(importlib.import_module("modules.relationships.controller"))
@@ -114,6 +117,7 @@ class UnifiedCabinetPluginApp:
         kitchen = kitchen_module.KitchenController(self.plugin_dir, self.fusion)
         lounge = lounge_module.LoungeController(self.plugin_dir, self.fusion)
         small_cabinet = small_cabinet_module.SmallCabinetController(self.plugin_dir, self.fusion)
+        assemblies = assemblies_module.AssembliesController(self.fusion)
         tools = tools_module.ToolsController()
         hardware = hardware_module.HardwareController(self.plugin_dir, self.fusion)
         relationships = relationships_module.RelationshipsController(self.fusion)
@@ -125,6 +129,8 @@ class UnifiedCabinetPluginApp:
             "overhead.status": overhead.status,
             "overhead.generate": overhead.generate,
             "overhead.createFusionRoughBodies": overhead.create_fusion_rough_bodies,
+            "overhead.updateTarget": overhead.update_target,
+            "assemblies.loadFromSelection": assemblies.load_from_selection,
             "uShapeOverhead.generate": u_shape_overhead.generate,
             "uShapeOverhead.createFusionBodies": u_shape_overhead.create_fusion_bodies,
             "uShapeOverhead.runSelfCheck": u_shape_overhead.run_self_check,
@@ -132,6 +138,7 @@ class UnifiedCabinetPluginApp:
             "kitchen.createFusionPreview": kitchen.create_fusion_preview,
             "kitchen.createFlatBodyPreview": kitchen.create_flat_body_preview,
             "kitchen.createFlatTransformPreview": kitchen.create_flat_transform_preview,
+            "kitchen.updateTarget": kitchen.update_target,
             "lounge.generateGeometry": lounge.generate_geometry,
             "lounge.createFlatBodies": lounge.create_flat_bodies,
             "lounge.createAssemblyBodies": lounge.create_assembly_bodies,
@@ -203,6 +210,8 @@ class UnifiedCabinetPluginApp:
             "panelAttributes.resetAttributeToAuto": panel_attributes.reset_attribute_to_auto,
             "panelAttributes.applyDoorColorToSelection": panel_attributes.apply_door_color_to_selection,
             "panelAttributes.applyGrainToSelection": panel_attributes.apply_grain_to_selection,
+            "panelAttributes.setGrainOverlay": panel_attributes.set_grain_overlay,
+            "panelAttributes.getGrainOverlay": panel_attributes.get_grain_overlay,
             "panelAttributes.replaceColorTag": panel_attributes.replace_color_tag,
             "panelAttributes.setColorGrain": panel_attributes.set_color_grain,
             "panelAttributes.propagateMillingFromHingeCups": panel_attributes.propagate_milling_from_hinge_cups,

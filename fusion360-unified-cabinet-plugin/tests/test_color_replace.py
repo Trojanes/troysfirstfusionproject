@@ -81,6 +81,37 @@ class ColorReplaceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             color_replace.apply_color_rename({}, "   ")
 
+    def test_overlay_eligible_requires_ticked_grain_color(self):
+        self.assertTrue(
+            color_replace.overlay_eligible("wood_grain", 720, ["wood_grain", "oak"])
+        )
+        self.assertFalse(
+            color_replace.overlay_eligible("white_stipple", 720, ["wood_grain"])
+        )
+        self.assertFalse(color_replace.overlay_eligible("wood_grain", 720, []))
+        self.assertFalse(color_replace.overlay_eligible("wood_grain", "", ["wood_grain"]))
+        self.assertFalse(color_replace.overlay_eligible("", 720, ["wood_grain"]))
+
+    def test_metadata_without_grain_along_clears_mirrors(self):
+        stripped = color_replace.metadata_without_grain_along(
+            {
+                "classification": {
+                    "color": {"value": "white_stipple"},
+                    "grainAlongMm": {"value": 720, "source": "manual", "locked": True},
+                },
+                "derivedTags": {"grainAlongMm": 720, "colorTag": "white_stipple"},
+                "dimensions": {"grainAlongMm": 720, "widthMm": 720},
+                "nestingFlatOutline": {
+                    "grainAlongMm": 720,
+                    "outline": {"grainAlongMm": 720},
+                },
+            }
+        )
+        self.assertEqual(stripped["classification"]["grainAlongMm"]["value"], "")
+        self.assertNotIn("grainAlongMm", stripped.get("derivedTags") or {})
+        self.assertNotIn("grainAlongMm", stripped.get("dimensions") or {})
+        self.assertNotIn("grainAlongMm", stripped.get("nestingFlatOutline") or {})
+
     def test_normalize_grain_color_tags_dedupes(self):
         self.assertEqual(
             color_replace.normalize_grain_color_tags(["Oak Veneer", "oak_veneer", "", "unknown"]),

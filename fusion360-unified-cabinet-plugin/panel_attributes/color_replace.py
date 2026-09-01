@@ -187,6 +187,45 @@ def rename_grain_color_tag(tags, from_color, to_color):
     return normalize_grain_color_tags(next_tags)
 
 
+def color_is_grain_color(color_key, grain_color_tags):
+    """True only when this color is in the design's ticked grain-color list."""
+    key = normalize_color_key(color_key)
+    if not key:
+        return False
+    return key in set(normalize_grain_color_tags(grain_color_tags))
+
+
+def overlay_eligible(color_key, grain_mm, grain_color_tags):
+    """Hatch only when grainAlongMm is set and the color is a grain color."""
+    if grain_mm in (None, ""):
+        return False
+    try:
+        number = float(grain_mm)
+    except (TypeError, ValueError):
+        return False
+    if number <= 1e-6:
+        return False
+    return color_is_grain_color(color_key, grain_color_tags)
+
+
+def metadata_without_grain_along(metadata):
+    """Clear grainAlongMm everywhere it is mirrored on a panel payload."""
+    working = metadata if isinstance(metadata, dict) else {}
+    patched, _result = tag_metadata_editor.apply_grain_along_to_metadata(working, "")
+    dims = patched.get("dimensions")
+    if isinstance(dims, dict):
+        dims.pop("grainAlongMm", None)
+        dims.pop("grainAngleDeg", None)
+    cache = patched.get("nestingFlatOutline")
+    if isinstance(cache, dict):
+        cache.pop("grainAlongMm", None)
+        outline = cache.get("outline")
+        if isinstance(outline, dict):
+            outline.pop("grainAlongMm", None)
+            outline.pop("grainAngleDeg", None)
+    return patched
+
+
 def record_missing_grain(record, grain_color_tags):
     """True when this board's color requires grain but grainAlongMm is empty."""
     tags = set(normalize_grain_color_tags(grain_color_tags))

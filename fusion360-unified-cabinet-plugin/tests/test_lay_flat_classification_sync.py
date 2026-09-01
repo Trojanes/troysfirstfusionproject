@@ -88,6 +88,143 @@ class ClassificationSyncTests(unittest.TestCase):
             panel_source_ref.key(read_back), "token:source-token-1"
         )
 
+    def test_create_stamp_writes_grain_attr_from_dimensions(self):
+        class Attribute:
+            def __init__(self, value):
+                self.value = value
+
+        class Attributes:
+            def __init__(self):
+                self.values = {}
+
+            def itemByName(self, group, name):
+                return self.values.get((group, name))
+
+            def add(self, group, name, value):
+                item = Attribute(value)
+                self.values[(group, name)] = item
+                return item
+
+        class Body:
+            name = "LAY_FLAT_DOOR"
+
+            def __init__(self):
+                self.attributes = Attributes()
+
+        body = Body()
+        lay_flat._stamp_lay_flat_body(
+            body,
+            {
+                "id": "placement-g",
+                "panelId": "door.1",
+                "groupIndex": 0,
+                "itemIndex": 0,
+                "sourceRef": {
+                    "entityToken": "door-token",
+                    "occurrencePath": [1],
+                    "bodyName": "Door1",
+                    "componentName": "CAB",
+                    "panelId": "door.1",
+                },
+            },
+            "run-g",
+            {"schemaVersion": 1, "identity": {"panelId": "door.1"}},
+            {},
+            {"widthMm": 720, "depthMm": 450, "grainAlongMm": 720},
+        )
+        grain_attr = body.attributes.itemByName("UnifiedCabinet", "grainAlongMm")
+        self.assertIsNotNone(grain_attr)
+        self.assertEqual(float(grain_attr.value), 720.0)
+        meta_attr = body.attributes.itemByName("UnifiedCabinet.Panel", "metadata")
+        payload = __import__("json").loads(meta_attr.value)
+        self.assertEqual(payload["classification"]["grainAlongMm"]["value"], 720)
+        self.assertEqual(payload["dimensions"]["grainAlongMm"], 720)
+
+    def test_item_is_grain_color_follows_ticked_tags(self):
+        class Attribute:
+            def __init__(self, value):
+                self.value = value
+
+        class Attributes:
+            def __init__(self, tags):
+                self.values = {
+                    ("UnifiedCabinet", "grainColorTags"): Attribute(
+                        __import__("json").dumps({"tags": tags})
+                    )
+                }
+
+            def itemByName(self, group, name):
+                return self.values.get((group, name))
+
+        class Root:
+            def __init__(self, tags):
+                self.attributes = Attributes(tags)
+
+        item = {"colorTag": "white_stipple", "metadata": {}}
+        self.assertFalse(lay_flat._item_is_grain_color(Root(["wood_grain"]), item))
+        item["colorTag"] = "wood_grain"
+        self.assertTrue(lay_flat._item_is_grain_color(Root(["wood_grain"]), item))
+
+    def test_stamp_strips_grain_when_keep_grain_false(self):
+        class Attribute:
+            def __init__(self, value):
+                self.value = value
+
+        class Attributes:
+            def __init__(self):
+                self.values = {}
+
+            def itemByName(self, group, name):
+                return self.values.get((group, name))
+
+            def add(self, group, name, value):
+                item = Attribute(value)
+                self.values[(group, name)] = item
+                return item
+
+        class Body:
+            name = "WHITE_PANEL"
+
+            def __init__(self):
+                self.attributes = Attributes()
+
+        body = Body()
+        lay_flat._stamp_lay_flat_body(
+            body,
+            {
+                "id": "placement-w",
+                "panelId": "carcass.1",
+                "groupIndex": 0,
+                "itemIndex": 0,
+                "sourceRef": {
+                    "entityToken": "white-token",
+                    "occurrencePath": [1],
+                    "bodyName": "Side1",
+                    "componentName": "CAB",
+                    "panelId": "carcass.1",
+                },
+            },
+            "run-w",
+            {
+                "schemaVersion": 1,
+                "identity": {"panelId": "carcass.1"},
+                "classification": {
+                    "color": {"value": "white_stipple"},
+                    "grainAlongMm": {"value": 720, "source": "manual"},
+                },
+            },
+            {"grainAlongMm": 720},
+            {"widthMm": 720, "depthMm": 450, "grainAlongMm": 720},
+            keep_grain=False,
+        )
+        self.assertIsNone(body.attributes.itemByName("UnifiedCabinet", "grainAlongMm"))
+        payload = __import__("json").loads(
+            body.attributes.itemByName("UnifiedCabinet.Panel", "metadata").value
+        )
+        grain = (payload.get("classification") or {}).get("grainAlongMm") or {}
+        self.assertIn(grain.get("value"), ("", None))
+        self.assertNotIn("grainAlongMm", payload.get("dimensions") or {})
+
     def test_read_prefers_richer_metadata(self):
         sparse = {"classification": {"cuttingFace": {"value": "MILLING"}}}
         rich = {

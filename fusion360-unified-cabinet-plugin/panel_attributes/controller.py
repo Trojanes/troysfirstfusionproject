@@ -14,6 +14,8 @@ attribute_state_service = importlib.reload(attribute_state_service)
 
 import door_face_orientation
 import grain_direction
+import grain_overlay
+import grain_overlay_fusion
 import metadata_inspector
 import milling_surface_propagation
 import tag_metadata_editor
@@ -43,6 +45,8 @@ from panel_search_service import collect_all_tags, collect_defined_panels, resol
 
 door_face_orientation = importlib.reload(door_face_orientation)
 grain_direction = importlib.reload(grain_direction)
+grain_overlay = importlib.reload(grain_overlay)
+grain_overlay_fusion = importlib.reload(grain_overlay_fusion)
 metadata_inspector = importlib.reload(metadata_inspector)
 milling_surface_propagation = importlib.reload(milling_surface_propagation)
 tag_metadata_editor = importlib.reload(tag_metadata_editor)
@@ -106,31 +110,202 @@ def _read_grain_along_from_body(body):
     metadata, read_error = tag_metadata_editor._read_body_metadata_raw(body)
     if read_error:
         return "", read_error
+    grain_mm = grain_overlay.grain_mm_from_any(metadata)
+    if grain_mm:
+        return grain_mm, None
     return attribute_state_service.grain_along_mm_value(metadata), None
 
 
-def _write_grain_along_on_body(body, grain_mm):
+def _ensure_prepare_grain_metadata(body, record, metadata, grain_color_tags=None):
+    """Keep grainAlongMm only on ticked grain colors. Strip it from others."""
+    working = metadata if isinstance(metadata, dict) else {}
+    color = color_replace.color_key_from_record(record) or color_replace.color_key_from_metadata(
+        working
+    )
+    if not color_replace.color_is_grain_color(color, grain_color_tags):
+        leftover = grain_overlay.grain_mm_from_any(working)
+        stripped = color_replace.metadata_without_grain_along(working)
+        if leftover and body is not None:
+            try:
+                tag_metadata_editor._write_body_metadata(body, stripped)
+                _clear_grain_mm_attr(body)
+            except Exception:
+                pass
+        return stripped
+    grain_mm = grain_overlay.grain_mm_from_any(working)
+    if grain_mm in (None, ""):
+        grain_mm = grain_overlay.clean_grain_mm(
+            record.get("grainAlongMm") if isinstance(record, dict) else None
+        )
+    if grain_mm in (None, "") and body is not None:
+        live, _error = _read_grain_along_from_body(body)
+        grain_mm = live
+    if grain_mm in (None, ""):
+        return working
+    try:
+        patched, _result = tag_metadata_editor.apply_grain_along_to_metadata(
+            tag_metadata_editor._bootstrap_body_metadata(body, working),
+            grain_mm,
+        )
+        return patched if isinstance(patched, dict) else working
+    except Exception:
+        return working
+
+
+def _clear_grain_mm_attr(body):
+    if body is None:
+        return
+    try:
+        from nesting.fusion_layout import _delete_attr
+    except Exception:
+        try:
+            from fusion_layout import _delete_attr
+        except Exception:
+            return
+    for entity in (body, getattr(body, "nativeObject", None)):
+        if entity is None:
+            continue
+        try:
+            _delete_attr(entity, grain_overlay.OVERLAY_ATTR_GROUP, grain_overlay.GRAIN_MM_ATTR_NAME)
+        except Exception:
+            continue
+
+
+def _stamp_grain_mm_attr(body, grain_mm):
+    """Tiny UnifiedCabinet/grainAlongMm so overlay can read length without JSON."""
+    cleaned = grain_overlay.clean_grain_mm(grain_mm)
+    if cleaned == "":
+        _clear_grain_mm_attr(body)
+        return
+    raw = str(cleaned)
+    for entity in (body, getattr(body, "nativeObject", None)):
+        if entity is None:
+            continue
+        try:
+            attrs = entity.attributes
+            if attrs is None:
+                continue
+            existing = attrs.itemByName(
+                grain_overlay.OVERLAY_ATTR_GROUP, grain_overlay.GRAIN_MM_ATTR_NAME
+            )
+            if existing is not None:
+                existing.value = raw
+            else:
+                attrs.add(
+                    grain_overlay.OVERLAY_ATTR_GROUP,
+                    grain_overlay.GRAIN_MM_ATTR_NAME,
+                    raw,
+                )
+        except Exception:
+            continue
+
+
+def _write_grain_along_on_body(body, grain_mm, stamp_outline=True, grain_color_tags=None):
     """Write classification.grainAlongMm onto a Fusion body.
 
-    Also stamps outline/dimension grain so Lay Flat cache goes stale.
+    ``stamp_outline`` also copies the length onto outline/dimension grain so
+    Lay Flat cache goes stale. Batch color ticks skip that rewrite.
+    Non-empty writes on a non-grain color are ignored.
     Returns (apply_result, error).
     """
     metadata, read_error = tag_metadata_editor._read_body_metadata_raw(body)
     if read_error:
         return None, read_error
     base = tag_metadata_editor._bootstrap_body_metadata(body, metadata)
+    color = color_replace.color_key_from_metadata(base)
+    if grain_mm not in (None, "") and not color_replace.color_is_grain_color(
+        color, grain_color_tags
+    ):
+        return {"changed": False, "ignored": True, "reason": "not_grain_color"}, None
+    if grain_mm in (None, "") or grain_mm == "":
+        patched = color_replace.metadata_without_grain_along(base)
+        result = {"changed": True, "grainAlongMm": ""}
+        tag_metadata_editor._write_body_metadata(body, patched)
+        _clear_grain_mm_attr(body)
+        return result, None
     patched, result = tag_metadata_editor.apply_grain_along_to_metadata(base, grain_mm)
-    dims = patched.get("dimensions")
-    if isinstance(dims, dict):
-        dims["grainAlongMm"] = grain_mm
-    cache = patched.get("nestingFlatOutline")
-    if isinstance(cache, dict):
-        cache["grainAlongMm"] = grain_mm
-        outline = cache.get("outline")
-        if isinstance(outline, dict):
-            outline["grainAlongMm"] = grain_mm
+    if stamp_outline:
+        dims = patched.get("dimensions")
+        if isinstance(dims, dict):
+            dims["grainAlongMm"] = grain_mm
+        cache = patched.get("nestingFlatOutline")
+        if isinstance(cache, dict):
+            cache["grainAlongMm"] = grain_mm
+            outline = cache.get("outline")
+            if isinstance(outline, dict):
+                outline["grainAlongMm"] = grain_mm
     tag_metadata_editor._write_body_metadata(body, patched)
+    _stamp_grain_mm_attr(body, grain_mm)
     return result, None
+
+
+def _index_lay_flat_by_source(root):
+    """One design walk → sourceRef key to LAY_FLAT bodies."""
+    index = {}
+    if root is None:
+        return index
+    try:
+        from nesting.lay_flat_face_up import collect_lay_flat_bodies
+    except Exception:
+        return index
+    try:
+        bodies = collect_lay_flat_bodies(root) or []
+    except Exception:
+        return index
+    for lay_flat_body in bodies:
+        try:
+            ref_key = panel_source_ref.key(panel_source_ref.from_lay_flat_body(lay_flat_body))
+        except Exception:
+            continue
+        if ref_key:
+            index.setdefault(ref_key, []).append(lay_flat_body)
+    return index
+
+
+def _lay_flats_for_source(source_body, index):
+    if not source_body or not index:
+        return []
+    try:
+        keys = panel_source_ref.keys_for_assembly_body(source_body) or []
+    except Exception:
+        return []
+    matches = []
+    seen = set()
+    for key in keys:
+        for body in index.get(key) or []:
+            marker = id(body)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            matches.append(body)
+    return matches
+
+
+def _with_grain_overlay(root, payload, overlay_items=None):
+    """Rebuild hatch from ticked grain colors, plus boards this action just wrote."""
+    if not isinstance(payload, dict):
+        return payload
+    if not root:
+        payload["overlayVisible"] = False
+        payload["overlayDrawnCount"] = 0
+        return payload
+    try:
+        overlay = grain_overlay_fusion.rebuild_overlay(root, extra_items=overlay_items)
+    except Exception as ex:
+        warnings = list(payload.get("warnings") or [])
+        warnings.append("Grain overlay refresh failed: {}".format(ex))
+        payload["warnings"] = warnings
+        payload["overlayVisible"] = False
+        payload["overlayDrawnCount"] = 0
+        return payload
+    payload["overlayVisible"] = bool(overlay.get("visible"))
+    payload["overlayDrawnCount"] = int(overlay.get("drawnCount") or 0)
+    extra = list(overlay.get("warnings") or [])
+    if extra:
+        warnings = list(payload.get("warnings") or [])
+        warnings.extend(extra[:8])
+        payload["warnings"] = warnings
+    return payload
 
 
 def _strip_temp_bodies_for_json(value):
@@ -141,7 +316,7 @@ def _strip_temp_bodies_for_json(value):
         return {
             key: _strip_temp_bodies_for_json(item)
             for key, item in value.items()
-            if key != "tempBody"
+            if key not in ("tempBody", "overlayItems")
         }
     return value
 
@@ -2649,6 +2824,9 @@ class PanelAttributesController:
                 })
                 continue
             metadata = record.get("metadata") if isinstance(record.get("metadata"), dict) else {}
+            metadata = _ensure_prepare_grain_metadata(
+                body, record, metadata, grain_color_tags=grain_tags
+            )
             panel_id = str(record.get("panelId") or "").strip()
             assembly_name = _assembly_name_for_record(root, record)
             source_record = dict(record)
@@ -2871,6 +3049,14 @@ class PanelAttributesController:
             }
 
         deleted_total = deleted_previous + int(result.get("deletedPrevious") or 0)
+        overlay = {"visible": False, "drawnCount": 0}
+        overlay_items = result.pop("overlayItems", None) or []
+        try:
+            overlay = grain_overlay_fusion.rebuild_overlay(
+                root, extra_items=overlay_items
+            )
+        except Exception as ex:
+            override_warnings.append("Grain overlay: {}".format(ex))
         profile = profiler.flush(status="done")
         created_n = int(result.get("created") or 0)
         scope_label = "Lay Flat Selected" if scope == "selection" else "Lay Flat All"
@@ -2920,6 +3106,8 @@ class PanelAttributesController:
             "tagOverrideAppliedCount": 0,
             "tagOverrideSyncFailed": sync_failed[:20],
             "profile": profile,
+            "overlayVisible": bool(overlay.get("visible")),
+            "overlayDrawnCount": int(overlay.get("drawnCount") or 0),
             "warnings": override_warnings[:20],
             "message": message,
         }
@@ -3395,26 +3583,28 @@ class PanelAttributesController:
         failed_n = int(result.get("failedCount") or 0)
         analyzed_n = int(result.get("analyzedCount") or 0)
         skipped_n = int(result.get("skippedFreshCount") or 0)
-        tint_n = int(result.get("millingTintAppliedCount") or 0)
         ok = failed_n == 0 and (analyzed_n + skipped_n) > 0
         message = (
-            "Analyze Lay Flat: built {} · reused fresh {} · milling tint {} · "
-            "failed {} / {} body(ies)."
+            "Analyze Lay Flat: built {} · reused fresh {} · failed {} / {} body(ies)."
             .format(
                 analyzed_n,
                 skipped_n,
-                tint_n,
                 failed_n,
                 int(result.get("bodyCount") or 0),
             )
         )
+        overlay = {"visible": False, "drawnCount": 0}
+        try:
+            overlay = grain_overlay_fusion.rebuild_overlay(root)
+        except Exception as ex:
+            warnings.append("Grain overlay: {}".format(ex))
         return "panelAttributesResult", {
             "ok": ok,
             "action": "analyzeLayFlatManufacturing",
             "analyzedCount": analyzed_n,
             "skippedFreshCount": skipped_n,
-            "millingTintAppliedCount": tint_n,
-            "millingTintFailedCount": int(result.get("millingTintFailedCount") or 0),
+            "millingTintAppliedCount": 0,
+            "millingTintFailedCount": 0,
             "failedCount": failed_n,
             "bodyCount": int(result.get("bodyCount") or 0),
             "forceRebuild": force,
@@ -3423,6 +3613,8 @@ class PanelAttributesController:
             "failed": result.get("failed") or [],
             "warnings": warnings[:40],
             "errors": [] if ok else [message],
+            "overlayVisible": bool(overlay.get("visible")),
+            "overlayDrawnCount": int(overlay.get("drawnCount") or 0),
             "message": message,
         }
 
@@ -5279,6 +5471,7 @@ class PanelAttributesController:
         warnings = list(expand_warnings or [])
         updated_names = []
         errors = []
+        grain_tags = color_replace.load_grain_color_tags(root)
 
         for body in bodies:
             is_door = metadata_inspector.body_looks_like_door(body)
@@ -5298,6 +5491,9 @@ class PanelAttributesController:
                     surface_mode,
                     is_door=is_door,
                 )
+                if not color_replace.color_is_grain_color(_tag, grain_tags):
+                    patched = color_replace.metadata_without_grain_along(patched)
+                    _clear_grain_mm_attr(body)
                 tag_metadata_editor._write_body_metadata(body, patched)
                 if is_door:
                     repair = milling_surface_propagation.ensure_complementary_surface_roles(
@@ -5382,11 +5578,32 @@ class PanelAttributesController:
         warnings = list(expand_warnings or [])
         updated_names = []
         applied = []
+        overlay_items = []
         errors = []
+        grain_tags = color_replace.load_grain_color_tags(root)
 
+        ignored = []
+        cleared_stale = []
         for body in bodies:
             name = str(getattr(body, "name", "") or "") or "body"
             try:
+                metadata, read_error = tag_metadata_editor._read_body_metadata_raw(body)
+                if read_error:
+                    skipped_errors += 1
+                    errors.append("{}: {}".format(name, read_error))
+                    continue
+                base = tag_metadata_editor._bootstrap_body_metadata(body, metadata)
+                color = color_replace.color_key_from_metadata(base)
+                if not color_replace.color_is_grain_color(color, grain_tags):
+                    leftover = grain_overlay.grain_mm_from_any(base)
+                    if leftover:
+                        stripped = color_replace.metadata_without_grain_along(base)
+                        tag_metadata_editor._write_body_metadata(body, stripped)
+                        _clear_grain_mm_attr(body)
+                        overlay_items.append((body, ""))
+                        cleared_stale.append(name)
+                    ignored.append(name)
+                    continue
                 if orientation == grain_direction.ORIENT_NONE:
                     grain_mm = ""
                     detail = None
@@ -5394,16 +5611,16 @@ class PanelAttributesController:
                     grain_mm, detail = grain_direction.grain_along_mm_for_body(
                         body, orientation
                     )
-                metadata, read_error = tag_metadata_editor._read_body_metadata_raw(body)
-                if read_error:
-                    skipped_errors += 1
-                    errors.append("{}: {}".format(name, read_error))
-                    continue
-                base = tag_metadata_editor._bootstrap_body_metadata(body, metadata)
-                patched, result = tag_metadata_editor.apply_grain_along_to_metadata(
-                    base, grain_mm
+                result, write_error = _write_grain_along_on_body(
+                    body, grain_mm, grain_color_tags=grain_tags
                 )
-                tag_metadata_editor._write_body_metadata(body, patched)
+                if write_error:
+                    skipped_errors += 1
+                    errors.append("{}: {}".format(name, write_error))
+                    continue
+                if (result or {}).get("ignored"):
+                    ignored.append(name)
+                    continue
                 updated += 1
                 updated_names.append(name)
                 item = {
@@ -5415,25 +5632,41 @@ class PanelAttributesController:
                     item["faceEdgesMm"] = detail.get("faceEdgesMm")
                     item["thicknessMm"] = detail.get("thicknessMm")
                 applied.append(item)
+                if color_replace.overlay_eligible(color, grain_mm, grain_tags):
+                    overlay_items.append((body, grain_mm))
+                elif grain_mm in (None, ""):
+                    overlay_items.append((body, ""))
             except Exception as ex:
                 skipped_errors += 1
                 errors.append("{}: {}".format(name, ex))
 
         if not bodies:
             warnings.append("No solid panel bodies found under the current selection.")
+        if ignored:
+            warnings.append(
+                "Ignored {} panel(s) that are not a ticked grain color."
+                .format(len(ignored))
+            )
 
         ok = updated > 0
         if orientation == grain_direction.ORIENT_NONE:
             summary = "cleared grainAlongMm on {}".format(updated)
         else:
             summary = "wrote grainAlongMm from {} on {}".format(orientation, updated)
+        if ignored:
+            summary += ", ignored {}".format(len(ignored))
+        if cleared_stale:
+            summary += ", stripped leftover {}".format(len(cleared_stale))
         if skipped_errors:
             summary += ", errors {}".format(skipped_errors)
-        return "panelAttributesResult", {
+        return "panelAttributesResult", _with_grain_overlay(root, {
             "ok": ok if bodies else False,
             "action": "applyGrainToSelection",
             "orientation": orientation,
             "updatedCount": updated,
+            "ignoredCount": len(ignored),
+            "ignoredBodies": ignored[:40],
+            "clearedStaleCount": len(cleared_stale),
             "skippedErrorCount": skipped_errors,
             "bodyCount": len(bodies),
             "updatedBodies": updated_names[:40],
@@ -5441,6 +5674,70 @@ class PanelAttributesController:
             "warnings": warnings[:20],
             "errors": errors[:20] if (errors and not updated) else (errors[:10] if errors else []),
             "message": "Wood grain: {}.".format(summary),
+        }, overlay_items=overlay_items)
+
+    def set_grain_overlay(self, payload, _palette):
+        """Show or hide CustomGraphics grain arrows on boards that have grainAlongMm."""
+        root = self.fusion.get_root_component()
+        visible = bool((payload or {}).get("visible"))
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "setGrainOverlay",
+                "overlayVisible": False,
+                "overlayDrawnCount": 0,
+                "errors": ["No active Fusion design."],
+            }
+        try:
+            overlay = grain_overlay_fusion.set_overlay_visible(root, visible)
+        except Exception as ex:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "setGrainOverlay",
+                "overlayVisible": False,
+                "overlayDrawnCount": 0,
+                "errors": [str(ex)],
+            }
+        return "panelAttributesResult", {
+            "ok": bool(overlay.get("ok")),
+            "action": "setGrainOverlay",
+            "overlayVisible": bool(overlay.get("visible")),
+            "overlayDrawnCount": int(overlay.get("drawnCount") or 0),
+            "skippedCount": int(overlay.get("skippedCount") or 0),
+            "warnings": overlay.get("warnings") or [],
+            "errors": overlay.get("errors") or [],
+            "message": overlay.get("message") or "",
+        }
+
+    def get_grain_overlay(self, _payload, _palette):
+        """Return overlay flag; redraw if it was left on."""
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "getGrainOverlay",
+                "overlayVisible": False,
+                "overlayDrawnCount": 0,
+                "errors": ["No active Fusion design."],
+            }
+        try:
+            visible = bool(grain_overlay_fusion.load_overlay_visible(root))
+        except Exception as ex:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "getGrainOverlay",
+                "overlayVisible": False,
+                "overlayDrawnCount": 0,
+                "errors": [str(ex)],
+            }
+        return "panelAttributesResult", {
+            "ok": True,
+            "action": "getGrainOverlay",
+            "overlayVisible": visible,
+            "overlayDrawnCount": 0,
+            "skippedCount": 0,
+            "warnings": [],
+            "errors": [],
         }
 
     def _scan_source_body_records(self, root):
@@ -5454,45 +5751,25 @@ class PanelAttributesController:
         ]
         return body_records, diagnostics
 
-    def _bodies_for_color_tag(self, root, color_tag):
+    def _bodies_for_color_tag(self, root, color_tag, include_lay_flat=True):
         wanted = color_replace.normalize_color_key(color_tag)
         records, diagnostics = self._scan_source_body_records(root)
-        bodies = []
-        seen = set()
-        warnings = []
-        matched_records = 0
-        for record in records:
-            if color_replace.color_key_from_record(record) != wanted:
-                continue
-            matched_records += 1
-            body, body_warnings = self._body_from_metadata_record(
-                root, record, prefer_path=True
-            )
-            warnings.extend(body_warnings or [])
-            candidates = []
-            if body is not None:
-                candidates.append(body)
-                try:
-                    candidates.extend(
-                        panel_body_resolver.find_lay_flat_bodies_for_source(root, body)
-                        or []
-                    )
-                except Exception:
-                    pass
-            for candidate in candidates:
-                key = metadata_inspector._body_key(candidate)
-                if not key or key in seen:
-                    continue
-                seen.add(key)
-                bodies.append(candidate)
-        return bodies, matched_records, warnings, diagnostics
+        return self._collect_color_bodies(
+            root, records, wanted, diagnostics, include_lay_flat=include_lay_flat
+        )
 
-    def _bodies_from_color_records(self, root, records, color_tag):
+    def _bodies_from_color_records(self, root, records, color_tag, include_lay_flat=True):
         wanted = color_replace.normalize_color_key(color_tag)
+        return self._collect_color_bodies(
+            root, records, wanted, {}, include_lay_flat=include_lay_flat
+        )
+
+    def _collect_color_bodies(self, root, records, wanted, diagnostics, include_lay_flat=True):
         bodies = []
         seen = set()
         warnings = []
         matched_records = 0
+        lay_flat_index = _index_lay_flat_by_source(root) if include_lay_flat else {}
         for record in records or []:
             if not isinstance(record, dict):
                 continue
@@ -5506,27 +5783,32 @@ class PanelAttributesController:
             warnings.extend(body_warnings or [])
             candidates = []
             if body is not None:
+                if not include_lay_flat:
+                    try:
+                        if metadata_inspector._is_lay_flat_workpiece(body):
+                            continue
+                    except Exception:
+                        pass
                 candidates.append(body)
-                try:
-                    candidates.extend(
-                        panel_body_resolver.find_lay_flat_bodies_for_source(root, body)
-                        or []
-                    )
-                except Exception:
-                    pass
+                if include_lay_flat:
+                    candidates.extend(_lay_flats_for_source(body, lay_flat_index))
             for candidate in candidates:
                 key = metadata_inspector._body_key(candidate)
                 if not key or key in seen:
                     continue
                 seen.add(key)
                 bodies.append(candidate)
-        return bodies, matched_records, warnings, {}
+        return bodies, matched_records, warnings, diagnostics
 
-    def _resolve_color_bodies(self, root, color_tag, records=None):
+    def _resolve_color_bodies(self, root, color_tag, records=None, include_lay_flat=True):
         provided = [item for item in (records or []) if isinstance(item, dict)]
         if provided:
-            return self._bodies_from_color_records(root, provided, color_tag)
-        return self._bodies_for_color_tag(root, color_tag)
+            return self._bodies_from_color_records(
+                root, provided, color_tag, include_lay_flat=include_lay_flat
+            )
+        return self._bodies_for_color_tag(
+            root, color_tag, include_lay_flat=include_lay_flat
+        )
 
     def replace_color_tag(self, payload, palette):
         """Rename every source panel that currently uses fromColorTag."""
@@ -5643,7 +5925,11 @@ class PanelAttributesController:
         }
 
     def set_color_grain(self, payload, palette):
-        """Turn wood grain on/off for every panel that uses a scanned color."""
+        """Turn wood grain on/off for assembly panels of a scanned color.
+
+        Writes originals only. LAY_FLAT copies are left alone — run Lay Flat
+        later if those need the new grainAlongMm.
+        """
         yield {"phase": "analyze", "percent": 2, "delayMs": 10}
         root = self.fusion.get_root_component()
         if not root:
@@ -5682,8 +5968,12 @@ class PanelAttributesController:
             grain_tags = [item for item in grain_tags if item != color_tag]
         _, grain_tags = color_replace.save_grain_color_tags(root, grain_tags)
 
+        yield {"phase": "analyze", "percent": 4, "delayMs": 15}
         bodies, matched_records, warnings, _diagnostics = self._resolve_color_bodies(
-            root, color_tag, (payload or {}).get("records")
+            root,
+            color_tag,
+            (payload or {}).get("records"),
+            include_lay_flat=False,
         )
         if not bodies:
             return "panelAttributesResult", {
@@ -5699,6 +5989,7 @@ class PanelAttributesController:
             }
 
         updated = []
+        overlay_items = []
         failed = []
         total = max(len(bodies), 1)
         _report_progress(
@@ -5713,7 +6004,9 @@ class PanelAttributesController:
                     grain_mm, _detail = grain_direction.grain_along_mm_for_body(
                         body, orientation
                     )
-                result, write_error = _write_grain_along_on_body(body, grain_mm)
+                result, write_error = _write_grain_along_on_body(
+                    body, grain_mm, stamp_outline=False, grain_color_tags=grain_tags
+                )
                 if write_error:
                     failed.append({"bodyName": name, "reason": write_error})
                     continue
@@ -5724,6 +6017,8 @@ class PanelAttributesController:
                         "changed": bool((result or {}).get("changed")),
                     }
                 )
+                if grain_mm not in (None, ""):
+                    overlay_items.append((body, grain_mm))
             except Exception as ex:
                 failed.append({"bodyName": name, "reason": str(ex)})
             yield {
@@ -5731,14 +6026,86 @@ class PanelAttributesController:
                 "done": index + 1,
                 "total": len(bodies),
                 "percent": int(100 * (index + 1) / total),
-                "delayMs": 0,
+                "delayMs": 15,
             }
+
+        cleared_lay_flats = []
+        if not has_grain:
+            for lay_flat_body in grain_overlay_fusion._collect_lay_flat_bodies(root):
+                lay_color = ""
+                try:
+                    lay_color = grain_overlay_fusion._color_key_for_body(lay_flat_body)
+                except Exception:
+                    lay_color = ""
+                if lay_color != color_tag:
+                    continue
+                lay_name = str(getattr(lay_flat_body, "name", "") or "") or "layflat"
+                try:
+                    result, write_error = _write_grain_along_on_body(
+                        lay_flat_body,
+                        "",
+                        stamp_outline=False,
+                        grain_color_tags=grain_tags,
+                    )
+                    if write_error:
+                        failed.append({"bodyName": lay_name, "reason": write_error})
+                        continue
+                    updated.append(
+                        {
+                            "bodyName": lay_name,
+                            "grainAlongMm": None,
+                            "changed": bool((result or {}).get("changed")),
+                        }
+                    )
+                    cleared_lay_flats.append(lay_flat_body)
+                except Exception as ex:
+                    failed.append({"bodyName": lay_name, "reason": str(ex)})
 
         ok = bool(updated)
         if has_grain:
             summary = "set grain ({}) on {}".format(orientation, len(updated))
         else:
             summary = "cleared grain on {}".format(len(updated))
+        overlay = {
+            "visible": False,
+            "drawnCount": 0,
+        }
+        catalog_items = list(overlay_items)
+        catalog_records = [
+            item
+            for item in ((payload or {}).get("catalogRecords") or [])
+            if isinstance(item, dict)
+        ]
+        if catalog_records:
+            try:
+                catalog_bodies, _, cat_warnings, _ = self._resolve_color_bodies(
+                    root, "", catalog_records, include_lay_flat=False
+                )
+                warnings.extend(cat_warnings or [])
+                seen = {
+                    grain_overlay_fusion._session_key(body)
+                    for body, _grain in catalog_items
+                }
+                for body in catalog_bodies:
+                    key = grain_overlay_fusion._session_key(body)
+                    if key in seen:
+                        continue
+                    grain_mm, _read_error = grain_overlay_fusion._grain_mm_for_body(body)
+                    if grain_mm in (None, ""):
+                        continue
+                    color = grain_overlay_fusion._color_key_for_body(body)
+                    if not color_replace.overlay_eligible(color, grain_mm, grain_tags):
+                        continue
+                    seen.add(key)
+                    catalog_items.append((body, grain_mm))
+            except Exception as ex:
+                warnings.append("Grain overlay catalog: {}".format(ex))
+        try:
+            overlay = grain_overlay_fusion.rebuild_overlay(
+                root, extra_items=catalog_items
+            )
+        except Exception as ex:
+            warnings.append("Grain overlay: {}".format(ex))
         return "panelAttributesResult", {
             "ok": ok,
             "action": "setColorGrain",
@@ -5752,6 +6119,8 @@ class PanelAttributesController:
             "applied": updated[:40],
             "failed": failed[:40],
             "grainColorTags": grain_tags,
+            "overlayVisible": bool(overlay.get("visible")),
+            "overlayDrawnCount": int(overlay.get("drawnCount") or 0),
             "warnings": warnings[:20],
             "errors": (
                 []
@@ -6535,15 +6904,22 @@ class PanelAttributesController:
         source_for_lay_flat = {}
         written_keys = set()
         paired_lay_flats = []
+        overlay_items = []
+        grain_tags = color_replace.load_grain_color_tags(root)
 
         def _write_grain(body, grain_mm, dest):
             key = metadata_inspector._body_key(body)
             if key in written_keys:
                 return True
-            result, error = _write_grain_along_on_body(body, grain_mm)
+            result, error = _write_grain_along_on_body(
+                body, grain_mm, grain_color_tags=grain_tags
+            )
             name = str(getattr(body, "name", "") or "") or "body"
             if error:
                 skipped.append({"bodyName": name, "reason": str(error)})
+                return False
+            if (result or {}).get("ignored"):
+                skipped.append({"bodyName": name, "reason": "not_grain_color"})
                 return False
             written_keys.add(key)
             dest.append({
@@ -6551,6 +6927,13 @@ class PanelAttributesController:
                 "grainAlongMm": grain_mm,
                 "changed": bool((result or {}).get("changed")),
             })
+            metadata, _read_error = tag_metadata_editor._read_body_metadata_raw(body)
+            if color_replace.overlay_eligible(
+                color_replace.color_key_from_metadata(metadata),
+                grain_mm,
+                grain_tags,
+            ):
+                overlay_items.append((body, grain_mm))
             return True
 
         for body in bodies:
@@ -6608,6 +6991,26 @@ class PanelAttributesController:
                     )
 
             measure_body = source_body if source_body is not None else body
+            measure_meta, _measure_err = tag_metadata_editor._read_body_metadata_raw(
+                measure_body
+            )
+            measure_color = color_replace.color_key_from_metadata(measure_meta)
+            if not color_replace.color_is_grain_color(measure_color, grain_tags):
+                leftover = grain_overlay.grain_mm_from_any(measure_meta)
+                if leftover:
+                    _write_grain_along_on_body(
+                        measure_body, "", grain_color_tags=grain_tags
+                    )
+                    for lay_flat_body in lay_flat_targets:
+                        _write_grain_along_on_body(
+                            lay_flat_body, "", grain_color_tags=grain_tags
+                        )
+                    overlay_items.append((measure_body, ""))
+                skipped.append({
+                    "bodyName": name,
+                    "reason": "not_grain_color",
+                })
+                continue
             current, read_error = _read_grain_along_from_body(measure_body)
             if (not current) and source_body is not None and source_body is not body:
                 current, read_error = _read_grain_along_from_body(body)
@@ -6776,7 +7179,7 @@ class PanelAttributesController:
                 )
             if int(analyze_summary.get("failedCount") or 0) or geometry_failed:
                 ok = False
-        return "panelAttributesResult", {
+        return "panelAttributesResult", _with_grain_overlay(root, {
             "ok": ok,
             "action": "rotateGrain90",
             "bodyCount": len(bodies),
@@ -6802,7 +7205,7 @@ class PanelAttributesController:
                 else "No wood grain was rotated 90°."
             ],
             "message": message,
-        }
+        }, overlay_items=overlay_items)
 
     def make_selected_faces_colour(self, _payload, _palette):
         """Fast explicit override: selected broad face becomes the colour side.

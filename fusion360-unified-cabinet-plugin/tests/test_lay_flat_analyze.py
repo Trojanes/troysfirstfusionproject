@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.join(ROOT, "nesting"))
 
 from lay_flat_analyze import (  # noqa: E402
     ANALYZED_STATE,
+    _grain_mm_for_analyze,
     _translate_points,
     analyze_lay_flat_body,
     cache_is_fresh,
@@ -26,6 +27,23 @@ from outline_cache import CACHE_SCHEMA, body_geometry_signature  # noqa: E402
 
 
 class LayFlatAnalyzeTests(unittest.TestCase):
+    def test_grain_mm_for_analyze_reads_classification_and_outline(self):
+        self.assertEqual(
+            _grain_mm_for_analyze(
+                {
+                    "classification": {
+                        "grainAlongMm": {"value": 720, "source": "manual"}
+                    }
+                }
+            ),
+            720.0,
+        )
+        self.assertEqual(
+            _grain_mm_for_analyze({}, {"grainAlongMm": 450}),
+            450.0,
+        )
+        self.assertEqual(_grain_mm_for_analyze({}, {}), "")
+
     def test_feature_evidence_allows_over_extract_rejects_under_extract(self):
         self.assertTrue(feature_evidence_complete([{"id": 1}, {"id": 2}], 2))
         self.assertTrue(feature_evidence_complete([{"id": 1}, {"id": 2}, {"id": 3}], 2))

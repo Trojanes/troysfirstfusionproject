@@ -19,6 +19,7 @@ try:
         delete_previous_layouts,
         prepare_flat_copy,
     )
+    from nesting.in_plane_orient import clean_grain_mm, grain_mm_from_metadata
     from nesting.outline_cache import (
         CACHE_KEY,
         body_geometry_signature,
@@ -35,6 +36,7 @@ except Exception:
         delete_previous_layouts,
         prepare_flat_copy,
     )
+    from in_plane_orient import clean_grain_mm, grain_mm_from_metadata
     from outline_cache import CACHE_KEY, body_geometry_signature, build_cache_record
     from workpiece_names import nesting_workpiece_name
 
@@ -120,6 +122,44 @@ def delete_previous_lay_flat(root_component, exclude_component=None):
     return deleted
 
 
+def _item_is_grain_color(root_component, item):
+    try:
+        import color_replace
+    except Exception:
+        return False
+    try:
+        tags = color_replace.load_grain_color_tags(root_component)
+    except Exception:
+        tags = []
+    color = item.get("colorTag") if isinstance(item, dict) else ""
+    if not color and isinstance(item, dict):
+        color = color_replace.color_key_from_metadata(item.get("metadata"))
+    return color_replace.overlay_eligible(color, 1, tags)
+
+
+def _grain_mm_from_parts(source_metadata, dimensions=None, outline=None):
+    dims = dimensions if isinstance(dimensions, dict) else {}
+    out = outline if isinstance(outline, dict) else {}
+    return (
+        clean_grain_mm(dims.get("grainAlongMm"))
+        or grain_mm_from_metadata(source_metadata)
+        or clean_grain_mm(out.get("grainAlongMm"))
+    )
+
+
+def _write_grain_attr(body, grain_mm):
+    if grain_mm in (None, ""):
+        return
+    raw = str(grain_mm)
+    for entity in (body, getattr(body, "nativeObject", None)):
+        if entity is None:
+            continue
+        try:
+            _set_attr(entity, OUTPUT_MARKER_GROUP, "grainAlongMm", raw)
+        except Exception:
+            continue
+
+
 def _write_panel_metadata(body, metadata, panel_id):
     payload = json.dumps(metadata, ensure_ascii=False, separators=(",", ":"))
     attrs = body.attributes
@@ -137,7 +177,13 @@ def _write_panel_metadata(body, metadata, panel_id):
 
 
 def _slim_metadata_for_lay_flat(
-    source_metadata, unique_id, source_panel_id, outline, dimensions, run_id
+    source_metadata,
+    unique_id,
+    source_panel_id,
+    outline,
+    dimensions,
+    run_id,
+    keep_grain=True,
 ):
     """Keep export-critical fields; drop heavy SVG / faceRegistry payloads."""
     src = source_metadata if isinstance(source_metadata, dict) else {}
@@ -146,6 +192,9 @@ def _slim_metadata_for_lay_flat(
         identity["sourcePanelId"] = source_panel_id
     identity["panelId"] = unique_id
     signature = "layflat|{}|{}".format(run_id, unique_id)
+    grain_mm = (
+        _grain_mm_from_parts(source_metadata, dimensions, outline) if keep_grain else ""
+    )
     cache = build_cache_record(
         outline if isinstance(outline, dict) else {},
         dimensions if isinstance(dimensions, dict) else {},
@@ -153,21 +202,60 @@ def _slim_metadata_for_lay_flat(
         "MILLING",
         allow_parts_in_part=False,
         reflected_source=bool((outline or {}).get("reflectedSource")),
-        grain_along_mm=(
-            (dimensions or {}).get("grainAlongMm")
-            if isinstance(dimensions, dict)
-            else None
-        )
-        or ((outline or {}).get("grainAlongMm") if isinstance(outline, dict) else None),
+        grain_along_mm=grain_mm,
     )
+    classification = (
+        dict(src.get("classification"))
+        if isinstance(src.get("classification"), dict)
+        else {}
+    )
+    if grain_mm:
+        existing = classification.get("grainAlongMm")
+        if isinstance(existing, dict):
+            grain_state = dict(existing)
+            grain_state["value"] = grain_mm
+            classification["grainAlongMm"] = grain_state
+        else:
+            classification["grainAlongMm"] = {
+                "value": grain_mm,
+                "source": "manual",
+                "locked": True,
+            }
+    elif classification.get("grainAlongMm") is not None:
+        existing = classification.get("grainAlongMm")
+        if isinstance(existing, dict):
+            grain_state = dict(existing)
+            grain_state["value"] = ""
+            classification["grainAlongMm"] = grain_state
+        else:
+            classification.pop("grainAlongMm", None)
+        derived = src.get("derivedTags")
+        if isinstance(derived, dict):
+            derived = dict(derived)
+            derived.pop("grainAlongMm", None)
+            src = dict(src)
+            src["derivedTags"] = derived
+        typed = src.get("typedTags")
+        if isinstance(typed, dict):
+            typed = dict(typed)
+            typed.pop("grainAlongMm", None)
+            src = dict(src)
+            src["typedTags"] = typed
+    dims_out = src.get("dimensions") if isinstance(src.get("dimensions"), dict) else None
+    dims_out = dict(dims_out) if dims_out else (dict(dimensions) if isinstance(dimensions, dict) else {})
+    if grain_mm:
+        dims_out["grainAlongMm"] = grain_mm
+    else:
+        dims_out.pop("grainAlongMm", None)
+        dims_out.pop("grainAngleDeg", None)
     slim = {
         "schemaVersion": src.get("schemaVersion", 1),
         "identity": identity,
-        "classification": src.get("classification"),
+        "classification": classification or src.get("classification"),
         "defaultAttributes": src.get("defaultAttributes"),
         "derivedTags": src.get("derivedTags"),
         "typedTags": src.get("typedTags"),
-        "dimensions": src.get("dimensions") or dimensions,
+        "dimensions": dims_out or dimensions,
         # Source features are in the source-body frame. Never attach them to a
         # moved LAY_FLAT copy; Analyze Lay Flat will write world-XY/panel-local
         # manufacturing features.
@@ -182,7 +270,9 @@ def _slim_metadata_for_lay_flat(
     return slim
 
 
-def _stamp_lay_flat_body(body, placement, run_id, source_metadata, outline, dimensions):
+def _stamp_lay_flat_body(
+    body, placement, run_id, source_metadata, outline, dimensions, keep_grain=True
+):
     _set_attr(body, OUTPUT_MARKER_GROUP, OUTPUT_MARKER_NAME, WORKPIECE_ROLE)
     _set_attr(body, INSTANCE_ROLE_GROUP, INSTANCE_ROLE_NAME, INSTANCE_ROLE_VALUE)
     _set_attr(body, OUTPUT_MARKER_GROUP, "layFlatRunId", run_id)
@@ -264,7 +354,13 @@ def _stamp_lay_flat_body(body, placement, run_id, source_metadata, outline, dime
             placement.get("itemIndex"),
         )
     meta = _slim_metadata_for_lay_flat(
-        source_metadata, unique_id, source_panel_id, outline, dimensions, run_id
+        source_metadata,
+        unique_id,
+        source_panel_id,
+        outline,
+        dimensions,
+        run_id,
+        keep_grain=keep_grain,
     )
     identity = meta.get("identity") if isinstance(meta.get("identity"), dict) else {}
     identity["sourceRef"] = source_ref
@@ -278,6 +374,8 @@ def _stamp_lay_flat_body(body, placement, run_id, source_metadata, outline, dime
         identity["sourceOccurrencePath"] = [int(v) for v in source_path]
     meta["identity"] = identity
     _write_panel_metadata(body, meta, unique_id)
+    if keep_grain:
+        _write_grain_attr(body, _grain_mm_from_parts(meta, dimensions, outline))
     return unique_id
 
 
@@ -401,6 +499,7 @@ def create_lay_flat_layout(
     by_id = {str(item["id"]): item for item in prepared_items}
     temp_manager = adsk.fusion.TemporaryBRepManager.get()
     created = []
+    overlay_items = []
     used_names = set()
     placements = list(layout.get("placements") or [])
     CREATE_BATCH = 40
@@ -502,6 +601,7 @@ def create_lay_flat_layout(
                 body.name = part_name
             except Exception:
                 pass
+            keep_grain = _item_is_grain_color(root_component, item)
             unique_id = _stamp_lay_flat_body(
                 body,
                 placement,
@@ -509,7 +609,13 @@ def create_lay_flat_layout(
                 item.get("metadata"),
                 item.get("outline"),
                 item.get("dimensions"),
+                keep_grain=keep_grain,
             )
+            grain_mm = _grain_mm_from_parts(
+                item.get("metadata"), item.get("dimensions"), item.get("outline")
+            )
+            if grain_mm and keep_grain:
+                overlay_items.append((body, grain_mm))
             created.append(
                 {
                     "bodyName": getattr(body, "name", "") or part_name,
@@ -545,6 +651,7 @@ def create_lay_flat_layout(
         "bounds": layout.get("bounds") or {},
         "structure": "named_bodies",
         "createPath": "batch_named_bodies",
+        "overlayItems": overlay_items,
     }
 
 

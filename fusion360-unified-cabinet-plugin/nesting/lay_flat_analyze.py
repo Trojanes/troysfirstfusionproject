@@ -10,6 +10,7 @@ import json
 import time
 
 try:
+    from nesting.in_plane_orient import clean_grain_mm, grain_mm_from_metadata
     from nesting.outline_cache import (
         CACHE_KEY,
         CACHE_SCHEMA,
@@ -19,6 +20,7 @@ try:
     )
     from nesting.outline import build_outline_payload, polygon_bounds
 except Exception:
+    from in_plane_orient import clean_grain_mm, grain_mm_from_metadata  # type: ignore
     from outline_cache import (  # type: ignore
         CACHE_KEY,
         CACHE_SCHEMA,
@@ -397,6 +399,19 @@ def clear_face_appearance_override(face):
         return True
     except Exception:
         return False
+
+
+def _grain_mm_for_analyze(metadata, outline=None):
+    out = outline if isinstance(outline, dict) else {}
+    return (
+        grain_mm_from_metadata(metadata)
+        or clean_grain_mm(out.get("grainAlongMm"))
+        or clean_grain_mm(
+            (metadata.get("dimensions") or {}).get("grainAlongMm")
+            if isinstance(metadata, dict)
+            else None
+        )
+    )
 
 
 def _metadata_richness(metadata):
@@ -1058,10 +1073,7 @@ def analyze_lay_flat_body(body, force=False, tint_ctx=None):
         "MILLING",
         allow_parts_in_part=False,
         reflected_source=bool(outline.get("reflectedSource")),
-        grain_along_mm=(
-            (outline or {}).get("grainAlongMm")
-            or (metadata.get("classification") or {}).get("grainAlongMm")
-        ),
+        grain_along_mm=_grain_mm_for_analyze(metadata, outline),
     )
     cache["analyzedAtMs"] = int(time.time() * 1000)
     cache["featureCount"] = len(features)
@@ -1093,13 +1105,16 @@ def analyze_lay_flat_body(body, force=False, tint_ctx=None):
         "depthMm": float(cache.get("depthMm") or 0.0),
         "thicknessMm": thickness,
     }
+    grain_mm = _grain_mm_for_analyze(working, outline) or _grain_mm_for_analyze(
+        metadata, outline
+    )
+    if grain_mm:
+        working["dimensions"]["grainAlongMm"] = grain_mm
     working["lifecycle"] = {
         "state": ANALYZED_STATE,
         "analyzedAtMs": cache["analyzedAtMs"],
     }
     _write_metadata(body, working, panel_id)
-    clear_face_appearance_override(colour_face)
-    tinted = tint_milling_side(body, milling_face, tint_ctx)
     return {
         "ok": True,
         "skipped": False,
@@ -1115,7 +1130,7 @@ def analyze_lay_flat_body(body, force=False, tint_ctx=None):
         "halfStatus": face_check.get("halfStatus") or "",
         "topHalfCount": int(face_check.get("topHalfCount") or 0),
         "bottomHalfCount": int(face_check.get("bottomHalfCount") or 0),
-        "millingTintApplied": bool(tinted),
+        "millingTintApplied": False,
     }
 
 

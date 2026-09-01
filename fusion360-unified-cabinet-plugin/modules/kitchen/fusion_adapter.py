@@ -8,6 +8,14 @@ import adsk.core
 import adsk.fusion
 
 from geometry_ops import avoid_existing_at_origin, capture_position_snapshot, is_module_artifact, name_looks_like_module
+
+try:
+    from core.assembly_snapshot import delete_assembly_by_run_label, write_generator_snapshot
+except Exception:
+    _plugin_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    if _plugin_root not in sys.path:
+        sys.path.insert(0, _plugin_root)
+    from core.assembly_snapshot import delete_assembly_by_run_label, write_generator_snapshot
 from assembly_cut_face import assembly_cut_face
 
 try:
@@ -531,9 +539,11 @@ def _new_assembly_component(root_comp, run_label, component_name=None, origin_x_
     try:
         component.attributes.add(ATTRIBUTE_GROUP, "module", "kitchen")
         component.attributes.add(ATTRIBUTE_GROUP, "assemblyName", component_name)
+        component.attributes.add(ATTRIBUTE_GROUP, "runLabel", str(run_label or ""))
         # Connect collect also looks up UnifiedCabinetPlugin.assemblyName.
         component.attributes.add("UnifiedCabinetPlugin", "module", "kitchen")
         component.attributes.add("UnifiedCabinetPlugin", "assemblyName", component_name)
+        component.attributes.add("UnifiedCabinetPlugin", "runLabel", str(run_label or ""))
     except Exception:
         pass
     return component, component_name, None
@@ -1402,7 +1412,21 @@ def _capture_position_snapshot(root_comp):
     capture_position_snapshot(root_comp)
 
 
-def create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=None, create_cutouts=False, mode="flat", add_as_new=True, component_name=None, origin_x_mm=None, origin_y_mm=None):
+def create_assembly_panel_bodies_from_kitchen_result(
+    fusion,
+    result,
+    run_label=None,
+    create_cutouts=False,
+    mode="flat",
+    add_as_new=True,
+    component_name=None,
+    origin_x_mm=None,
+    origin_y_mm=None,
+    origin_z_mm=None,
+    generator_params=None,
+    replace_run_label=None,
+    avoid_existing_origin=True,
+):
     root = fusion.get_root_component() if fusion else None
     if root is None:
         return {
@@ -1418,37 +1442,59 @@ def create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=N
             "adapterRevision": ADAPTER_REVISION,
         }
 
-    resolved_run_label = str(run_label or int(time.time() * 1000))
+    resolved_run_label = str(replace_run_label or run_label or int(time.time() * 1000))
     run_component_prefix = "KITCHEN_{}".format(
         sanitize_token(resolved_run_label, fallback="assembly", limit=60)
     )
     # Lock existing assemblies (OHC, lounge, …) before any kitchen timeline edit.
     _capture_position_snapshot(root)
-    deleted_previous = _delete_previous_kitchen_artifacts(
-        root,
-        run_prefix=run_component_prefix if add_as_new else None,
-    )
-    origin_x_mm, origin_y_mm, origin_active = _auto_origin(root, origin_x_mm, origin_y_mm)
-    entries = _panel_entries(result)
-    avoidance_info = {"shifted": False, "slots": 0}
-    footprint = _kitchen_spawn_footprint_mm(entries)
-    if origin_active:
-        origin_x_mm, origin_y_mm, avoidance_info = avoid_existing_at_origin(
-            root, origin_x_mm, origin_y_mm, footprint
+    deleted_target = {"occurrences": 0}
+    if replace_run_label:
+        deleted_target = delete_assembly_by_run_label(
+            root, "kitchen", replace_run_label, assembly_name=component_name
         )
-        if avoidance_info.get("shifted"):
-            warnings_pre = []
-            warnings_pre.append(
-                "Generation spot was occupied; kitchen assembly shifted +X by {:.0f} mm (slot {}).".format(
-                    avoidance_info.get("shiftXMm", 0.0), avoidance_info.get("slots", 0)
-                )
+        add_as_new = True
+        avoid_existing_origin = False
+        _capture_position_snapshot(root)
+        deleted_previous = {"occurrences": 0, "bodies": 0, "sketches": 0}
+    else:
+        deleted_previous = _delete_previous_kitchen_artifacts(
+            root,
+            run_prefix=run_component_prefix if add_as_new else None,
+        )
+    if replace_run_label:
+        origin_x_mm = float(origin_x_mm or 0.0)
+        origin_y_mm = float(origin_y_mm or 0.0)
+        origin_active = True
+        warnings_pre = []
+        avoidance_info = {"shifted": False, "disabled": True, "reason": "update_target"}
+        if origin_z_mm is None:
+            origin_z_mm = 0.0
+    else:
+        origin_x_mm, origin_y_mm, origin_active = _auto_origin(root, origin_x_mm, origin_y_mm)
+        entries = _panel_entries(result)
+        avoidance_info = {"shifted": False, "slots": 0}
+        footprint = _kitchen_spawn_footprint_mm(entries)
+        if origin_active and avoid_existing_origin:
+            origin_x_mm, origin_y_mm, avoidance_info = avoid_existing_at_origin(
+                root, origin_x_mm, origin_y_mm, footprint
             )
+            if avoidance_info.get("shifted"):
+                warnings_pre = []
+                warnings_pre.append(
+                    "Generation spot was occupied; kitchen assembly shifted +X by {:.0f} mm (slot {}).".format(
+                        avoidance_info.get("shiftXMm", 0.0), avoidance_info.get("slots", 0)
+                    )
+                )
+            else:
+                warnings_pre = []
         else:
             warnings_pre = []
-    else:
-        warnings_pre = []
-    # Generation zone: assembly sits on z=0.  Legacy (no zone): lift to z=10000.
-    origin_z_mm = 0.0 if origin_active else MODEL_Z_OFFSET_MM
+        # Generation zone: assembly sits on z=0.  Legacy (no zone): lift to z=10000.
+        if origin_z_mm is None:
+            origin_z_mm = 0.0 if origin_active else MODEL_Z_OFFSET_MM
+    entries = _panel_entries(result)
+    footprint = _kitchen_spawn_footprint_mm(entries)
     component, assembly_name, container_warning = _new_assembly_component(
         root, resolved_run_label, component_name=component_name,
         origin_x_mm=origin_x_mm, origin_y_mm=origin_y_mm, origin_z_mm=origin_z_mm,
@@ -1478,6 +1524,22 @@ def create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=N
     }
     if container_warning:
         warnings.append(container_warning)
+    if component is not root and isinstance(generator_params, dict):
+        snapshot_ok = write_generator_snapshot(
+            component,
+            "kitchen",
+            generator_params,
+            run_label=resolved_run_label,
+            assembly_name=assembly_name,
+            origin={
+                "x": float(origin_x_mm or 0.0),
+                "y": float(origin_y_mm or 0.0),
+                "z": float(origin_z_mm or 0.0),
+                "rotationDeg": 0.0,
+            },
+        )
+        if not snapshot_ok:
+            warnings.append("Could not write generatorParams on the kitchen assembly; load-from-selection will not work.")
     v_panels = result.get("vPanels") if isinstance(result, dict) else None
     carcass_color_tag, carcass_color_name = extract_carcass_color_from_result(result)
     declarations = result.get("relationshipDeclarations") if isinstance(result, dict) else None
@@ -1701,6 +1763,9 @@ def create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=N
         "cutoutsEnabled": bool(create_cutouts),
         "cutoutMode": "through_and_half_grooves" if create_cutouts else "outer_only",
         "deletedPreviousKitchenArtifacts": deleted_previous,
+        "deletedTarget": deleted_target,
+        "replacedRunLabel": str(replace_run_label) if replace_run_label else "",
+        "generatorParamsStored": bool(component is not root and isinstance(generator_params, dict)),
         "addAsNewCabinet": bool(add_as_new),
         "modelZOffset": model_z_offset,
         "placementDebug": {
@@ -1718,9 +1783,9 @@ def create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=N
     }
 
 
-def create_flat_panel_bodies_from_kitchen_result(fusion, result, run_label=None, add_as_new=True, component_name=None, origin_x_mm=None, origin_y_mm=None):
-    return create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=run_label, create_cutouts=True, mode="flat", add_as_new=add_as_new, component_name=component_name, origin_x_mm=origin_x_mm, origin_y_mm=origin_y_mm)
+def create_flat_panel_bodies_from_kitchen_result(fusion, result, run_label=None, add_as_new=True, component_name=None, origin_x_mm=None, origin_y_mm=None, **kwargs):
+    return create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=run_label, create_cutouts=True, mode="flat", add_as_new=add_as_new, component_name=component_name, origin_x_mm=origin_x_mm, origin_y_mm=origin_y_mm, **kwargs)
 
 
-def create_flat_transformed_panel_bodies_from_kitchen_result(fusion, result, run_label=None, add_as_new=True, component_name=None, origin_x_mm=None, origin_y_mm=None):
-    return create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=run_label, create_cutouts=True, mode="flat_transform", add_as_new=add_as_new, component_name=component_name, origin_x_mm=origin_x_mm, origin_y_mm=origin_y_mm)
+def create_flat_transformed_panel_bodies_from_kitchen_result(fusion, result, run_label=None, add_as_new=True, component_name=None, origin_x_mm=None, origin_y_mm=None, **kwargs):
+    return create_assembly_panel_bodies_from_kitchen_result(fusion, result, run_label=run_label, create_cutouts=True, mode="flat_transform", add_as_new=add_as_new, component_name=component_name, origin_x_mm=origin_x_mm, origin_y_mm=origin_y_mm, **kwargs)
