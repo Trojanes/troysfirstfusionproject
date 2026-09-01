@@ -41,7 +41,18 @@ def main() -> int:
     controller = open(
         os.path.join(ROOT, "ui", "palette_controller.py"), encoding="utf-8"
     ).read()
-    for token in ("html_file", "width", "height"):
+    for token in (
+        "html_file",
+        "width",
+        "height",
+        "enqueue_action",
+        "send_progress",
+        "unifiedProgress",
+        "fireCustomEvent",
+        "_schedule_work",
+        "isgenerator",
+        "_palette_html_url",
+    ):
         if token not in controller:
             return _fail("palette_controller missing", token)
     print("[PASS] PaletteController multi-html support")
@@ -76,6 +87,9 @@ def main() -> int:
         "hardware.updateHardwareOperation",
         "connectCutBtn",
         "connectPipelineBtn",
+        "statusProgress",
+        "unifiedProgress",
+        "function setStatusProgress(",
     ):
         if token not in main_html:
             return _fail("main palette tab IA missing", token)

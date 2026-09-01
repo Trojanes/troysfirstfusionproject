@@ -47,7 +47,11 @@ def create_layout(
         "sheet_pack_hybrid_v3",
     ):
         return sheet_pack.sheet_pack_layout(
-            items, sheet_params, origin_x_mm, origin_y_mm
+            items,
+            sheet_params,
+            origin_x_mm,
+            origin_y_mm,
+            wait_callback=wait_callback,
         )
 
     wants_deepnest = selected in (
@@ -57,7 +61,11 @@ def create_layout(
     )
     if wants_deepnest and part_count > DEEPNEST_SMALL_JOB_LIMIT:
         layout = sheet_pack.sheet_pack_layout(
-            items, sheet_params, origin_x_mm, origin_y_mm
+            items,
+            sheet_params,
+            origin_x_mm,
+            origin_y_mm,
+            wait_callback=wait_callback,
         )
         layout["requestedEngine"] = deepnest.ENGINE_NAME
         layout["engineFallback"] = True
@@ -77,7 +85,11 @@ def create_layout(
             )
         except Exception as ex:
             fallback = sheet_pack.sheet_pack_layout(
-                items, sheet_params, origin_x_mm, origin_y_mm
+                items,
+                sheet_params,
+                origin_x_mm,
+                origin_y_mm,
+                wait_callback=wait_callback,
             )
             fallback["requestedEngine"] = deepnest.ENGINE_NAME
             fallback["engineFallback"] = True
@@ -101,7 +113,11 @@ def create_layout(
             )
         except Exception as ex:
             fallback = sheet_pack.sheet_pack_layout(
-                items, sheet_params, origin_x_mm, origin_y_mm
+                items,
+                sheet_params,
+                origin_x_mm,
+                origin_y_mm,
+                wait_callback=wait_callback,
             )
             fallback["requestedEngine"] = sparrow.ENGINE_NAME
             fallback["engineFallback"] = True
@@ -110,5 +126,9 @@ def create_layout(
 
     # Unknown engine name → safe default.
     return sheet_pack.sheet_pack_layout(
-        items, sheet_params, origin_x_mm, origin_y_mm
+        items,
+        sheet_params,
+        origin_x_mm,
+        origin_y_mm,
+        wait_callback=wait_callback,
     )

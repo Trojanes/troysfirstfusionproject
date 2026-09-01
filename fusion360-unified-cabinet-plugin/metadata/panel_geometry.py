@@ -556,6 +556,86 @@ def _edge_is_arc(edge):
         return False
 
 
+def _geom_kind(edge):
+    try:
+        object_type = str(edge.geometry.objectType)
+    except Exception:
+        return "unknown"
+    if object_type.endswith("Circle3D"):
+        return "circle"
+    if object_type.endswith("Arc3D"):
+        return "arc"
+    if object_type.endswith("Line3D"):
+        return "line"
+    return "unknown"
+
+
+def _cad_from_loop_segment(edge, pts2d, opposed, body, thickness_axis, coordinate_mode):
+    """One Fusion edge → one or more 2D CAD segments (line / arc / circle)."""
+    try:
+        from cad_segments import (
+            arc_segment,
+            circle_segment,
+            cw_from_samples,
+            line_segment,
+            lines_from_samples,
+        )
+    except Exception:
+        return []
+    if len(pts2d) < 2:
+        return []
+    start = [float(pts2d[0][0]), float(pts2d[0][1])]
+    end = [float(pts2d[-1][0]), float(pts2d[-1][1])]
+    kind = _geom_kind(edge)
+    if kind in ("arc", "circle"):
+        center2d, radius_mm = _circle_center_radius_2d(
+            edge, body, thickness_axis, coordinate_mode=coordinate_mode
+        )
+        if center2d is None or radius_mm is None or radius_mm <= 1e-6:
+            return lines_from_samples(pts2d)
+        cw = cw_from_samples(center2d, pts2d)
+        if kind == "circle" and (
+            len(pts2d) >= 8
+            or (
+                abs(start[0] - end[0]) <= 0.05
+                and abs(start[1] - end[1]) <= 0.05
+            )
+        ):
+            item = circle_segment(center2d, radius_mm, start=start, cw=cw)
+            return [item] if item is not None else lines_from_samples(pts2d)
+        item = arc_segment(start, end, center2d, radius_mm, cw)
+        return [item] if item is not None else lines_from_samples(pts2d)
+    if kind == "line":
+        item = line_segment(start, end)
+        return [item] if item is not None else []
+    return lines_from_samples(pts2d)
+
+
+def _cad_list_from_loop_segments(
+    segments, body, thickness_axis, coordinate_mode="body"
+):
+    out = []
+    for seg in segments or []:
+        if seg.get("cad"):
+            out.extend(seg["cad"])
+            continue
+        edge = seg.get("edge")
+        pts = seg.get("points") or []
+        if edge is None:
+            continue
+        out.extend(
+            _cad_from_loop_segment(
+                edge,
+                pts,
+                bool(seg.get("opposed")),
+                body,
+                thickness_axis,
+                coordinate_mode,
+            )
+        )
+    return out
+
+
 def _loop_segments_2d(loop, body, thickness_axis, coordinate_mode="body"):
     """Return ordered (points2d, edge) per coEdge for a loop, plus arc flag."""
     segments = []
@@ -587,8 +667,18 @@ def _loop_segments_2d(loop, body, thickness_axis, coordinate_mode="body"):
         is_arc = _edge_is_arc(edge)
         if is_circle or is_arc:
             has_arc = True
+        cad = _cad_from_loop_segment(
+            edge, pts2d, opposed, body, thickness_axis, coordinate_mode
+        )
         segments.append(
-            {"points": pts2d, "edge": edge, "isCircle": is_circle, "isArc": is_arc}
+            {
+                "points": pts2d,
+                "edge": edge,
+                "isCircle": is_circle,
+                "isArc": is_arc,
+                "opposed": opposed,
+                "cad": cad,
+            }
         )
     return segments, has_arc
 
@@ -655,6 +745,7 @@ def _face_inner_loops_2d(face, body, thickness_axis, coordinate_mode="body"):
     """Inner loops of a floor face — rebate ring holes, not the outer opening."""
     _outer, inners = _loops_of_face(face)
     rings = []
+    cads = []
     has_arc_any = False
     for loop in inners:
         segments, has_arc = _loop_segments_2d(
@@ -664,8 +755,13 @@ def _face_inner_loops_2d(face, body, thickness_axis, coordinate_mode="body"):
         if len(points) < 3:
             continue
         rings.append(points)
+        cads.append(
+            _cad_list_from_loop_segments(
+                segments, body, thickness_axis, coordinate_mode
+            )
+        )
         has_arc_any = has_arc_any or bool(has_arc)
-    return rings, has_arc_any
+    return rings, has_arc_any, cads
 
 
 def _rebate_holes_inside_outer(outer, inners):
@@ -833,10 +929,19 @@ def extract_features(
         )
         if len(points) < 2:
             continue
-        inner_rings, inner_has_arc = _face_inner_loops_2d(
+        inner_rings, inner_has_arc, inner_cads = _face_inner_loops_2d(
             face, body, thickness_axis, coordinate_mode=coordinate_mode
         )
-        inner_rings = _rebate_holes_inside_outer(points, inner_rings)
+        kept_cads = []
+        kept_rings = []
+        outer_area = abs(_polygon_area(points) or 0.0)
+        for ring, cad in zip(inner_rings, inner_cads):
+            area = abs(_polygon_area(ring) or 0.0)
+            if area < 1.0 or (outer_area >= 1.0 and area >= outer_area * 0.98):
+                continue
+            kept_rings.append(ring)
+            kept_cads.append(cad)
+        inner_rings = kept_rings
         has_arc = bool(has_arc or inner_has_arc)
         # Prefer wall-adjacency / inner-loop topology over nearest-surface:
         # hinge cups are often deeper than half the panel.
@@ -864,6 +969,13 @@ def extract_features(
         }
         if inner_rings:
             feature["innerPoints"] = inner_rings
+            if any(kept_cads):
+                feature["innerSegments"] = kept_cads
+        profile_cad = _cad_list_from_loop_segments(
+            segments, body, thickness_axis, coordinate_mode
+        )
+        if profile_cad:
+            feature["profileSegments"] = profile_cad
         feature.update(
             _circle_feature_fields(
                 segments, body, thickness_axis, coordinate_mode=coordinate_mode
@@ -920,6 +1032,11 @@ def extract_features(
                 "points": points,
                 "openSurfaceToken": _entity_token(face),
             }
+            profile_cad = _cad_list_from_loop_segments(
+                segments, body, thickness_axis, coordinate_mode
+            )
+            if profile_cad:
+                feature["profileSegments"] = profile_cad
             feature.update(
                 _circle_feature_fields(
                     segments, body, thickness_axis, coordinate_mode=coordinate_mode
@@ -1132,6 +1249,12 @@ def _public_feature(feature):
             hole_rings.append(pts)
     if hole_rings:
         payload["holes"] = hole_rings
+    profile_segs = feature.get("profileSegments") or []
+    if profile_segs:
+        payload["profileSegments"] = list(profile_segs)
+    inner_segs = feature.get("innerSegments") or []
+    if inner_segs:
+        payload["innerSegments"] = list(inner_segs)
     kind = str(feature.get("kind") or "").strip().lower()
     if kind == FEATURE_KIND_GROOVE:
         width = feature.get("widthMm")

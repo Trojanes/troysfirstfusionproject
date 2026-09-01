@@ -1,3 +1,4 @@
+import inspect
 import os
 import subprocess
 import sys
@@ -57,6 +58,16 @@ def _normalized_response():
             "requiredDepthMm": 1220,
         },
     }
+
+
+def _drain(value):
+    if inspect.isgenerator(value):
+        try:
+            while True:
+                next(value)
+        except StopIteration as stop:
+            return stop.value
+    return value
 
 
 class SparrowEngineTests(unittest.TestCase):
@@ -136,6 +147,36 @@ class SparrowEngineTests(unittest.TestCase):
                     executable="sparrow-cabinetnc.exe",
                     run=timeout_runner,
                 )
+
+    def test_bridge_polls_and_calls_wait_callback(self):
+        request = sparrow.build_request([_part()], {}, 0, 0, time_limit_sec=2)
+        ticks = []
+
+        class FakeProcess:
+            def __init__(self, *_args, **_kwargs):
+                self.n = 0
+
+            def poll(self):
+                self.n += 1
+                return 0 if self.n >= 4 else None
+
+            def communicate(self, timeout=None):
+                return "", ""
+
+            def kill(self):
+                pass
+
+        with patch.object(sparrow.os.path, "isfile", return_value=True):
+            with self.assertRaisesRegex(sparrow.SparrowError, "no valid result"):
+                _drain(
+                    sparrow.run_bridge(
+                        request,
+                        executable="sparrow-cabinetnc.exe",
+                        popen=FakeProcess,
+                        wait_callback=lambda: ticks.append(1),
+                    )
+                )
+        self.assertGreaterEqual(len(ticks), 2)
 
 
 if __name__ == "__main__":

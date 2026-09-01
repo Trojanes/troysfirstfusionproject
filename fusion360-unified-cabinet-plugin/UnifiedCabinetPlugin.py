@@ -203,6 +203,8 @@ class UnifiedCabinetPluginApp:
             "panelAttributes.resetAttributeToAuto": panel_attributes.reset_attribute_to_auto,
             "panelAttributes.applyDoorColorToSelection": panel_attributes.apply_door_color_to_selection,
             "panelAttributes.applyGrainToSelection": panel_attributes.apply_grain_to_selection,
+            "panelAttributes.replaceColorTag": panel_attributes.replace_color_tag,
+            "panelAttributes.setColorGrain": panel_attributes.set_color_grain,
             "panelAttributes.propagateMillingFromHingeCups": panel_attributes.propagate_milling_from_hinge_cups,
             "panelAttributes.diagnoseHingeFaces": panel_attributes.diagnose_hinge_faces,
             "panelAttributes.revertDoorSurfaces": panel_attributes.revert_door_surfaces,

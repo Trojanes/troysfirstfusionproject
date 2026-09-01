@@ -318,6 +318,114 @@ def _ring_xy_mm(loop):
     return [[point[0] * 10.0, point[1] * 10.0] for point in traverse_coedge_loop(loop)]
 
 
+def _xy_mm_point(point):
+    try:
+        return [float(point.x) * 10.0, float(point.y) * 10.0]
+    except Exception:
+        return None
+
+
+def _geom_kind(edge):
+    try:
+        object_type = str(edge.geometry.objectType)
+    except Exception:
+        return "unknown"
+    if object_type.endswith("Circle3D"):
+        return "circle"
+    if object_type.endswith("Arc3D"):
+        return "arc"
+    if object_type.endswith("Line3D"):
+        return "line"
+    return "unknown"
+
+
+def _loop_cad_segments_mm(loop):
+    """Exact Line3D / Arc3D / Circle3D for a flattened XY loop (cm → mm)."""
+    try:
+        from cad_segments import (
+            arc_segment,
+            circle_segment,
+            cw_from_samples,
+            line_segment,
+            lines_from_samples,
+        )
+    except Exception:
+        try:
+            from nesting.cad_segments import (  # type: ignore
+                arc_segment,
+                circle_segment,
+                cw_from_samples,
+                line_segment,
+                lines_from_samples,
+            )
+        except Exception:
+            return []
+
+    out = []
+    for coedge in _items(getattr(loop, "coEdges", None)):
+        try:
+            edge = coedge.edge
+            opposed = bool(coedge.isOpposedToEdge)
+        except Exception:
+            continue
+        kind = _geom_kind(edge)
+        samples = directed_coedge_points(coedge)
+        pts_mm = [[p[0] * 10.0, p[1] * 10.0] for p in samples] if samples else []
+        try:
+            start_v = edge.endVertex if opposed else edge.startVertex
+            end_v = edge.startVertex if opposed else edge.endVertex
+            start = _xy_mm_point(start_v.geometry)
+            end = _xy_mm_point(end_v.geometry)
+        except Exception:
+            start = pts_mm[0] if pts_mm else None
+            end = pts_mm[-1] if pts_mm else None
+        if start is None or end is None:
+            continue
+        if kind in ("arc", "circle"):
+            try:
+                geom = edge.geometry
+                center = _xy_mm_point(geom.center)
+                radius = float(geom.radius) * 10.0
+            except Exception:
+                center, radius = None, 0.0
+            if center is None or radius <= 1e-6:
+                out.extend(lines_from_samples(pts_mm or [start, end]))
+                continue
+            cw = cw_from_samples(center, pts_mm or [start, end])
+            if kind == "circle" and (
+                len(pts_mm) >= 8
+                or (abs(start[0] - end[0]) <= 0.05 and abs(start[1] - end[1]) <= 0.05)
+            ):
+                item = circle_segment(center, radius, start=start, cw=cw)
+            else:
+                item = arc_segment(start, end, center, radius, cw)
+            if item is not None:
+                out.append(item)
+            else:
+                out.extend(lines_from_samples(pts_mm or [start, end]))
+            continue
+        if kind == "line":
+            item = line_segment(start, end)
+            if item is not None:
+                out.append(item)
+            continue
+        out.extend(lines_from_samples(pts_mm or [start, end]))
+    return out
+
+
+def loop_cad_segments_from_face(face):
+    """CAD segments of the outer loop of a broad face, or []."""
+    if face is None:
+        return []
+    for loop in _items(getattr(face, "loops", None)):
+        try:
+            if bool(loop.isOuter):
+                return _loop_cad_segments_mm(loop)
+        except Exception:
+            continue
+    return []
+
+
 def _face_key(face):
     try:
         return ("temp", face.tempId)
@@ -361,13 +469,15 @@ def _rings_from_broad_face(face, body, include_holes=True, through_only=True):
             continue
         points = _ring_xy_mm(loop)
         if points:
-            holes.append(
-                {
-                    "points": points,
-                    "source": "flatBody",
-                    "cutType": "FULL" if is_through else "HALF",
-                }
-            )
+            hole = {
+                "points": points,
+                "source": "flatBody",
+                "cutType": "FULL" if is_through else "HALF",
+            }
+            segs = _loop_cad_segments_mm(loop)
+            if segs:
+                hole["segments"] = segs
+            holes.append(hole)
     return outer, holes
 
 

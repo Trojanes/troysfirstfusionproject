@@ -127,19 +127,19 @@
     .shell {
       display: grid;
       grid-template-columns: 168px 280px 1fr 288px;
-      height: calc(100vh - 92px);
+      height: calc(100vh - 108px);
       min-height: 650px;
     }
     .page[hidden] { display: none; }
     .blank-page {
-      height: calc(100vh - 92px);
+      height: calc(100vh - 108px);
       display: grid;
       place-items: center;
       color: var(--muted);
       background: #f8fafd;
     }
     .hardware-page {
-      height: calc(100vh - 68px);
+      height: calc(100vh - 108px);
       overflow: auto;
       padding: 10px;
       background: #f8fafd;
@@ -748,14 +748,84 @@
     }
     th { color: var(--muted); font-weight: 600; }
     .status {
-      height: 24px;
+      min-height: 40px;
+      height: auto;
       display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 0 10px;
+      flex-direction: column;
+      align-items: stretch;
+      justify-content: center;
+      gap: 4px;
+      padding: 4px 10px 6px;
       border-top: 1px solid var(--line);
       background: #edf2f8;
       color: var(--muted);
+    }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 16px;
+    }
+    .status-progress-label {
+      margin-left: auto;
+      font-variant-numeric: tabular-nums;
+    }
+    .status-progress {
+      height: 6px;
+      border-radius: 999px;
+      background: #d5deea;
+      overflow: hidden;
+    }
+    .status-progress-bar {
+      height: 100%;
+      width: 0;
+      border-radius: inherit;
+      background: var(--blue);
+      transition: width 0.18s ease;
+    }
+    .attr-overview-color-list {
+      height: 160px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      padding: 2px;
+    }
+    .attr-overview-color-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .attr-overview-color-row:hover {
+      background: var(--blue-soft);
+    }
+    .attr-overview-color-row.selected {
+      background: var(--blue-soft);
+      outline: 1px solid var(--blue);
+    }
+    .attr-overview-color-row .name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .attr-overview-color-row input {
+      width: auto;
+      margin: 0;
+      flex: 0 0 auto;
+    }
+    .status-progress.indeterminate .status-progress-bar {
+      width: 36%;
+      transition: none;
+      animation: status-progress-slide 1.1s ease-in-out infinite;
+    }
+    @keyframes status-progress-slide {
+      0% { transform: translateX(-120%); }
+      100% { transform: translateX(320%); }
     }
     .pill {
       display: inline-block;
@@ -1256,7 +1326,7 @@
       font-size: 12px;
     }
     .attributes-page {
-      height: calc(100vh - 68px);
+      height: calc(100vh - 108px);
       overflow: auto;
       padding: 10px;
       background: #f8fafd;
@@ -1652,6 +1722,41 @@
       font-size: 11px;
       color: var(--muted);
       margin: -4px 0 8px;
+    }
+    .attr-overview-color-list {
+      height: 160px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      padding: 2px;
+    }
+    .attr-overview-color-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 3px 6px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .attr-overview-color-row:hover {
+      background: var(--blue-soft);
+    }
+    .attr-overview-color-row.selected {
+      background: var(--blue-soft);
+      outline: 1px solid var(--blue);
+    }
+    .attr-overview-color-row .name {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .attr-overview-color-row input {
+      width: auto;
+      margin: 0;
+      flex: 0 0 auto;
     }
     #attrDoorColorField[hidden] { display: none; }
     .attr-page-tabs {
@@ -3400,12 +3505,17 @@
           <div class="card">
             <h3>Select Panels By Typed Tags</h3>
             <div class="card-body">
-              <div class="attr-section-note">These listboxes update from the latest metadata scan. Use <strong>Refresh From Scan</strong> after Scan / Apply. Empty / unknown color (including old <code>door_colour_*_unknown_surface_mode</code>) and missing board type all count as <strong>Undefined</strong>.</div>
+              <div class="attr-section-note">These listboxes update from the latest metadata scan. Use <strong>Refresh From Scan</strong> after Scan / Apply. Empty / unknown color (including old <code>door_colour_*_unknown_surface_mode</code>) and missing board type all count as <strong>Undefined</strong>. <strong>Tick the box after a color</strong> if that color needs wood grain. Ticked colors without a grain direction are <strong>not Lay Flat ready</strong>. <strong>Double-click a color name</strong> to rename every panel that uses it.</div>
               <div style="display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end;">
                 <label>Color
-                  <select id="attrOverviewColorList" size="8" style="height:160px;">
-                    <option value="__ALL__" selected>All</option>
-                  </select>
+                  <div style="display:flex;align-items:center;gap:8px;margin:4px 0 6px;">
+                    <span class="muted" style="font-size:11px;">木纹朝向</span>
+                    <select id="attrOverviewColorGrainOrientation" style="width:auto;min-width:64px;">
+                      <option value="vertical" selected>竖</option>
+                      <option value="horizontal">横</option>
+                    </select>
+                  </div>
+                  <div id="attrOverviewColorList" class="attr-overview-color-list" role="listbox"></div>
                 </label>
                 <label>BoardTypes
                   <select id="attrOverviewBoardTypeList" size="8" style="height:160px;">
@@ -4315,8 +4425,14 @@
   </div>
 
   <div class="status" id="statusBar">
-    <span id="statusText">Ready</span>
-    <span id="heightDiff"></span>
+    <div class="status-row">
+      <span id="statusText">Ready</span>
+      <span id="heightDiff"></span>
+      <span id="statusProgressLabel" class="status-progress-label" hidden></span>
+    </div>
+    <div class="status-progress" id="statusProgress" hidden>
+      <div class="status-progress-bar" id="statusProgressBar"></div>
+    </div>
   </div>
 
   <script src="ui/i18n.js"></script>
@@ -11687,6 +11803,66 @@
       ensureFusionSendFlush();
     }
 
+    function statusProgressLabel(payload) {
+      const phase = String((payload && payload.phase) || "working");
+      const key = `status.progress.${phase}`;
+      const translated = t(key);
+      if (translated !== key) return translated;
+      return (payload && payload.label) || t("status.progress.working");
+    }
+
+    function setStatusProgress(payload) {
+      const barHost = document.getElementById("statusBar");
+      const track = document.getElementById("statusProgress");
+      const fill = document.getElementById("statusProgressBar");
+      const label = document.getElementById("statusProgressLabel");
+      const text = document.getElementById("statusText");
+      if (barHost) barHost.hidden = false;
+      const phaseLabel = statusProgressLabel(payload || {});
+      if (text) text.textContent = phaseLabel;
+      const done = Number(payload && payload.done);
+      const total = Number(payload && payload.total);
+      let percent = payload && payload.percent;
+      if (percent == null && Number.isFinite(done) && Number.isFinite(total) && total > 0) {
+        percent = Math.round((100 * done) / total);
+      }
+      const determinate = Number.isFinite(Number(percent));
+      if (label) {
+        if (determinate) {
+          const rounded = Math.max(0, Math.min(100, Math.round(Number(percent))));
+          label.hidden = false;
+          label.textContent = Number.isFinite(done) && Number.isFinite(total) && total > 0
+            ? `${done}/${total} · ${rounded}%`
+            : `${rounded}%`;
+        } else {
+          label.hidden = true;
+          label.textContent = "";
+        }
+      }
+      if (track) {
+        track.hidden = false;
+        track.classList.toggle("indeterminate", !determinate);
+      }
+      if (fill) fill.style.width = determinate
+        ? `${Math.max(0, Math.min(100, Number(percent)))}%`
+        : "36%";
+    }
+
+    function clearStatusProgress() {
+      const track = document.getElementById("statusProgress");
+      const fill = document.getElementById("statusProgressBar");
+      const label = document.getElementById("statusProgressLabel");
+      if (track) {
+        track.hidden = true;
+        track.classList.remove("indeterminate");
+      }
+      if (fill) fill.style.width = "0";
+      if (label) {
+        label.hidden = true;
+        label.textContent = "";
+      }
+    }
+
     function calculate() {
       if (activeModule === "lounge") {
         loungeGenerateGeometry();
@@ -11754,6 +11930,13 @@
         try {
           const parsed = data ? JSON.parse(data) : {};
           maybeShowPartDocumentNotice(parsed);
+          if (action === "unifiedProgress") {
+            setStatusProgress(parsed);
+            return;
+          }
+          if (/Result$/.test(String(action || ""))) {
+            clearStatusProgress();
+          }
           if (action === "presetLibraryResult") {
             handlePresetLibraryResult(parsed);
           } else if (action === "generalTallResult") {
@@ -12323,6 +12506,7 @@
       boardTypeTagFilter: "__ALL__",
       overviewColorTag: "__ALL__",
       overviewBoardTypeTag: "__ALL__",
+      grainColorTags: [],
       useFusionData: false,
       tagScanResults: [],
       tagScanDraftEdits: {},
@@ -13247,6 +13431,7 @@
         }
         return;
       }
+      setStatusProgress({ phase: "outlines", percent: 0 });
       fusionSend("panelAttributes.buildNestingOutlines", {
         sheetParams,
         forceRebuild: !!forceRebuild,
@@ -13272,6 +13457,7 @@
         }
         return;
       }
+      setStatusProgress({ phase: "queued", percent: 0 });
       fusionSend("panelAttributes.createNestingZoneLayout", {
         sheetParams,
         nestingEngine: sheetParams.engine,
@@ -13346,6 +13532,7 @@
         }
         return;
       }
+      setStatusProgress({ phase: "create", percent: 0 });
       fusionSend("panelAttributes.createLayFlatLayout", {
         zoneFilter: "all",
         scope: layScope,
@@ -13741,13 +13928,39 @@
       select.value = options.includes(current) ? current : "__ALL__";
     }
 
+    function attrStoreGrainColorTags(tags) {
+      if (!Array.isArray(tags)) return panelAttrMock.grainColorTags || [];
+      panelAttrMock.grainColorTags = [...new Set(
+        tags.map((value) => String(value || "").trim().toLowerCase().replace(/\s+/g, "_")).filter(Boolean)
+      )];
+      return panelAttrMock.grainColorTags;
+    }
+
+    function attrRenderOverviewColorList(colorValues, includeUndefined, selectedValue) {
+      const host = document.getElementById("attrOverviewColorList");
+      if (!host) return selectedValue || "__ALL__";
+      const uniqueValues = [...new Set((colorValues || []).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+      const options = ["__ALL__", ...uniqueValues];
+      if (includeUndefined) options.push("__UNDEFINED__");
+      const selected = options.includes(selectedValue) ? selectedValue : "__ALL__";
+      const grainSet = new Set(panelAttrMock.grainColorTags || []);
+      host.innerHTML = options.map((value) => {
+        const canGrain = value !== "__ALL__" && value !== "__UNDEFINED__";
+        const ticked = canGrain && grainSet.has(value);
+        return `<div class="attr-overview-color-row${value === selected ? " selected" : ""}" data-color-value="${escapeHtml(value)}" role="option" aria-selected="${value === selected ? "true" : "false"}">
+          <span class="name">${escapeHtml(attrTypedTagLabel(value))}</span>
+          ${canGrain ? `<input type="checkbox" data-color-grain="${escapeHtml(value)}" ${ticked ? "checked" : ""} title="This color needs wood grain">` : ""}
+        </div>`;
+      }).join("");
+      return selected;
+    }
+
     function attrUpdateOverviewTagListboxes(records) {
       const raw = Array.isArray(records) ? records : panelAttrMock.metadataScanRecords;
       const source = attrScanBodyRecords(raw || []);
       const colorValues = source.map((record) => attrTypedTagValue(record, "colorTag"));
       const boardTypeValues = source.map((record) => attrTypedTagValue(record, "boardTypeTag"));
-      attrSetListboxOptions(
-        "attrOverviewColorList",
+      panelAttrMock.overviewColorTag = attrRenderOverviewColorList(
         colorValues,
         source.some((record) => !attrTypedTagValue(record, "colorTag")),
         panelAttrMock.overviewColorTag,
@@ -13758,8 +13971,81 @@
         source.some((record) => !attrTypedTagValue(record, "boardTypeTag")),
         panelAttrMock.overviewBoardTypeTag,
       );
-      panelAttrMock.overviewColorTag = document.getElementById("attrOverviewColorList")?.value || "__ALL__";
       panelAttrMock.overviewBoardTypeTag = document.getElementById("attrOverviewBoardTypeList")?.value || "__ALL__";
+    }
+
+    function attrOverviewRecordsForColor(colorTag) {
+      const tag = String(colorTag || "").trim();
+      if (!tag) return [];
+      return attrScanBodyRecords(panelAttrMock.metadataScanRecords || [])
+        .filter((record) => attrTypedTagValue(record, "colorTag") === tag)
+        .map((record) => ({
+          panelId: record.panelId || "",
+          bodyName: record.bodyName || "",
+          componentName: record.componentName || "",
+          occurrencePath: Array.isArray(record.occurrencePath) ? record.occurrencePath : [],
+          entityToken: record.entityToken || "",
+          entityKind: record.entityKind || "body",
+          colorTag: tag,
+          metadata: record.metadata || {},
+        }));
+    }
+
+    function attrRetargetScanColor(fromTag, toTag) {
+      const from = String(fromTag || "").trim();
+      const to = String(toTag || "").trim();
+      if (!from || !to || from === to) return;
+      (panelAttrMock.metadataScanRecords || []).forEach((record) => {
+        if (attrTypedTagValue(record, "colorTag") !== from) return;
+        record.colorTag = to;
+        if (record.derivedTags) record.derivedTags.colorTag = to;
+        if (record.typedTags) record.typedTags.colorTag = to;
+        const classification = record.metadata && record.metadata.classification;
+        if (classification && classification.color) classification.color.value = to;
+      });
+      if (panelAttrMock.overviewColorTag === from) panelAttrMock.overviewColorTag = to;
+    }
+
+    function attrRenameOverviewColor(fromColorTag) {
+      const colorTag = String(fromColorTag || "").trim();
+      if (!colorTag || colorTag === "__ALL__" || colorTag === "__UNDEFINED__") return;
+      const next = window.prompt(`把颜色 "${colorTag}" 改成：`, colorTag);
+      if (next == null) return;
+      const toColorName = String(next).trim();
+      if (!toColorName || toColorName === colorTag) return;
+      const summary = document.getElementById("attrOverviewTypedTagsSummary");
+      const pending = `Renaming color "${colorTag}" → "${toColorName}" on all matching panels...`;
+      if (summary) {
+        summary.textContent = pending;
+        summary.className = "message warn";
+      }
+      setStatusProgress({ phase: "prepare", percent: 0 });
+      fusionSend("panelAttributes.replaceColorTag", {
+        fromColorTag: colorTag,
+        toColorName,
+        records: attrOverviewRecordsForColor(colorTag),
+      });
+    }
+
+    function attrSetColorGrain(colorTag, hasGrain) {
+      const tag = String(colorTag || "").trim();
+      if (!tag) return;
+      const orientation = document.getElementById("attrOverviewColorGrainOrientation")?.value || "vertical";
+      const summary = document.getElementById("attrOverviewTypedTagsSummary");
+      const pending = hasGrain
+        ? `Writing wood grain (${orientation}) on all "${tag}" panels...`
+        : `Clearing wood grain on all "${tag}" panels...`;
+      if (summary) {
+        summary.textContent = pending;
+        summary.className = "message warn";
+      }
+      setStatusProgress({ phase: hasGrain ? "analyze" : "working", percent: 0 });
+      fusionSend("panelAttributes.setColorGrain", {
+        colorTag: tag,
+        hasGrain: !!hasGrain,
+        orientation,
+        records: attrOverviewRecordsForColor(tag),
+      });
     }
 
     function attrRefreshOverviewTypedTagsFromScan(allowAutoScan = true) {
@@ -13883,7 +14169,7 @@
     }
 
     function attrSelectPanelsWithOverviewTags(allowAutoScan = true) {
-      const colorTag = document.getElementById("attrOverviewColorList")?.value || "__ALL__";
+      const colorTag = panelAttrMock.overviewColorTag || "__ALL__";
       const boardTypeTag = document.getElementById("attrOverviewBoardTypeList")?.value || "__ALL__";
       panelAttrMock.overviewColorTag = colorTag;
       panelAttrMock.overviewBoardTypeTag = boardTypeTag;
@@ -13926,9 +14212,9 @@
       );
     }
 
-    function attrScanZonePayload() {
+    function attrScanZonePayload(detail) {
       const zoneFilter = document.getElementById("attrScanZoneFilter")?.value || "all";
-      return { zoneFilter };
+      return { zoneFilter, detail: detail || "nesting" };
     }
 
     function attrRequestWorkZones() {
@@ -14364,6 +14650,7 @@
         ? attrScanBodyRecords(records).map(attrMetadataRecordToPanel)
         : attrSyncListFromScan(records);
       if (!selectedOnly) panelAttrMock.metadataScanRecords = records;
+      attrStoreGrainColorTags(payload.grainColorTags);
       attrRenderMetadataSummary(payload.counts || {}, records.length, bodyPanels.length);
       attrRenderMetadataRows(records);
       if (!selectedOnly) {
@@ -16136,6 +16423,32 @@
         });
         return;
       }
+      if (parsed.action === "replaceColorTag" || parsed.action === "setColorGrain") {
+        const summary = document.getElementById("attrOverviewTypedTagsSummary");
+        const msg = parsed.message
+          || (parsed.ok
+            ? (parsed.action === "replaceColorTag"
+              ? `Renamed color ${parsed.fromColorTag || "?"} → ${parsed.toColorTag || "?"} on ${Number(parsed.updatedCount || 0)} panel(s).`
+              : `Updated grain on ${Number(parsed.updatedCount || 0)} "${parsed.colorTag || "?"}" panel(s).`)
+            : (parsed.errors || ["Color catalog update failed."]).join(" "));
+        const kind = parsed.ok
+          ? (Number(parsed.failedCount || 0) || (Array.isArray(parsed.warnings) && parsed.warnings.length) ? "warn" : "ok")
+          : "error";
+        if (summary) {
+          summary.textContent = msg;
+          summary.className = `message ${kind}`;
+        }
+        attrStoreGrainColorTags(parsed.grainColorTags);
+        attrShowFormMessage(msg, kind, {
+          action: parsed.action,
+          details: attrBuildCommandDetails(parsed),
+        });
+        if (parsed.ok && parsed.action === "replaceColorTag") {
+          attrRetargetScanColor(parsed.fromColorTag, parsed.toColorTag);
+        }
+        attrUpdateOverviewTagListboxes();
+        return;
+      }
       if (parsed.action === "propagateMillingFromHingeCups") {
         const summary = document.getElementById("attrPropagateMillingSummary");
         const msg = parsed.message
@@ -17290,9 +17603,35 @@
       attrTagPopulateMissingFilters();
       document.getElementById("attrTagScanResult").addEventListener("click", attrTagScanHandleEditEvent);
       document.getElementById("attrTagScanResult").addEventListener("change", attrTagScanHandleEditEvent);
-      document.getElementById("attrOverviewColorList").addEventListener("change", (event) => {
-        panelAttrMock.overviewColorTag = event.target.value || "__ALL__";
+      document.getElementById("attrOverviewColorList").addEventListener("click", (event) => {
+        if (event.target.closest("input[data-color-grain]")) return;
+        const row = event.target.closest("[data-color-value]");
+        if (!row) return;
+        panelAttrMock.overviewColorTag = row.getAttribute("data-color-value") || "__ALL__";
+        row.parentElement.querySelectorAll(".attr-overview-color-row").forEach((item) => {
+          const selected = item === row;
+          item.classList.toggle("selected", selected);
+          item.setAttribute("aria-selected", selected ? "true" : "false");
+        });
       });
+      document.getElementById("attrOverviewColorList").addEventListener("dblclick", (event) => {
+        if (event.target.closest("input[data-color-grain]")) return;
+        const row = event.target.closest("[data-color-value]");
+        if (!row) return;
+        attrRenameOverviewColor(row.getAttribute("data-color-value"));
+      });
+      document.getElementById("attrOverviewColorList").addEventListener("change", (event) => {
+        const input = event.target.closest("input[data-color-grain]");
+        if (!input) return;
+        const tag = input.getAttribute("data-color-grain");
+        const ticked = !!input.checked;
+        const tags = new Set(panelAttrMock.grainColorTags || []);
+        if (ticked) tags.add(tag);
+        else tags.delete(tag);
+        panelAttrMock.grainColorTags = [...tags];
+        attrSetColorGrain(tag, ticked);
+      });
+      attrUpdateOverviewTagListboxes([]);
       document.getElementById("attrOverviewBoardTypeList").addEventListener("change", (event) => {
         panelAttrMock.overviewBoardTypeTag = event.target.value || "__ALL__";
       });
@@ -18923,7 +19262,6 @@
         document.querySelectorAll(".page").forEach((page) => {
           page.hidden = page.id !== `page-${pageId}`;
         });
-        document.getElementById("statusBar").hidden = pageId !== "design";
         if (pageId === "attributes") {
           attrLoadFusionPanelList();
         }

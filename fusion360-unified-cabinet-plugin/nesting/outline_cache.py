@@ -15,7 +15,7 @@ except Exception:
     from in_plane_orient import clean_grain_mm, grain_mm_from_metadata
 
 CACHE_KEY = "nestingFlatOutline"
-CACHE_SCHEMA = 3
+CACHE_SCHEMA = 4
 
 
 def _num(value, default=0.0):

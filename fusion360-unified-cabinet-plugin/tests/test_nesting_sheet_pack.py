@@ -438,6 +438,24 @@ class SheetPackTests(unittest.TestCase):
         self.assertTrue(result.get("engineFallback"))
         self.assertIn("limit", str(result.get("engineFallbackReason") or "").lower())
 
+    def test_wait_callback_is_invoked_per_job(self):
+        ticks = []
+        parts = [
+            _part("a", "door", "white", 200, 200),
+            _part("b", "carcass", "white", 200, 200),
+        ]
+        params = {
+            "sheets": [
+                {"boardTypeTag": "door", "widthMm": 2440, "heightMm": 1220},
+                {"boardTypeTag": "carcass", "widthMm": 2440, "heightMm": 1220},
+            ],
+            "borderMm": 15,
+            "spacingMm": 12,
+        }
+        result = sheet_pack_layout(parts, params, 0, 0, wait_callback=lambda: ticks.append(1))
+        self.assertEqual(len(result["placements"]), 2)
+        self.assertGreaterEqual(len(ticks), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

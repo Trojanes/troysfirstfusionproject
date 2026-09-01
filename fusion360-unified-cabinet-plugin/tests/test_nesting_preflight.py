@@ -4,7 +4,9 @@ import unittest
 
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PANEL_ATTR_DIR = os.path.join(ROOT, "panel_attributes")
 sys.path.insert(0, ROOT)
+sys.path.insert(0, PANEL_ATTR_DIR)
 
 from nesting.preflight import evaluate_record  # noqa: E402
 
@@ -71,6 +73,49 @@ class NestingPreflightTests(unittest.TestCase):
         })
         self.assertTrue(result["ready"])
         self.assertEqual(result["cuttingFace"], "MILLING")
+
+    def test_grain_catalog_does_not_affect_default_ready(self):
+        result = evaluate_record({
+            "metadata": {
+                "classification": {
+                    "boardType": {"value": "door"},
+                    "color": {"value": "oak"},
+                    "cuttingFace": {"value": "MILLING"},
+                },
+            },
+        })
+        self.assertTrue(result["ready"])
+        self.assertNotIn("Grain", result["missing"])
+
+    def test_grain_catalog_marks_missing_direction(self):
+        record = {
+            "colorTag": "oak",
+            "metadata": {
+                "classification": {
+                    "boardType": {"value": "door"},
+                    "color": {"value": "oak"},
+                    "cuttingFace": {"value": "MILLING"},
+                },
+            },
+        }
+        missing = evaluate_record(record, grain_color_tags=["oak"])
+        self.assertFalse(missing["ready"])
+        self.assertIn("Grain", missing["missing"])
+        ready = evaluate_record(
+            {
+                **record,
+                "metadata": {
+                    **record["metadata"],
+                    "classification": {
+                        **record["metadata"]["classification"],
+                        "grainAlongMm": {"value": 720, "source": "manual", "locked": True},
+                    },
+                },
+            },
+            grain_color_tags=["oak"],
+        )
+        self.assertTrue(ready["ready"])
+        self.assertNotIn("Grain", ready["missing"])
 
 
 if __name__ == "__main__":

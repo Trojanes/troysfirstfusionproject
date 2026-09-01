@@ -1,4 +1,5 @@
 import importlib
+import inspect
 
 import adsk.core
 import adsk.fusion
@@ -16,6 +17,7 @@ import grain_direction
 import metadata_inspector
 import milling_surface_propagation
 import tag_metadata_editor
+import color_replace
 import thickness_rules
 import work_zones
 import nesting.collision_validate as nesting_collision_validate
@@ -44,6 +46,7 @@ grain_direction = importlib.reload(grain_direction)
 metadata_inspector = importlib.reload(metadata_inspector)
 milling_surface_propagation = importlib.reload(milling_surface_propagation)
 tag_metadata_editor = importlib.reload(tag_metadata_editor)
+color_replace = importlib.reload(color_replace)
 thickness_rules = importlib.reload(thickness_rules)
 work_zones = importlib.reload(work_zones)
 nesting_collision_validate = importlib.reload(nesting_collision_validate)
@@ -78,6 +81,24 @@ def _pump_fusion_events():
         adsk.doEvents()
     except Exception:
         pass
+
+
+def _report_progress(palette, action, phase, label="", done=None, total=None, percent=None):
+    """Push palette progress when available; always pump Fusion events."""
+    if palette is not None and hasattr(palette, "send_progress"):
+        try:
+            palette.send_progress(
+                action=action,
+                phase=phase,
+                label=label,
+                done=done,
+                total=total,
+                percent=percent,
+            )
+            return
+        except Exception:
+            pass
+    _pump_fusion_events()
 
 
 def _read_grain_along_from_body(body):
@@ -948,6 +969,7 @@ class PanelAttributesController:
         }
 
     def scan_metadata(self, payload, _palette):
+        yield {"phase": "analyze", "percent": 2, "delayMs": 10}
         root = self.fusion.get_root_component()
         if not root:
             return "panelAttributesResult", {
@@ -957,7 +979,12 @@ class PanelAttributesController:
             }
 
         zone_filter = str((payload or {}).get("zoneFilter") or "").strip().lower() or None
-        records, counts, diagnostics = metadata_inspector.scan_panel_metadata(root, zone_filter=zone_filter)
+        detail = str((payload or {}).get("detail") or "nesting").strip().lower() or "nesting"
+        if detail not in ("full", "nesting", "light", "preflight", "thickness"):
+            detail = "nesting"
+        records, counts, diagnostics = metadata_inspector.scan_panel_metadata(
+            root, zone_filter=zone_filter, detail=detail
+        )
         warnings = []
         solid = int((diagnostics or {}).get("solidBodies") or 0)
         scanned_bodies = int((diagnostics or {}).get("scannedBodies") or 0)
@@ -1004,7 +1031,9 @@ class PanelAttributesController:
             "counts": counts,
             "count": len(records),
             "zoneFilter": zone_filter or "all",
+            "scanDetail": detail,
             "diagnostics": diagnostics or {},
+            "grainColorTags": color_replace.load_grain_color_tags(root),
             "warnings": warnings,
         }
 
@@ -1038,6 +1067,7 @@ class PanelAttributesController:
             "records": records,
             "counts": counts,
             "count": len(records),
+            "grainColorTags": color_replace.load_grain_color_tags(root),
             "warnings": warnings,
         }
 
@@ -1150,8 +1180,9 @@ class PanelAttributesController:
             ),
         }
 
-    def build_nesting_outlines(self, payload, _palette):
+    def build_nesting_outlines(self, payload, palette):
         """Step 1: flatten + extract outlines and write nestingFlatOutline cache."""
+        yield {"phase": "prepare", "percent": 2, "delayMs": 10}
         import time as _time
 
         profiler = nesting_runtime_profile.NestingProfiler("buildNestingOutlines")
@@ -1180,6 +1211,15 @@ class PanelAttributesController:
         not_ready = []
         profiler.begin("buildOutlines")
         profiler.mark("buildBegin", candidates=len(body_records))
+        outline_total = max(len(body_records), 1)
+        _report_progress(
+            palette,
+            "buildNestingOutlines",
+            "outlines",
+            done=0,
+            total=len(body_records),
+            percent=1,
+        )
         for index, record in enumerate(body_records):
             check = nesting_preflight.evaluate_record(record)
             if not check["ready"]:
@@ -1283,7 +1323,22 @@ class PanelAttributesController:
                     skipped=len(skipped),
                     failed=len(failed),
                 )
-            _pump_fusion_events()
+            _report_progress(
+                palette,
+                "buildNestingOutlines",
+                "outlines",
+                done=index + 1,
+                total=len(body_records),
+                percent=int(100 * (index + 1) / outline_total),
+            )
+            if (index + 1) % 4 == 0:
+                yield {
+                    "phase": "outlines",
+                    "done": index + 1,
+                    "total": len(body_records),
+                    "percent": int(100 * (index + 1) / outline_total),
+                    "delayMs": 0,
+                }
         build_ms = profiler.end("buildOutlines")
         profile = profiler.flush(status="done")
         reflected_count = int(profiler.counters.get("reflectedBuilt") or 0) + int(
@@ -1327,8 +1382,9 @@ class PanelAttributesController:
             ),
         }
 
-    def create_nesting_zone_layout(self, payload, _palette):
+    def create_nesting_zone_layout(self, payload, palette):
         """Copy Nesting Ready source panels into sheet-packed Nesting Zone layout."""
+        yield {"phase": "prepare", "percent": 2, "delayMs": 10}
         import time as _time
 
         profiler = nesting_runtime_profile.NestingProfiler("createNestingZoneLayout")
@@ -1385,7 +1441,24 @@ class PanelAttributesController:
         prepared_hole_outline_count = 0
         profiler.begin("prepare")
         profiler.mark("prepareBegin", candidates=len(body_records))
+        prepare_total = max(len(body_records), 1)
+        _report_progress(
+            palette,
+            "createNestingZoneLayout",
+            "prepare",
+            done=0,
+            total=len(body_records),
+            percent=4,
+        )
         for index, record in enumerate(body_records):
+            _report_progress(
+                palette,
+                "createNestingZoneLayout",
+                "prepare",
+                done=index,
+                total=len(body_records),
+                percent=4 + int(26 * index / prepare_total),
+            )
             check = nesting_preflight.evaluate_record(record)
             if not check["ready"]:
                 not_ready.append({
@@ -1501,6 +1574,22 @@ class PanelAttributesController:
                     "bodyName": record.get("bodyName") or "",
                     "reason": str(ex),
                 })
+            if (index + 1) % 6 == 0:
+                yield {
+                    "phase": "prepare",
+                    "done": index + 1,
+                    "total": len(body_records),
+                    "percent": 4 + int(26 * (index + 1) / prepare_total),
+                    "delayMs": 0,
+                }
+        _report_progress(
+            palette,
+            "createNestingZoneLayout",
+            "prepare",
+            done=len(body_records),
+            total=len(body_records),
+            percent=30,
+        )
         prepare_ms = profiler.end("prepare")
 
         if outline_missing:
@@ -1564,18 +1653,31 @@ class PanelAttributesController:
         ]
         profiler.begin("pack")
         profiler.mark("packBegin", parts=len(layout_items))
-        _pump_fusion_events()
+        pack_ticks = {"n": 0}
+
+        def _pack_wait():
+            pack_ticks["n"] += 1
+            _report_progress(
+                palette,
+                "createNestingZoneLayout",
+                "pack",
+                percent=min(59, 30 + pack_ticks["n"]),
+            )
+
+        _report_progress(palette, "createNestingZoneLayout", "pack", percent=30)
         measure = nesting_engine.create_layout(
             layout_items,
             sheet_params,
             nesting_rect["x0"],
             nesting_rect["y0"],
             engine_name=(payload or {}).get("nestingEngine"),
-            wait_callback=_pump_fusion_events,
+            wait_callback=_pack_wait,
         )
+        if inspect.isgenerator(measure):
+            measure = yield from measure
         pack_ms = profiler.end("pack")
         profiler.mark("packDone", elapsedMs=pack_ms, engine=(measure or {}).get("engine"))
-        _pump_fusion_events()
+        _report_progress(palette, "createNestingZoneLayout", "validate", percent=62)
         profiler.begin("validate")
         collision_validation = nesting_collision_validate.validate_layout(
             measure, prepared, sheet_params
@@ -1786,6 +1888,21 @@ class PanelAttributesController:
 
         profiler.begin("createBodies")
         profiler.mark("createBegin", prepared=len(prepared))
+        create_ticks = {"n": 0}
+        create_total = max(len(prepared), 1)
+
+        def _create_wait():
+            create_ticks["n"] += 1
+            _report_progress(
+                palette,
+                "createNestingZoneLayout",
+                "create",
+                done=create_ticks["n"],
+                total=create_total,
+                percent=min(98, 70 + int(28 * min(create_ticks["n"], create_total) / create_total)),
+            )
+
+        _report_progress(palette, "createNestingZoneLayout", "create", percent=70)
         try:
             result = nesting_fusion_layout.create_layout(
                 root,
@@ -1796,7 +1913,7 @@ class PanelAttributesController:
                 profiler=profiler,
                 layout=measure,
                 sheet_params=sheet_params,
-                wait_callback=_pump_fusion_events,
+                wait_callback=_create_wait,
                 prevalidated_validation=collision_validation,
             )
         except Exception as ex:
@@ -2123,7 +2240,7 @@ class PanelAttributesController:
             ),
         }
 
-    def export_manufacturing_snapshot(self, payload, _palette):
+    def export_manufacturing_snapshot(self, payload, palette):
         """Export validated panels as one single-side .cnjob job list.
 
         ``scope=layflat`` is the production path and cannot bypass Analyze /
@@ -2166,7 +2283,9 @@ class PanelAttributesController:
                 }
             ready_result = nesting_lay_flat_export_ready.check_bodies(
                 export_bodies,
-                wait_callback=_pump_fusion_events,
+                wait_callback=lambda: _report_progress(
+                    palette, "exportManufacturingSnapshot", "export"
+                ),
             )
             if int(ready_result.get("notReadyCount") or 0) > 0:
                 not_ready = []
@@ -2230,7 +2349,9 @@ class PanelAttributesController:
             if selected_lay_flat:
                 ready_result = nesting_lay_flat_export_ready.check_bodies(
                     selected_lay_flat,
-                    wait_callback=_pump_fusion_events,
+                    wait_callback=lambda: _report_progress(
+                        palette, "exportManufacturingSnapshot", "export"
+                    ),
                 )
                 if int(ready_result.get("notReadyCount") or 0) > 0:
                     return "panelAttributesResult", {
@@ -2385,8 +2506,9 @@ class PanelAttributesController:
             ).format(workpiece_count, result.get("path") or path),
         }
 
-    def create_lay_flat_layout(self, payload, _palette):
+    def create_lay_flat_layout(self, payload, palette):
         """Lay Flat: copy Ready panels with machining face +Z, columns by board type."""
+        yield {"phase": "prepare", "percent": 2, "delayMs": 10}
         import time as _time
 
         profiler = nesting_runtime_profile.NestingProfiler("createLayFlatLayout")
@@ -2498,9 +2620,12 @@ class PanelAttributesController:
         prepared = []
         not_ready = []
         failed = []
+        grain_tags = color_replace.load_grain_color_tags(root)
         profiler.begin("prepareLayFlat")
         for index, record in enumerate(body_records):
-            check = nesting_preflight.evaluate_record(record)
+            check = nesting_preflight.evaluate_record(
+                record, grain_color_tags=grain_tags
+            )
             if not check.get("ready"):
                 not_ready.append({
                     "panelId": record.get("panelId") or "",
@@ -2597,6 +2722,14 @@ class PanelAttributesController:
                     "bodyName": record.get("bodyName") or "",
                     "reason": str(ex),
                 })
+            if (index + 1) % 6 == 0:
+                yield {
+                    "phase": "prepare",
+                    "done": index + 1,
+                    "total": len(body_records),
+                    "percent": min(18, int(18 * (index + 1) / max(len(body_records), 1))),
+                    "delayMs": 0,
+                }
         profiler.end("prepareLayFlat")
 
         if not prepared:
@@ -2697,6 +2830,21 @@ class PanelAttributesController:
 
         try:
             profiler.begin("createLayFlatBodies")
+            lay_ticks = {"n": 0}
+            lay_total = max(len(prepared), 1)
+
+            def _lay_wait():
+                lay_ticks["n"] += 1
+                _report_progress(
+                    palette,
+                    "createLayFlatLayout",
+                    "create",
+                    done=lay_ticks["n"],
+                    total=lay_total,
+                    percent=min(98, 20 + int(75 * min(lay_ticks["n"], lay_total) / lay_total)),
+                )
+
+            _report_progress(palette, "createLayFlatLayout", "create", percent=20)
             result = nesting_lay_flat_fusion.create_lay_flat_layout(
                 root,
                 prepared,
@@ -2704,7 +2852,7 @@ class PanelAttributesController:
                 origin_y_mm=origin_y,
                 part_gap_mm=part_gap,
                 column_gap_mm=column_gap,
-                wait_callback=_pump_fusion_events,
+                wait_callback=_lay_wait,
                 # Already deleted NESTING/LAY_FLAT before scan.
                 clear_previous=False,
             )
@@ -3197,7 +3345,7 @@ class PanelAttributesController:
             "message": message,
         }
 
-    def analyze_lay_flat_manufacturing(self, payload, _palette):
+    def analyze_lay_flat_manufacturing(self, payload, palette):
         """Re-extract outline + features on Lay Flat bodies (independent of Lay Flat)."""
         root = self.fusion.get_root_component()
         if not root:
@@ -3236,10 +3384,13 @@ class PanelAttributesController:
                 "warnings": warnings[:20],
             }
 
+        _report_progress(palette, "analyzeLayFlatManufacturing", "analyze", percent=10)
         result = nesting_lay_flat_analyze.analyze_lay_flat_bodies(
             bodies,
             force=force,
-            wait_callback=_pump_fusion_events,
+            wait_callback=lambda: _report_progress(
+                palette, "analyzeLayFlatManufacturing", "analyze"
+            ),
         )
         failed_n = int(result.get("failedCount") or 0)
         analyzed_n = int(result.get("analyzedCount") or 0)
@@ -3275,7 +3426,7 @@ class PanelAttributesController:
             "message": message,
         }
 
-    def check_lay_flat_export_ready(self, payload, _palette):
+    def check_lay_flat_export_ready(self, payload, palette):
         """Export Ready gate for Lay Flat bodies (before .cnjob export)."""
         root = self.fusion.get_root_component()
         if not root:
@@ -3322,10 +3473,13 @@ class PanelAttributesController:
                 "warnings": warnings[:20],
             }
 
+        _report_progress(palette, "checkLayFlatExportReady", "analyze", percent=10)
         result = nesting_lay_flat_export_ready.check_bodies(
             bodies,
             min_dot=min_dot,
-            wait_callback=_pump_fusion_events,
+            wait_callback=lambda: _report_progress(
+                palette, "checkLayFlatExportReady", "analyze"
+            ),
         )
         not_ready = list(result.get("notReady") or [])
         ready = list(result.get("ready") or [])
@@ -5287,6 +5441,327 @@ class PanelAttributesController:
             "warnings": warnings[:20],
             "errors": errors[:20] if (errors and not updated) else (errors[:10] if errors else []),
             "message": "Wood grain: {}.".format(summary),
+        }
+
+    def _scan_source_body_records(self, root):
+        records, _counts, diagnostics = metadata_inspector.scan_panel_metadata(
+            root, zone_filter="all", detail="nesting"
+        )
+        body_records = [
+            record
+            for record in records
+            if "body" in str(record.get("entityKind") or "").lower()
+        ]
+        return body_records, diagnostics
+
+    def _bodies_for_color_tag(self, root, color_tag):
+        wanted = color_replace.normalize_color_key(color_tag)
+        records, diagnostics = self._scan_source_body_records(root)
+        bodies = []
+        seen = set()
+        warnings = []
+        matched_records = 0
+        for record in records:
+            if color_replace.color_key_from_record(record) != wanted:
+                continue
+            matched_records += 1
+            body, body_warnings = self._body_from_metadata_record(
+                root, record, prefer_path=True
+            )
+            warnings.extend(body_warnings or [])
+            candidates = []
+            if body is not None:
+                candidates.append(body)
+                try:
+                    candidates.extend(
+                        panel_body_resolver.find_lay_flat_bodies_for_source(root, body)
+                        or []
+                    )
+                except Exception:
+                    pass
+            for candidate in candidates:
+                key = metadata_inspector._body_key(candidate)
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                bodies.append(candidate)
+        return bodies, matched_records, warnings, diagnostics
+
+    def _bodies_from_color_records(self, root, records, color_tag):
+        wanted = color_replace.normalize_color_key(color_tag)
+        bodies = []
+        seen = set()
+        warnings = []
+        matched_records = 0
+        for record in records or []:
+            if not isinstance(record, dict):
+                continue
+            color = color_replace.color_key_from_record(record) or wanted
+            if wanted and color and color != wanted:
+                continue
+            matched_records += 1
+            body, body_warnings = self._body_from_metadata_record(
+                root, record, prefer_path=True
+            )
+            warnings.extend(body_warnings or [])
+            candidates = []
+            if body is not None:
+                candidates.append(body)
+                try:
+                    candidates.extend(
+                        panel_body_resolver.find_lay_flat_bodies_for_source(root, body)
+                        or []
+                    )
+                except Exception:
+                    pass
+            for candidate in candidates:
+                key = metadata_inspector._body_key(candidate)
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                bodies.append(candidate)
+        return bodies, matched_records, warnings, {}
+
+    def _resolve_color_bodies(self, root, color_tag, records=None):
+        provided = [item for item in (records or []) if isinstance(item, dict)]
+        if provided:
+            return self._bodies_from_color_records(root, provided, color_tag)
+        return self._bodies_for_color_tag(root, color_tag)
+
+    def replace_color_tag(self, payload, palette):
+        """Rename every source panel that currently uses fromColorTag."""
+        yield {"phase": "prepare", "percent": 2, "delayMs": 10}
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "replaceColorTag",
+                "errors": ["No active Fusion design."],
+            }
+        from_color = color_replace.normalize_color_key(
+            (payload or {}).get("fromColorTag")
+        )
+        to_name = str((payload or {}).get("toColorName") or "").strip()
+        if not from_color:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "replaceColorTag",
+                "errors": ["Select a named color to rename."],
+            }
+        try:
+            to_tag = tag_metadata_editor.slug_color_tag(to_name)
+            if not to_tag:
+                raise ValueError("A valid color name is required.")
+        except ValueError as ex:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "replaceColorTag",
+                "errors": [str(ex)],
+            }
+
+        bodies, matched_records, warnings, _diagnostics = self._resolve_color_bodies(
+            root, from_color, (payload or {}).get("records")
+        )
+        if not bodies:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "replaceColorTag",
+                "fromColorTag": from_color,
+                "toColorTag": to_tag,
+                "toColorName": to_name,
+                "matchedRecordCount": matched_records,
+                "warnings": warnings[:20],
+                "errors": ["No panels found with color '{}'.".format(from_color)],
+            }
+
+        updated = []
+        failed = []
+        total = max(len(bodies), 1)
+        _report_progress(
+            palette, "replaceColorTag", "prepare", done=0, total=len(bodies), percent=5
+        )
+        for index, body in enumerate(bodies):
+            name = str(getattr(body, "name", "") or "") or "body"
+            try:
+                metadata, read_error = tag_metadata_editor._read_body_metadata_raw(body)
+                if read_error:
+                    failed.append({"bodyName": name, "reason": read_error})
+                    continue
+                base = tag_metadata_editor._bootstrap_body_metadata(body, metadata)
+                patched, color_tag, result = color_replace.apply_color_rename(
+                    base, to_name
+                )
+                tag_metadata_editor._write_body_metadata(body, patched)
+                updated.append(
+                    {
+                        "bodyName": name,
+                        "colorTag": color_tag,
+                        "changed": bool((result or {}).get("changed")),
+                    }
+                )
+            except Exception as ex:
+                failed.append({"bodyName": name, "reason": str(ex)})
+            yield {
+                "phase": "create",
+                "done": index + 1,
+                "total": len(bodies),
+                "percent": int(100 * (index + 1) / total),
+                "delayMs": 0,
+            }
+
+        ok = bool(updated)
+        grain_tags = color_replace.load_grain_color_tags(root)
+        if ok:
+            grain_tags = color_replace.rename_grain_color_tag(
+                grain_tags, from_color, to_tag
+            )
+            _, grain_tags = color_replace.save_grain_color_tags(root, grain_tags)
+        return "panelAttributesResult", {
+            "ok": ok,
+            "action": "replaceColorTag",
+            "fromColorTag": from_color,
+            "toColorTag": to_tag,
+            "toColorName": to_name,
+            "matchedRecordCount": matched_records,
+            "updatedCount": len(updated),
+            "failedCount": len(failed),
+            "updatedBodies": [item.get("bodyName") for item in updated[:40]],
+            "failed": failed[:40],
+            "grainColorTags": grain_tags,
+            "warnings": warnings[:20],
+            "errors": (
+                []
+                if ok
+                else (
+                    [item.get("reason") for item in failed[:5]]
+                    or ["No panel color could be renamed."]
+                )
+            ),
+            "message": "Renamed color '{}' → '{}' on {} panel(s).".format(
+                from_color, to_tag, len(updated)
+            ),
+        }
+
+    def set_color_grain(self, payload, palette):
+        """Turn wood grain on/off for every panel that uses a scanned color."""
+        yield {"phase": "analyze", "percent": 2, "delayMs": 10}
+        root = self.fusion.get_root_component()
+        if not root:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "setColorGrain",
+                "errors": ["No active Fusion design."],
+            }
+        color_tag = color_replace.normalize_color_key((payload or {}).get("colorTag"))
+        has_grain = bool((payload or {}).get("hasGrain"))
+        if not color_tag:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "setColorGrain",
+                "errors": ["Select a named color first."],
+            }
+        try:
+            orientation = grain_direction.normalize_orientation(
+                (payload or {}).get("orientation") or grain_direction.ORIENT_VERTICAL
+            )
+        except ValueError as ex:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "setColorGrain",
+                "errors": [str(ex)],
+            }
+        if not has_grain:
+            orientation = grain_direction.ORIENT_NONE
+
+        grain_tags = color_replace.load_grain_color_tags(root)
+        if has_grain:
+            grain_tags = color_replace.normalize_grain_color_tags(
+                list(grain_tags) + [color_tag]
+            )
+        else:
+            grain_tags = [item for item in grain_tags if item != color_tag]
+        _, grain_tags = color_replace.save_grain_color_tags(root, grain_tags)
+
+        bodies, matched_records, warnings, _diagnostics = self._resolve_color_bodies(
+            root, color_tag, (payload or {}).get("records")
+        )
+        if not bodies:
+            return "panelAttributesResult", {
+                "ok": False,
+                "action": "setColorGrain",
+                "colorTag": color_tag,
+                "hasGrain": has_grain,
+                "orientation": orientation,
+                "matchedRecordCount": matched_records,
+                "grainColorTags": grain_tags,
+                "warnings": warnings[:20],
+                "errors": ["No panels found with color '{}'.".format(color_tag)],
+            }
+
+        updated = []
+        failed = []
+        total = max(len(bodies), 1)
+        _report_progress(
+            palette, "setColorGrain", "analyze", done=0, total=len(bodies), percent=5
+        )
+        for index, body in enumerate(bodies):
+            name = str(getattr(body, "name", "") or "") or "body"
+            try:
+                if orientation == grain_direction.ORIENT_NONE:
+                    grain_mm = ""
+                else:
+                    grain_mm, _detail = grain_direction.grain_along_mm_for_body(
+                        body, orientation
+                    )
+                result, write_error = _write_grain_along_on_body(body, grain_mm)
+                if write_error:
+                    failed.append({"bodyName": name, "reason": write_error})
+                    continue
+                updated.append(
+                    {
+                        "bodyName": name,
+                        "grainAlongMm": grain_mm if grain_mm != "" else None,
+                        "changed": bool((result or {}).get("changed")),
+                    }
+                )
+            except Exception as ex:
+                failed.append({"bodyName": name, "reason": str(ex)})
+            yield {
+                "phase": "create",
+                "done": index + 1,
+                "total": len(bodies),
+                "percent": int(100 * (index + 1) / total),
+                "delayMs": 0,
+            }
+
+        ok = bool(updated)
+        if has_grain:
+            summary = "set grain ({}) on {}".format(orientation, len(updated))
+        else:
+            summary = "cleared grain on {}".format(len(updated))
+        return "panelAttributesResult", {
+            "ok": ok,
+            "action": "setColorGrain",
+            "colorTag": color_tag,
+            "hasGrain": has_grain,
+            "orientation": orientation,
+            "matchedRecordCount": matched_records,
+            "updatedCount": len(updated),
+            "failedCount": len(failed),
+            "updatedBodies": [item.get("bodyName") for item in updated[:40]],
+            "applied": updated[:40],
+            "failed": failed[:40],
+            "grainColorTags": grain_tags,
+            "warnings": warnings[:20],
+            "errors": (
+                []
+                if ok
+                else (
+                    [item.get("reason") for item in failed[:5]]
+                    or ["No panel grain could be updated."]
+                )
+            ),
+            "message": "Color '{}': {}.".format(color_tag, summary),
         }
 
     def propagate_milling_from_hinge_cups(self, _payload, _palette):

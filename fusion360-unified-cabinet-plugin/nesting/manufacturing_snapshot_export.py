@@ -42,6 +42,15 @@ except Exception:
         capsule_outline_from_points_aabb,
     )
 
+try:
+    from nesting.cad_segments import normalize_segments, segments_are_complete
+except Exception:
+    try:
+        from cad_segments import normalize_segments, segments_are_complete
+    except Exception:
+        normalize_segments = None
+        segments_are_complete = None
+
 
 FORMAT = "cabinetnc.manufacturing-snapshot"
 SCHEMA_VERSION = "1.0.0"
@@ -205,6 +214,7 @@ def _build_workpiece(record, index, used_ids=None):
             )
         )
         points = []
+        outline_segments = []
     else:
         source_name = str(outline_record.get("source") or "").strip().lower()
         if source_name != "flatbody":
@@ -233,6 +243,9 @@ def _build_workpiece(record, index, used_ids=None):
                     panel_id,
                 )
             )
+        outline_segments = []
+        if callable(normalize_segments):
+            outline_segments = normalize_segments(outline_record.get("segments") or [])
 
     face_result = _build_faces(record, metadata)
     faces = face_result["faces"]
@@ -413,9 +426,15 @@ def _build_workpiece(record, index, used_ids=None):
             metadata=metadata,
         ),
         "geometry": {
-            "quality": "tessellated",
+            "quality": (
+                "exact"
+                if outline_segments
+                and callable(segments_are_complete)
+                and segments_are_complete(outline_segments)
+                else "tessellated"
+            ),
             "toleranceMm": 0.1,
-            "outerProfile": {"closed": True, "points": points},
+            "outerProfile": _profile_payload(points, outline_segments),
             "innerProfiles": _inner_profiles_from_features(features),
             "nestingPolygon": points,
         },
@@ -769,7 +788,11 @@ def _convert_feature(feature, index, default_face, token_face, thickness_mm=0.0)
                 profile_points, intent, feature
             )
             if len(profile_points) >= 3 and _polygon_area_abs(profile_points) > 0.0001:
-                geometry = {"profile": {"closed": True, "points": profile_points}}
+                geometry = {
+                    "profile": _profile_payload(
+                        profile_points, _feature_cad_segments(feature)
+                    )
+                }
                 canonical_kind = "throughProfile"
             else:
                 # Unrecoverable through slot: drop rather than block the job.
@@ -782,11 +805,15 @@ def _convert_feature(feature, index, default_face, token_face, thickness_mm=0.0)
                 "widthMm": round(width, 4),
             }
             if len(points) >= 3 and _polygon_area_abs(points) > 0.0001:
-                geometry["profile"] = {"closed": True, "points": points}
+                geometry["profile"] = _profile_payload(
+                    points, _feature_cad_segments(feature)
+                )
             canonical_kind = "groove"
         elif len(points) >= 3 and _polygon_area_abs(points) > 0.0001:
             # Rounded / non-quad channels still ship as closed pocket profiles.
-            geometry = {"profile": {"closed": True, "points": points}}
+            geometry = {
+                "profile": _profile_payload(points, _feature_cad_segments(feature))
+            }
             canonical_kind = "pocket"
         else:
             # Edge-open / collapsed slots: recover a closed rectangle.
@@ -803,7 +830,11 @@ def _convert_feature(feature, index, default_face, token_face, thickness_mm=0.0)
         profile_points = (
             _maybe_lock_stadium_profile(points, intent, feature) if through else points
         )
-        geometry = {"profile": {"closed": True, "points": profile_points}}
+        geometry = {
+            "profile": _profile_payload(
+                profile_points, _feature_cad_segments(feature)
+            )
+        }
         canonical_kind = "throughProfile" if through else "pocket"
         hole_profiles = _normalized_hole_profiles(feature)
         if hole_profiles and not through:
@@ -1277,17 +1308,43 @@ def _dedupe_through_features(features):
     return kept
 
 
+def _profile_payload(points, segments=None):
+    payload = {"closed": True, "points": points}
+    segs = []
+    if callable(normalize_segments) and segments:
+        segs = normalize_segments(segments)
+    if segs:
+        payload["segments"] = segs
+    return payload
+
+
+def _feature_cad_segments(feature):
+    raw = (
+        (feature or {}).get("profileSegments")
+        or (feature or {}).get("segments")
+        or []
+    )
+    if callable(normalize_segments):
+        return normalize_segments(raw)
+    return list(raw or [])
+
+
 def _normalized_hole_profiles(feature):
     holes = []
     raw = feature.get("holes") or feature.get("innerPoints") or []
+    inner_segs = feature.get("innerSegments") or []
     if not isinstance(raw, list):
         return []
-    for ring in raw:
+    for index, ring in enumerate(raw):
+        ring_segs = []
         if isinstance(ring, dict):
+            ring_segs = ring.get("segments") or []
             ring = ring.get("points") or []
+        if not ring_segs and index < len(inner_segs):
+            ring_segs = inner_segs[index]
         points = _normalize_closed_points(ring)
         if len(points) >= 3 and _polygon_area_abs(points) > 0.0001:
-            holes.append({"closed": True, "points": points})
+            holes.append(_profile_payload(points, ring_segs))
     return holes
 
 
@@ -1365,7 +1422,14 @@ def _inner_profiles_from_features(features):
         if key in seen:
             continue
         seen.add(key)
-        profiles.append({"closed": True, "points": points})
+        segs = []
+        geometry = item.get("geometry") if isinstance(item.get("geometry"), dict) else {}
+        profile = geometry.get("profile") if isinstance(geometry.get("profile"), dict) else {}
+        if profile.get("segments"):
+            segs = profile.get("segments")
+        elif item.get("profileSegments"):
+            segs = item.get("profileSegments")
+        profiles.append(_profile_payload(points, segs))
     return profiles
 
 

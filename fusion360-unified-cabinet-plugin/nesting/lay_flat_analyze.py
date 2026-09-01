@@ -99,6 +99,7 @@ try:
         extract_dxf_projection_rings_mm,
         _floor_feature_rings_mm,
         _ring_bounds_key,
+        loop_cad_segments_from_face,
     )
 except Exception:
     try:
@@ -107,12 +108,22 @@ except Exception:
             extract_dxf_projection_rings_mm,
             _floor_feature_rings_mm,
             _ring_bounds_key,
+            loop_cad_segments_from_face,
         )
     except Exception:
         extract_flattened_rings_mm = None
         extract_dxf_projection_rings_mm = None
         _floor_feature_rings_mm = None
         _ring_bounds_key = None
+        loop_cad_segments_from_face = None
+
+try:
+    from nesting.cad_segments import translate_segments
+except Exception:
+    try:
+        from cad_segments import translate_segments  # type: ignore
+    except Exception:
+        translate_segments = None
 
 PANEL_GROUP = "UnifiedCabinet.Panel"
 ANALYZED_STATE = "lay_flat_analyzed"
@@ -576,6 +587,15 @@ def _extract_features_for_body(
                 holes.append(translated)
         if holes:
             public["holes"] = holes
+        if public.get("profileSegments") and translate_segments is not None:
+            public["profileSegments"] = translate_segments(
+                public.get("profileSegments") or [], dx, dy
+            )
+        inner_segs = public.get("innerSegments") or []
+        if inner_segs and translate_segments is not None:
+            public["innerSegments"] = [
+                translate_segments(ring, dx, dy) for ring in inner_segs
+            ]
         center = public.get("center2d")
         if isinstance(center, (list, tuple)) and len(center) >= 2:
             public["center2d"] = [
@@ -890,7 +910,9 @@ def analyze_lay_flat_body(body, force=False, tint_ctx=None):
     # The colour / -Z skin is normally complete even when edge-open grooves
     # notch the machining skin, so it is the canonical outline source.
     raw_outer = []
+    raw_segments = []
     outline_face_source = ""
+    outline_face = None
     if callable(_rings_from_broad_face):
         try:
             raw_outer, _ = _rings_from_broad_face(
@@ -903,6 +925,7 @@ def analyze_lay_flat_body(body, force=False, tint_ctx=None):
             raw_outer = []
         if len(raw_outer or []) >= 3:
             outline_face_source = "bottomFace"
+            outline_face = colour_face
     if len(raw_outer or []) < 3 and callable(extract_flattened_rings_mm):
         try:
             raw_outer, _holes = extract_flattened_rings_mm(
@@ -912,6 +935,7 @@ def analyze_lay_flat_body(body, force=False, tint_ctx=None):
             raw_outer = []
         if len(raw_outer or []) >= 3:
             outline_face_source = "trueOuter"
+            outline_face = colour_face
     if len(raw_outer or []) < 3 and callable(_rings_from_broad_face):
         try:
             raw_outer, _ = _rings_from_broad_face(
@@ -924,20 +948,34 @@ def analyze_lay_flat_body(body, force=False, tint_ctx=None):
             raw_outer = []
         if len(raw_outer or []) >= 3:
             outline_face_source = "millingFallback"
+            outline_face = milling_face
     if len(raw_outer or []) < 3 and callable(_face_outer_loop_2d):
         for face, label in (
             (colour_face, "bottomFaceLoop"),
             (milling_face, "millingFaceLoop"),
         ):
             try:
-                points, _segments, _has_arc = _face_outer_loop_2d(
+                points, loop_segs, _has_arc = _face_outer_loop_2d(
                     face, body, thickness_axis=2, coordinate_mode="world"
                 )
             except Exception:
                 points = []
+                loop_segs = []
             if len(points or []) >= 3:
                 raw_outer = points
                 outline_face_source = label
+                outline_face = face
+                try:
+                    from metadata.panel_geometry import _cad_list_from_loop_segments
+                except Exception:
+                    try:
+                        from panel_geometry import _cad_list_from_loop_segments
+                    except Exception:
+                        _cad_list_from_loop_segments = None
+                if callable(_cad_list_from_loop_segments):
+                    raw_segments = _cad_list_from_loop_segments(
+                        loop_segs, body, 2, "world"
+                    )
                 break
     if len(raw_outer or []) < 3:
         return {
@@ -945,6 +983,11 @@ def analyze_lay_flat_body(body, force=False, tint_ctx=None):
             "bodyName": body_name,
             "reason": "outline_extract_failed",
         }
+    if not raw_segments and outline_face is not None and callable(loop_cad_segments_from_face):
+        try:
+            raw_segments = loop_cad_segments_from_face(outline_face) or []
+        except Exception:
+            raw_segments = []
 
     dx, dy = _origin_shift_mm(body, raw_outer)
     outline = build_outline_payload(
@@ -952,6 +995,7 @@ def analyze_lay_flat_body(body, force=False, tint_ctx=None):
         "flatBody",
         float(dims.get("widthMm") or 0.0),
         float(dims.get("depthMm") or 0.0),
+        segments=raw_segments,
     )
     if not isinstance(outline, dict) or not outline.get("points"):
         return {

@@ -153,8 +153,20 @@ def translate_polygon(points, dx, dy):
     return [[_num(p[0]) + dx, _num(p[1]) + dy] for p in (points or [])]
 
 
+def _segment_helpers():
+    try:
+        from nesting.cad_segments import reverse_segments, rotate_segments, translate_segments
+    except Exception:
+        try:
+            from cad_segments import reverse_segments, rotate_segments, translate_segments
+        except Exception:
+            return None, None, None
+    return translate_segments, rotate_segments, reverse_segments
+
+
 def translate_ring_set(rings, dx, dy):
     """Translate rings or hole records without discarding metadata."""
+    translate_segments, _, _ = _segment_helpers()
     translated = []
     for value in rings or []:
         if isinstance(value, dict):
@@ -162,6 +174,9 @@ def translate_ring_set(rings, dx, dy):
             record["points"] = translate_polygon(
                 value.get("points") or value.get("pointsLocal") or [], dx, dy
             )
+            segs = value.get("segments") or value.get("profileSegments")
+            if segs and translate_segments is not None:
+                record["segments"] = translate_segments(segs, dx, dy)
             translated.append(record)
         else:
             translated.append(translate_polygon(value, dx, dy))
@@ -185,6 +200,7 @@ def rotate_polygon(points, degrees):
 
 def rotate_ring_set(rings, degrees):
     """Rotate rings or hole records about the origin."""
+    _, rotate_segments, _ = _segment_helpers()
     rotated = []
     for value in rings or []:
         if isinstance(value, dict):
@@ -192,6 +208,9 @@ def rotate_ring_set(rings, degrees):
             record["points"] = rotate_polygon(
                 value.get("points") or value.get("pointsLocal") or [], degrees
             )
+            segs = value.get("segments") or value.get("profileSegments")
+            if segs and rotate_segments is not None:
+                record["segments"] = rotate_segments(segs, degrees)
             rotated.append(record)
         else:
             rotated.append(rotate_polygon(value, degrees))
@@ -486,16 +505,25 @@ def oriented_outline(points, degrees):
     return normalized, bounds
 
 
-def build_outline_payload(points, source, width_mm=None, depth_mm=None, holes=None):
+def build_outline_payload(points, source, width_mm=None, depth_mm=None, holes=None, segments=None):
     ring = close_ring(points)
+    used_rectangle = False
     if len(ring) < 4:
         ring = rectangle_polygon(width_mm or 0.0, depth_mm or 0.0)
         source = "rectangle"
+        used_rectangle = True
     if not ring:
         return None
     bounds = polygon_bounds(ring)
     dx, dy = -bounds["minX"], -bounds["minY"]
-    normalized = outer_ccw(translate_polygon(ring, dx, dy))
+    translated = translate_polygon(ring, dx, dy)
+    normalized = outer_ccw(translated)
+    translate_segments, _, reverse_segments = _segment_helpers()
+    cad = []
+    if not used_rectangle and segments and translate_segments is not None:
+        cad = translate_segments(segments, dx, dy)
+        if signed_polygon_area(translated) < 0 and reverse_segments is not None:
+            cad = reverse_segments(cad)
     normalized_holes = []
     for value in holes or []:
         source_record = value if isinstance(value, dict) else {}
@@ -514,8 +542,14 @@ def build_outline_payload(points, source, width_mm=None, depth_mm=None, holes=No
         for key in ("source", "cutType", "kind", "featureId"):
             if source_record.get(key) is not None:
                 record[key] = source_record.get(key)
+        hole_segs = source_record.get("segments") or source_record.get("profileSegments")
+        if hole_segs and translate_segments is not None:
+            moved = translate_segments(hole_segs, dx, dy)
+            if signed_polygon_area(translate_polygon(raw_points, dx, dy)) > 0 and reverse_segments:
+                moved = reverse_segments(moved)
+            record["segments"] = moved
         normalized_holes.append(record)
-    return {
+    payload = {
         "points": normalized,
         "source": source,
         "pointCount": max(len(normalized) - 1, 0),
@@ -525,3 +559,6 @@ def build_outline_payload(points, source, width_mm=None, depth_mm=None, holes=No
         "holes": normalized_holes,
         "holeCount": len(normalized_holes),
     }
+    if cad:
+        payload["segments"] = cad
+    return payload

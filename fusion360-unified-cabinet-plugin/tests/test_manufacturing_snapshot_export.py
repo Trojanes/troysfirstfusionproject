@@ -113,6 +113,24 @@ class ManufacturingSnapshotExportTests(unittest.TestCase):
         self.assertEqual(workpiece["features"][1]["geometry"]["widthMm"], 6)
         self.assertNotIn("grainAlongMm", workpiece["material"])
 
+    def test_exports_outline_cad_segments_as_exact(self):
+        record = _record()
+        record["metadata"]["nestingFlatOutline"]["outline"]["segments"] = [
+            {"type": "line", "start": [0, 0], "end": [560, 0]},
+            {"type": "line", "start": [560, 0], "end": [560, 720]},
+            {"type": "arc", "start": [560, 720], "end": [0, 720],
+             "center": [280, 720], "radiusMm": 280, "cw": True},
+            {"type": "line", "start": [0, 720], "end": [0, 0]},
+        ]
+        result = build_snapshot([record], "JOB-CAD")
+        self.assertTrue(result["ok"], result["errors"])
+        geom = result["snapshot"]["workpieces"][0]["geometry"]
+        self.assertEqual(geom["quality"], "exact")
+        segs = geom["outerProfile"]["segments"]
+        self.assertEqual(len(segs), 4)
+        self.assertEqual(segs[2]["type"], "arc")
+        self.assertEqual(segs[2]["radiusMm"], 280)
+
     def test_exports_grain_along_without_splitting_material_id(self):
         record = _record()
         record["metadata"]["classification"]["grainAlongMm"] = {

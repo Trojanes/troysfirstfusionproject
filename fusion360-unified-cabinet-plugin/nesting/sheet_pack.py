@@ -1183,6 +1183,7 @@ def sheet_pack_layout(
     sheet_params,
     origin_x_mm,
     origin_y_mm,
+    wait_callback=None,
 ):
     """Pack items onto per-boardType sheets and map into Nesting Zone world XY.
 
@@ -1310,6 +1311,11 @@ def sheet_pack_layout(
 
         if packed_sheets:
             type_cursor_y = sheet_cursor_y + row_height + sheet_gap
+        if callable(wait_callback):
+            try:
+                wait_callback()
+            except Exception:
+                pass
 
     return {
         "engine": ENGINE_NAME,

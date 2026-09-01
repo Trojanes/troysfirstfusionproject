@@ -2,6 +2,8 @@
 
 Nesting Ready reads only canonical classification fields after migrate:
 Board Type, Color, Cutting Face.
+
+Pass grain_color_tags for Lay Flat Ready: ticked grain colors also need grainAlongMm.
 """
 
 from __future__ import annotations
@@ -24,7 +26,7 @@ def _canonical(metadata, field):
     return str((state or {}).get("value") or "").strip()
 
 
-def evaluate_record(record):
+def evaluate_record(record, grain_color_tags=None):
     metadata = record.get("metadata") if isinstance(record, dict) else {}
     try:
         import attribute_state_service
@@ -66,6 +68,17 @@ def evaluate_record(record):
         missing.append("Color")
     if cutting_face not in ("MILLING", "EITHER"):
         missing.append("Cutting Face")
+    if grain_color_tags:
+        helper = None
+        try:
+            import color_replace as helper
+        except Exception:
+            try:
+                from panel_attributes import color_replace as helper
+            except Exception:
+                helper = None
+        if helper is not None and helper.record_missing_grain(record, grain_color_tags):
+            missing.append("Grain")
     return {
         "ready": not missing,
         "missing": missing,

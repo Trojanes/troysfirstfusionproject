@@ -8,10 +8,12 @@ downloaded at runtime; absence/failure is handled by ``nesting.engine``.
 
 from __future__ import annotations
 
+import inspect
 import json
 import os
 import subprocess
 import tempfile
+import time
 
 from nesting import sheet_pack
 
@@ -133,7 +135,7 @@ def _startup_options():
     return startup_info, creation_flags
 
 
-def run_bridge(request, executable=None, run=subprocess.run):
+def run_bridge(request, executable=None, run=None, wait_callback=None, popen=None):
     executable = executable or binary_path()
     if not os.path.isfile(executable):
         raise SparrowError(
@@ -141,47 +143,132 @@ def run_bridge(request, executable=None, run=subprocess.run):
         )
     timeout = max(float(request.get("timeLimitSec") or DEFAULT_TIME_LIMIT_SEC), 1.0)
     startup_info, creation_flags = _startup_options()
-    with tempfile.TemporaryDirectory(prefix="cabinetnc-sparrow-") as folder:
+    command = [
+        executable,
+        "--input",
+        None,
+        "--output",
+        None,
+        "--time-limit",
+        str(timeout),
+    ]
+    if run is not None:
+        with tempfile.TemporaryDirectory(prefix="cabinetnc-sparrow-") as folder:
+            input_path = os.path.join(folder, "request.json")
+            output_path = os.path.join(folder, "result.json")
+            command[2] = input_path
+            command[4] = output_path
+            with open(input_path, "w", encoding="utf-8") as handle:
+                json.dump(request, handle, ensure_ascii=False)
+            try:
+                completed = run(
+                    command,
+                    cwd=folder,
+                    capture_output=True,
+                    text=True,
+                    timeout=timeout + 5.0,
+                    startupinfo=startup_info,
+                    creationflags=creation_flags,
+                )
+            except subprocess.TimeoutExpired as ex:
+                raise SparrowError(
+                    "Sparrow exceeded the {:.0f}s quality time limit.".format(timeout)
+                ) from ex
+            return _finish_bridge_response(
+                int(completed.returncode or 0),
+                completed.stdout or "",
+                completed.stderr or "",
+                output_path,
+            )
+    return _iter_popen_bridge(
+        request,
+        command,
+        timeout,
+        startup_info,
+        creation_flags,
+        wait_callback=wait_callback,
+        popen=popen,
+    )
+
+
+def _iter_popen_bridge(
+    request,
+    command,
+    timeout,
+    startup_info,
+    creation_flags,
+    wait_callback=None,
+    popen=None,
+):
+    """Yield while the native engine runs so Fusion can paint between polls."""
+    folder_ctx = tempfile.TemporaryDirectory(prefix="cabinetnc-sparrow-")
+    folder = folder_ctx.name
+    try:
         input_path = os.path.join(folder, "request.json")
         output_path = os.path.join(folder, "result.json")
+        command[2] = input_path
+        command[4] = output_path
         with open(input_path, "w", encoding="utf-8") as handle:
             json.dump(request, handle, ensure_ascii=False)
-        try:
-            completed = run(
-                [
-                    executable,
-                    "--input",
-                    input_path,
-                    "--output",
-                    output_path,
-                    "--time-limit",
-                    str(timeout),
-                ],
-                cwd=folder,
-                capture_output=True,
-                text=True,
-                timeout=timeout + 5.0,
-                startupinfo=startup_info,
-                creationflags=creation_flags,
-            )
-        except subprocess.TimeoutExpired as ex:
-            raise SparrowError(
-                "Sparrow exceeded the {:.0f}s quality time limit.".format(timeout)
-            ) from ex
-        if int(completed.returncode or 0) != 0:
-            detail = (completed.stderr or completed.stdout or "").strip()[:500]
-            raise SparrowError(
-                "Sparrow exited with code {}{}.".format(
-                    completed.returncode,
-                    ": " + detail if detail else "",
+        factory = popen or subprocess.Popen
+        process = factory(
+            command,
+            cwd=folder,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            startupinfo=startup_info,
+            creationflags=creation_flags,
+        )
+        deadline = time.monotonic() + timeout + 5.0
+        stdout = ""
+        stderr = ""
+        while True:
+            return_code = process.poll()
+            if return_code is not None:
+                try:
+                    out, err = process.communicate(timeout=1.0)
+                    stdout = out or ""
+                    stderr = err or ""
+                except Exception:
+                    pass
+                break
+            if time.monotonic() >= deadline:
+                try:
+                    process.kill()
+                except Exception:
+                    pass
+                raise SparrowError(
+                    "Sparrow exceeded the {:.0f}s quality time limit.".format(timeout)
                 )
-            )
+            if callable(wait_callback):
+                try:
+                    wait_callback()
+                except Exception:
+                    pass
+            yield {"phase": "pack", "delayMs": 50}
+        return _finish_bridge_response(return_code, stdout, stderr, output_path)
+    finally:
         try:
-            with open(output_path, "r", encoding="utf-8") as handle:
-                response = json.load(handle)
-        except Exception as ex:
-            raise SparrowError("Sparrow returned no valid result JSON.") from ex
-    return response
+            folder_ctx.cleanup()
+        except Exception:
+            pass
+
+
+def _finish_bridge_response(return_code, stdout, stderr, output_path):
+    if int(return_code or 0) != 0:
+        detail = (stderr or stdout or "").strip()[:500]
+        raise SparrowError(
+            "Sparrow exited with code {}{}.".format(
+                return_code,
+                ": " + detail if detail else "",
+            )
+        )
+    try:
+        with open(output_path, "r", encoding="utf-8") as handle:
+            return json.load(handle)
+    except Exception as ex:
+        raise SparrowError("Sparrow returned no valid result JSON.") from ex
 
 
 def _validate_response(response):
@@ -272,9 +359,27 @@ def layout(
     )
     if callable(wait_callback):
         wait_callback()
-    response = (runner or run_bridge)(request, executable=executable)
+    if runner is not None:
+        response = runner(request, executable=executable)
+    else:
+        response = run_bridge(
+            request,
+            executable=executable,
+            wait_callback=wait_callback,
+        )
+        if inspect.isgenerator(response):
+            def _continue():
+                inner = yield from response
+                if callable(wait_callback):
+                    wait_callback()
+                return _complete_layout(inner, params, origin_x_mm, origin_y_mm)
+            return _continue()
     if callable(wait_callback):
         wait_callback()
+    return _complete_layout(response, params, origin_x_mm, origin_y_mm)
+
+
+def _complete_layout(response, params, origin_x_mm, origin_y_mm):
     result = dict(_validate_response(response))
     result["engine"] = ENGINE_NAME
     result.setdefault("requestedEngine", ENGINE_NAME)
